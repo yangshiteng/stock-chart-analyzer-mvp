@@ -1,0 +1,29 @@
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs and temp
+*.log
+*.tmp
+*.temp
+
+# Local secrets and env files
+.env
+.env.*
+*.local
+
+# Build / package artifacts
+dist/
+build/
+coverage/
+node_modules/
+
+# Python cache
+__pycache__/
+*.pyc

@@ -131,7 +131,26 @@ Expected response fields include:
 
 - This extension is for prototype/demo use only.
 - It is not financial advice.
+- All model outputs can be wrong, incomplete, stale, or misleading.
+- Do not use this extension as the sole basis for buying or selling securities.
+- Use at your own risk.
 - Storing an API key in extension local storage is convenient for MVP testing, but not the final security model you would want in production.
+
+## Disclaimer
+
+- This project is an experimental stock-chart analysis prototype.
+- It does not provide financial, investment, legal, or tax advice.
+- Nothing in this repository should be treated as a recommendation to buy, sell, or hold any security.
+- The generated output is only an automated model opinion based on limited context and may be incorrect.
+- You are fully responsible for any decisions, losses, or consequences arising from use of this project.
+
+## Security
+
+- The current MVP stores the OpenAI API key in `chrome.storage.local` inside the extension.
+- That is acceptable for local testing, but it is not a production-grade secret-management design.
+- Do not commit API keys, tokens, or personal credentials into this repository.
+- If you fork or modify this project, review all storage, logging, and network behavior before using real credentials.
+- A stronger production design would move model access behind a backend you control, so the client extension never holds the raw API key.
 
 ## Next Improvements
 
