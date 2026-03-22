@@ -142,6 +142,8 @@ Expected response fields include:
 - It does not provide financial, investment, legal, or tax advice.
 - Nothing in this repository should be treated as a recommendation to buy, sell, or hold any security.
 - The generated output is only an automated model opinion based on limited context and may be incorrect.
+- This project is not suitable for unattended live trading or production brokerage automation.
+- Always verify prices, order details, and risk manually before placing any real trade.
 - You are fully responsible for any decisions, losses, or consequences arising from use of this project.
 
 ## Security
@@ -151,6 +153,7 @@ Expected response fields include:
 - Do not commit API keys, tokens, or personal credentials into this repository.
 - If you fork or modify this project, review all storage, logging, and network behavior before using real credentials.
 - A stronger production design would move model access behind a backend you control, so the client extension never holds the raw API key.
+- See `SECURITY.md` for a short summary of the current security posture and reporting expectations.
 
 ## Next Improvements
 
