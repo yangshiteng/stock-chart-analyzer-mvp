@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stock Chart Analyzer Results</title>
+    <link rel="stylesheet" href="sidepanel.css">
+  </head>
+  <body>
+    <main class="panel-shell">
+      <header class="hero">
+        <p class="eyebrow">Live Analysis</p>
+        <h1>Stock Chart Analyzer</h1>
+        <div id="statusBadge" class="status-badge">Loading...</div>
+        <p id="summaryText" class="summary-text">Reading extension state...</p>
+      </header>
+
+      <section class="card">
+        <h2>OpenAI Setup</h2>
+        <p>Store your API key locally in this extension. Real analysis requests will use <strong>gpt-5.4</strong>.</p>
+        <div class="context-form">
+          <label class="field">
+            <span>OpenAI API Key</span>
+            <input id="apiKeyInput" type="password" autocomplete="off" placeholder="sk-...">
+          </label>
+
+          <div class="form-actions">
+            <button id="saveApiKeyButton" class="mode-button buy-button" type="button">Save Key</button>
+            <button id="clearApiKeyButton" class="ghost-button" type="button">Clear Key</button>
+          </div>
+
+          <p id="apiKeyStatus" class="form-hint">No API key saved yet.</p>
+        </div>
+      </section>
+
+      <section id="modeSection" class="card hidden">
+        <h2>Choose a mode</h2>
+        <p>The current tab passed validation. Pick one mode to continue to the trade context form.</p>
+        <div class="mode-actions">
+          <button id="buyButton" class="mode-button buy-button" type="button">Buy</button>
+          <button id="sellButton" class="mode-button sell-button" type="button">Sell</button>
+        </div>
+      </section>
+
+      <section id="contextSection" class="card hidden">
+        <h2 id="contextTitle">Trade Context</h2>
+        <p id="contextDescription">Tell the analyzer about your current position and what kind of advice you want.</p>
+        <form id="contextForm" class="context-form">
+          <label class="field">
+            <span>Current Shares</span>
+            <input id="currentSharesInput" type="number" min="0" step="0.0001" inputmode="decimal" placeholder="0">
+          </label>
+
+          <label class="field">
+            <span>Average Cost</span>
+            <input id="averageCostInput" type="number" min="0" step="0.0001" inputmode="decimal" placeholder="18.45">
+          </label>
+
+          <label class="field">
+            <span>Intent</span>
+            <select id="intentSelect"></select>
+          </label>
+
+          <p id="formHint" class="form-hint">If you are opening a new position, current shares can be 0 and average cost can stay blank.</p>
+          <p id="formError" class="form-error hidden"></p>
+
+          <div class="form-actions">
+            <button id="confirmButton" class="mode-button buy-button" type="submit">Start Monitoring</button>
+            <button id="backButton" class="ghost-button" type="button">Back</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="card">
+        <h2>Session Context</h2>
+        <pre id="sessionJson" class="json-block">Choose a mode to define the session context.</pre>
+      </section>
+
+      <section class="card">
+        <h2>Validation JSON</h2>
+        <pre id="validationJson" class="json-block">Waiting for validation...</pre>
+      </section>
+
+      <section class="card">
+        <h2>Latest Analysis JSON</h2>
+        <pre id="analysisJson" class="json-block">Run a chart analysis to see results.</pre>
+      </section>
+
+      <section class="card">
+        <h2>Recent Rounds</h2>
+        <div id="historyList" class="history-list">
+          <p class="empty-state">No rounds yet.</p>
+        </div>
+      </section>
+    </main>
+
+    <script type="module" src="sidepanel.js"></script>
+  </body>
+</html>

@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stock Chart Analyzer</title>
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <main class="popup-shell">
+      <section class="panel">
+        <p class="eyebrow">Chrome Extension MVP</p>
+        <h1>Stock Chart Analyzer</h1>
+        <p id="statusText" class="status-text">Checking extension status...</p>
+
+        <div class="actions">
+          <button id="startButton" class="primary-button" type="button">Start</button>
+          <button id="stopButton" class="secondary-button" type="button">Stop</button>
+        </div>
+
+        <div class="details">
+          <p id="detailText">Click Start to validate the current tab. If it looks like a stock chart, choose Buy or Sell inside the side panel.</p>
+        </div>
+      </section>
+    </main>
+
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

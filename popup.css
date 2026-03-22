@@ -1,0 +1,108 @@
+:root {
+  color-scheme: light;
+  --ink: #132033;
+  --muted: #4a6479;
+  --line: rgba(19, 32, 51, 0.12);
+  --panel: rgba(255, 253, 248, 0.92);
+  --blue: #0f4c81;
+  --blue-strong: #08365c;
+  --sand: #f4e8ca;
+  --bg-a: #f7f4ec;
+  --bg-b: #dfeef8;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 340px;
+  font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+  color: var(--ink);
+  background:
+    radial-gradient(circle at top left, rgba(244, 232, 202, 0.95), transparent 38%),
+    linear-gradient(135deg, var(--bg-a), var(--bg-b));
+}
+
+.popup-shell {
+  padding: 16px;
+}
+
+.panel {
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--panel);
+  box-shadow: 0 14px 30px rgba(11, 26, 44, 0.12);
+}
+
+.eyebrow {
+  margin: 0 0 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--blue);
+}
+
+h1 {
+  margin: 0 0 8px;
+  font-size: 22px;
+  line-height: 1.1;
+}
+
+.status-text {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.45;
+}
+
+.actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+button {
+  border: 0;
+  border-radius: 999px;
+  padding: 12px 14px;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 120ms ease, opacity 120ms ease, background-color 120ms ease;
+}
+
+button:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+button:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.primary-button {
+  color: #fff;
+  background: linear-gradient(135deg, var(--blue), var(--blue-strong));
+}
+
+.secondary-button {
+  color: var(--ink);
+  background: var(--sand);
+}
+
+.details {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.details p {
+  margin: 0;
+}

@@ -1,0 +1,252 @@
+:root {
+  color-scheme: light;
+  --ink: #14253a;
+  --muted: #5f7689;
+  --line: rgba(20, 37, 58, 0.12);
+  --panel: rgba(255, 251, 244, 0.92);
+  --bg-a: #f5efe2;
+  --bg-b: #d8ebf7;
+  --accent: #0d5d63;
+  --buy: #0c7a43;
+  --sell: #a33f2f;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+  color: var(--ink);
+  background:
+    radial-gradient(circle at top left, rgba(250, 219, 180, 0.72), transparent 25%),
+    linear-gradient(180deg, var(--bg-a), var(--bg-b));
+}
+
+.panel-shell {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+}
+
+.hero {
+  padding: 18px;
+  border-radius: 22px;
+  background: linear-gradient(135deg, rgba(12, 93, 99, 0.95), rgba(10, 49, 83, 0.95));
+  color: #fff;
+  box-shadow: 0 14px 30px rgba(8, 29, 43, 0.18);
+}
+
+.eyebrow {
+  margin: 0 0 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  opacity: 0.82;
+}
+
+h1,
+h2 {
+  margin: 0;
+}
+
+.hero h1 {
+  font-size: 28px;
+  line-height: 1.05;
+}
+
+.status-badge {
+  display: inline-flex;
+  margin-top: 14px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.summary-text {
+  margin: 12px 0 0;
+  line-height: 1.5;
+  opacity: 0.94;
+}
+
+.card {
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--panel);
+  box-shadow: 0 10px 22px rgba(15, 26, 39, 0.08);
+}
+
+.card h2 {
+  margin-bottom: 10px;
+  font-size: 18px;
+}
+
+.card p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.mode-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.context-form {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.field {
+  display: grid;
+  gap: 6px;
+}
+
+.field span {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.field input,
+.field select {
+  width: 100%;
+  border: 1px solid rgba(20, 37, 58, 0.16);
+  border-radius: 12px;
+  padding: 11px 12px;
+  font: inherit;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.88);
+}
+
+.field input:focus,
+.field select:focus {
+  outline: 2px solid rgba(13, 93, 99, 0.2);
+  border-color: rgba(13, 93, 99, 0.45);
+}
+
+.form-hint {
+  font-size: 13px;
+}
+
+.form-error {
+  margin: 0;
+  color: #a33f2f;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.form-actions {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+}
+
+.mode-button {
+  border: 0;
+  border-radius: 14px;
+  padding: 12px 14px;
+  font: inherit;
+  font-weight: 700;
+  color: #fff;
+  cursor: pointer;
+}
+
+.mode-button:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+
+.buy-button {
+  background: linear-gradient(135deg, #13864c, var(--buy));
+}
+
+.sell-button {
+  background: linear-gradient(135deg, #b54f3f, var(--sell));
+}
+
+.ghost-button {
+  border: 1px solid rgba(20, 37, 58, 0.12);
+  border-radius: 14px;
+  padding: 12px 16px;
+  font: inherit;
+  font-weight: 700;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.6);
+  cursor: pointer;
+}
+
+.ghost-button:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+
+.json-block {
+  margin: 0;
+  padding: 14px;
+  overflow-x: auto;
+  border-radius: 14px;
+  background: rgba(11, 24, 36, 0.92);
+  color: #f3f6f9;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.history-list {
+  display: grid;
+  gap: 10px;
+}
+
+.history-item {
+  padding: 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(20, 37, 58, 0.08);
+}
+
+.history-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.muted-row {
+  margin-top: 4px;
+  color: var(--muted);
+}
+
+.history-title {
+  margin: 10px 0 0;
+  color: var(--ink);
+}
+
+.empty-state {
+  margin: 0;
+  color: var(--muted);
+}
+
+.hidden {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  .panel-shell {
+    padding: 14px;
+  }
+
+  .hero h1 {
+    font-size: 24px;
+  }
+}
