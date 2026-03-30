@@ -38,6 +38,13 @@ async function clearMonitoringAlarm() {
   await chrome.alarms.clear(ALARM_NAME);
 }
 
+function scheduleMonitoringAlarm() {
+  chrome.alarms.create(ALARM_NAME, {
+    delayInMinutes: ALARM_MINUTES,
+    periodInMinutes: ALARM_MINUTES
+  });
+}
+
 async function getActiveTab() {
   const [tab] = await chrome.tabs.query({
     active: true,
@@ -141,10 +148,14 @@ function buildMonitoringProfile({ mode, currentShares, averageCost, intent }) {
 async function stopMonitoring(reason = null) {
   await clearMonitoringAlarm();
 
+  const currentState = await getState();
+
   return patchState({
     status: STATUS.IDLE,
     mode: null,
     monitoringProfile: null,
+    lastMode: currentState.mode || currentState.lastMode,
+    lastMonitoringProfile: currentState.monitoringProfile || currentState.lastMonitoringProfile,
     stopReason: reason,
     lastError: null
   });
@@ -160,6 +171,7 @@ async function beginMonitoringSetup(mode) {
   return patchState({
     status: STATUS.AWAITING_CONTEXT,
     mode,
+    lastMode: mode,
     monitoringProfile: null,
     stopReason: null,
     lastError: null
@@ -259,6 +271,8 @@ async function runMonitoringRound(modeOverride = null) {
         status: STATUS.IDLE,
         mode: null,
         monitoringProfile: null,
+        lastMode: mode,
+        lastMonitoringProfile: monitoringProfile,
         lastValidation: validationRecord,
         stopReason: "Monitoring stopped because the current tab is no longer recognized as a stock chart.",
         lastError: null
@@ -297,6 +311,8 @@ async function runMonitoringRound(modeOverride = null) {
       ...currentState,
       status: STATUS.RUNNING,
       mode,
+      lastMode: mode,
+      lastMonitoringProfile: monitoringProfile,
       roundCount: round,
       lastValidation: validationRecord,
       lastResult: result,
@@ -312,6 +328,8 @@ async function runMonitoringRound(modeOverride = null) {
         status: STATUS.IDLE,
         mode: null,
         monitoringProfile: null,
+        lastMode: mode,
+        lastMonitoringProfile: monitoringProfile,
         stopReason: `Reached ${state.maxRounds} rounds.`
       });
 
@@ -329,6 +347,8 @@ async function runMonitoringRound(modeOverride = null) {
       status: STATUS.IDLE,
       mode: null,
       monitoringProfile: null,
+      lastMode: mode,
+      lastMonitoringProfile: monitoringProfile,
       lastError: error.message,
       stopReason: "Monitoring stopped because the current tab could not be analyzed."
     });
@@ -353,6 +373,8 @@ async function startMonitoring(payload) {
     status: STATUS.RUNNING,
     mode: monitoringProfile.mode,
     monitoringProfile,
+    lastMode: monitoringProfile.mode,
+    lastMonitoringProfile: monitoringProfile,
     stopReason: null,
     lastError: null
   });
@@ -363,10 +385,84 @@ async function startMonitoring(payload) {
     return roundResult;
   }
 
-  chrome.alarms.create(ALARM_NAME, {
-    delayInMinutes: ALARM_MINUTES,
-    periodInMinutes: ALARM_MINUTES
+  scheduleMonitoringAlarm();
+
+  return {
+    ok: true,
+    state: await getState()
+  };
+}
+
+function getResumeSession(state) {
+  const monitoringProfile = state.monitoringProfile || state.lastMonitoringProfile;
+  const mode = state.mode || state.lastMode || monitoringProfile?.mode || null;
+
+  if (!mode || !monitoringProfile) {
+    throw new Error("No previous monitoring session is available yet.");
+  }
+
+  return {
+    mode,
+    monitoringProfile: {
+      ...monitoringProfile,
+      mode
+    }
+  };
+}
+
+async function continueMonitoring() {
+  await ensureApiKeyConfigured();
+
+  const currentState = await getState();
+  const { mode, monitoringProfile } = getResumeSession(currentState);
+
+  await patchState({
+    status: STATUS.RUNNING,
+    mode,
+    monitoringProfile,
+    lastMode: mode,
+    lastMonitoringProfile: monitoringProfile,
+    stopReason: null,
+    lastError: null
   });
+
+  const roundResult = await runMonitoringRound(mode);
+
+  if (!roundResult.ok) {
+    return roundResult;
+  }
+
+  scheduleMonitoringAlarm();
+
+  return {
+    ok: true,
+    state: await getState()
+  };
+}
+
+async function restartMonitoring() {
+  await ensureApiKeyConfigured();
+  await clearMonitoringAlarm();
+
+  const currentState = await getState();
+  const { mode, monitoringProfile } = getResumeSession(currentState);
+
+  await saveState({
+    ...createDefaultState(),
+    status: STATUS.RUNNING,
+    mode,
+    monitoringProfile,
+    lastMode: mode,
+    lastMonitoringProfile: monitoringProfile
+  });
+
+  const roundResult = await runMonitoringRound(mode);
+
+  if (!roundResult.ok) {
+    return roundResult;
+  }
+
+  scheduleMonitoringAlarm();
 
   return {
     ok: true,
@@ -441,6 +537,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         ok: true,
         state: await stopMonitoring("Monitoring stopped by the user.")
       });
+      return;
+    }
+
+    if (message?.type === "continue-monitoring") {
+      sendResponse(await continueMonitoring());
+      return;
+    }
+
+    if (message?.type === "restart-monitoring") {
+      sendResponse(await restartMonitoring());
       return;
     }
 

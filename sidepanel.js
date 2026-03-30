@@ -3,6 +3,10 @@ import { getSettings, getState, patchSettings } from "./lib/storage.js";
 
 const statusBadge = document.getElementById("statusBadge");
 const summaryText = document.getElementById("summaryText");
+const apiSetupSection = document.getElementById("apiSetupSection");
+const stopMonitorButton = document.getElementById("stopMonitorButton");
+const continueMonitorButton = document.getElementById("continueMonitorButton");
+const restartMonitorButton = document.getElementById("restartMonitorButton");
 const apiKeyInput = document.getElementById("apiKeyInput");
 const saveApiKeyButton = document.getElementById("saveApiKeyButton");
 const clearApiKeyButton = document.getElementById("clearApiKeyButton");
@@ -21,13 +25,232 @@ const formHint = document.getElementById("formHint");
 const formError = document.getElementById("formError");
 const confirmButton = document.getElementById("confirmButton");
 const backButton = document.getElementById("backButton");
-const sessionJson = document.getElementById("sessionJson");
-const validationJson = document.getElementById("validationJson");
-const analysisJson = document.getElementById("analysisJson");
-const historyList = document.getElementById("historyList");
+const analysisCard = document.getElementById("analysisCard");
+let isStartingMonitoring = false;
 
-function formatJson(data, fallback) {
-  return data ? JSON.stringify(data, null, 2) : fallback;
+function escapeHtml(value) {
+  return `${value}`
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function formatIntentLabel(value) {
+  return value ? value.replaceAll("_", " ") : "Not provided";
+}
+
+function formatSignalLabel(value) {
+  return value ? value.replaceAll("_", " ") : "N/A";
+}
+
+function formatPrice(value) {
+  return value && value !== "N/A" ? value : null;
+}
+
+function getActionLabel(signal) {
+  if (signal === "BUY") {
+    return "Buy";
+  }
+
+  if (signal === "SELL") {
+    return "Sell";
+  }
+
+  if (signal === "WAIT_FOR_CONFIRMATION") {
+    return "Wait";
+  }
+
+  if (signal === "NO_TRADE") {
+    return "Stand Aside";
+  }
+
+  return formatSignalLabel(signal);
+}
+
+function getClarityLabel(value) {
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    return "Unknown";
+  }
+
+  if (value < 0.35) {
+    return "Low";
+  }
+
+  if (value < 0.7) {
+    return "Medium";
+  }
+
+  return "High";
+}
+
+function getPrimaryLevel(analysis) {
+  return formatPrice(analysis.levels?.entry) || formatPrice(analysis.limitPrice);
+}
+
+function getPriceBadgeLabel(signal, limitPrice) {
+  if (!limitPrice || limitPrice === "N/A") {
+    return "No price level yet";
+  }
+
+  if (signal === "BUY") {
+    return `Buy near ${limitPrice}`;
+  }
+
+  if (signal === "SELL") {
+    return `Sell near ${limitPrice}`;
+  }
+
+  return `Watch ${limitPrice}`;
+}
+
+function buildActionCopy(analysis) {
+  const level = getPrimaryLevel(analysis);
+
+  if (analysis.signal === "BUY") {
+    return level
+      ? `Consider a limit buy near ${level} only if the chart continues to hold up.`
+      : "A buy setup is forming, but wait for a clearer level before acting.";
+  }
+
+  if (analysis.signal === "SELL") {
+    return level
+      ? `Consider a limit sell near ${level} if weakness continues into that level.`
+      : "A sell setup is forming, but wait for a cleaner exit level before acting.";
+  }
+
+  if (analysis.signal === "WAIT_FOR_CONFIRMATION") {
+    return level
+      ? `Do not enter yet. Wait for price to reclaim and hold near ${level} before acting.`
+      : "Do not enter yet. Wait for stronger confirmation before taking a trade.";
+  }
+
+  return "Stand aside for now. There is no clean trade setup yet.";
+}
+
+function buildWatchCopy(analysis) {
+  const watchLevel = getPrimaryLevel(analysis);
+  const target = formatPrice(analysis.levels?.target);
+  const invalidation = formatPrice(analysis.levels?.invalidation);
+
+  const parts = [];
+
+  if (watchLevel) {
+    parts.push(`Watch ${watchLevel} for confirmation.`);
+  }
+
+  if (target) {
+    parts.push(`If the move works, the next objective is ${target}.`);
+  }
+
+  if (invalidation) {
+    parts.push(`If price fails below ${invalidation}, step back.`);
+  }
+
+  return parts.join(" ") || "Watch for cleaner structure before taking the next step.";
+}
+
+function getSignalTone(signal) {
+  if (signal === "BUY") {
+    return "buy";
+  }
+
+  if (signal === "SELL") {
+    return "sell";
+  }
+
+  if (signal === "WAIT_FOR_CONFIRMATION") {
+    return "wait";
+  }
+
+  return "no-trade";
+}
+
+function renderMetricCard(label, value, fullSpan = false) {
+  return `
+    <article class="metric-card${fullSpan ? " full-span" : ""}">
+      <p class="metric-label">${escapeHtml(label)}</p>
+      <p class="metric-value">${escapeHtml(value || "N/A")}</p>
+    </article>
+  `;
+}
+
+function renderGuidanceCard(label, value) {
+  return `
+    <article class="guidance-card">
+      <p class="metric-label">${escapeHtml(label)}</p>
+      <p class="guidance-value">${escapeHtml(value)}</p>
+    </article>
+  `;
+}
+
+function renderAnalysisCard(state) {
+  const result = state.lastResult;
+  const analysis = result?.analysis;
+  const profile = result?.monitoringProfile;
+
+  if (isStartingMonitoring || (state.status === STATUS.RUNNING && state.roundCount === 0 && !analysis)) {
+    analysisCard.className = "analysis-card";
+    analysisCard.innerHTML = `
+      <section class="loading-card">
+        <div class="loading-spinner" aria-hidden="true"></div>
+        <p class="loading-title">Analyzing chart...</p>
+        <p class="loading-copy">The extension is capturing the current chart and requesting a recommendation. This can take a few seconds.</p>
+      </section>
+    `;
+    return;
+  }
+
+  if (!analysis) {
+    analysisCard.className = "analysis-card empty-analysis";
+    analysisCard.innerHTML = '<p class="empty-state">Run a chart analysis to see the latest recommendation.</p>';
+    return;
+  }
+
+  const tone = getSignalTone(analysis.signal);
+  const levels = analysis.levels || {};
+  const symbol = analysis.symbol || "Unknown";
+  const mode = analysis.mode ? analysis.mode.toUpperCase() : "N/A";
+  const intent = formatIntentLabel(profile?.intent);
+  const action = getActionLabel(analysis.signal);
+  const clarity = getClarityLabel(analysis.confidence);
+  const primaryLevel = getPrimaryLevel(analysis);
+  const positionSummary = profile?.positionContext
+    ? `${profile.positionContext.currentShares ?? 0} shares at ${profile.positionContext.averageCost ?? "no cost basis"}`
+    : "No position context";
+
+  analysisCard.className = "analysis-card";
+  analysisCard.innerHTML = `
+    <section class="signal-banner ${tone}">
+      <div class="signal-topline">
+        <div>
+          <p class="signal-label">Action now</p>
+          <h3 class="signal-value">${escapeHtml(action)}</h3>
+        </div>
+        <span class="pill">${escapeHtml(mode)} mode</span>
+      </div>
+      <div class="guidance-grid">
+        ${renderGuidanceCard("What to do now", buildActionCopy(analysis))}
+        ${renderGuidanceCard("What to watch next", buildWatchCopy(analysis))}
+      </div>
+      <div class="signal-meta">
+        <span class="pill">Signal Clarity ${escapeHtml(clarity)}</span>
+        <span class="pill">${escapeHtml(getPriceBadgeLabel(analysis.signal, primaryLevel))}</span>
+      </div>
+    </section>
+    <div class="analysis-grid">
+      ${renderMetricCard("Symbol", symbol)}
+      ${renderMetricCard("Timeframe", analysis.timeframe || "N/A")}
+      ${renderMetricCard("Watch Level", levels.entry || analysis.limitPrice || "N/A")}
+      ${renderMetricCard("Target", levels.target || "N/A")}
+      ${renderMetricCard("Risk Trigger", levels.invalidation || "N/A")}
+      ${renderMetricCard("Intent", intent)}
+      ${renderMetricCard("Position", positionSummary, true)}
+      ${renderMetricCard("Why", analysis.summary || "No summary returned.", true)}
+      ${renderMetricCard("Risk note", analysis.riskNote || "N/A", true)}
+    </div>
+  `;
 }
 
 function getSummary(state) {
@@ -51,12 +274,12 @@ function getSummary(state) {
   return state.lastError || state.stopReason || "Click Start in the popup to begin.";
 }
 
-function getProfileForDisplay(state) {
-  return state.monitoringProfile || state.lastResult?.monitoringProfile || null;
-}
-
 function hasApiKey(settings) {
   return Boolean(settings.openaiApiKey);
+}
+
+function hasSavedMonitoringSession(state) {
+  return Boolean(state.monitoringProfile || state.lastMonitoringProfile);
 }
 
 function populateIntentOptions(mode, selectedIntent = null) {
@@ -112,38 +335,9 @@ function populateContextForm(state) {
   updateFormGuidance(mode);
 }
 
-function renderHistory(results) {
-  if (!results.length) {
-    historyList.innerHTML = '<p class="empty-state">No rounds yet.</p>';
-    return;
-  }
-
-  historyList.innerHTML = results
-    .map((result) => {
-      const signal = result.analysis?.signal || "N/A";
-      const confidence = result.analysis?.confidence ?? "N/A";
-
-      return `
-        <article class="history-item">
-          <div class="history-row">
-            <strong>Round ${result.round}</strong>
-            <span>${result.mode.toUpperCase()}</span>
-          </div>
-          <div class="history-row muted-row">
-            <span>${signal}</span>
-            <span>${confidence}</span>
-          </div>
-          <p class="history-title">${result.pageTitle}</p>
-        </article>
-      `;
-    })
-    .join("");
-}
-
 async function render() {
   const state = await getState();
   const settings = await getSettings();
-  const profileForDisplay = getProfileForDisplay(state);
   const apiReady = hasApiKey(settings);
 
   statusBadge.textContent = state.status === STATUS.IDLE ? "Idle" : state.status.replace("_", " ");
@@ -152,10 +346,14 @@ async function render() {
     ? `API key saved locally. Model: ${settings.model}. Leave the field blank if you want to keep the current key.`
     : "No API key saved yet.";
   apiKeyInput.value = "";
-  sessionJson.textContent = formatJson(profileForDisplay, "Choose a mode to define the session context.");
-  validationJson.textContent = formatJson(state.lastValidation, "Waiting for validation...");
-  analysisJson.textContent = formatJson(state.lastResult?.analysis, "Run a chart analysis to see results.");
-  renderHistory(state.results);
+  renderAnalysisCard(state);
+  apiSetupSection.classList.toggle("hidden", apiReady);
+  const hasSavedSession = hasSavedMonitoringSession(state);
+  const isBusy = state.status === STATUS.RUNNING || state.status === STATUS.VALIDATING || isStartingMonitoring;
+
+  stopMonitorButton.disabled = !isBusy;
+  continueMonitorButton.disabled = !apiReady || state.status === STATUS.RUNNING || !hasSavedSession;
+  restartMonitorButton.disabled = !apiReady || !hasSavedSession;
 
   modeSection.classList.toggle("hidden", state.status !== STATUS.AWAITING_MODE);
   contextSection.classList.toggle("hidden", state.status !== STATUS.AWAITING_CONTEXT);
@@ -195,6 +393,76 @@ buyButton.addEventListener("click", async () => {
 
 sellButton.addEventListener("click", async () => {
   await chooseMode(MODE.SELL);
+});
+
+stopMonitorButton.addEventListener("click", async () => {
+  stopMonitorButton.disabled = true;
+
+  await chrome.runtime.sendMessage({
+    type: "stop-monitoring"
+  });
+
+  await render();
+});
+
+continueMonitorButton.addEventListener("click", async () => {
+  continueMonitorButton.disabled = true;
+  restartMonitorButton.disabled = true;
+  summaryText.textContent = "Continuing the previous monitoring session...";
+  isStartingMonitoring = true;
+
+  const state = await getState();
+  renderAnalysisCard({
+    ...state,
+    status: STATUS.RUNNING
+  });
+
+  let response;
+
+  try {
+    response = await chrome.runtime.sendMessage({
+      type: "continue-monitoring"
+    });
+  } finally {
+    isStartingMonitoring = false;
+  }
+
+  if (!response?.ok) {
+    summaryText.textContent = response?.error || "Could not continue monitoring.";
+  }
+
+  await render();
+});
+
+restartMonitorButton.addEventListener("click", async () => {
+  continueMonitorButton.disabled = true;
+  restartMonitorButton.disabled = true;
+  summaryText.textContent = "Restarting monitoring from round 1...";
+  isStartingMonitoring = true;
+
+  const state = await getState();
+  renderAnalysisCard({
+    ...state,
+    status: STATUS.RUNNING,
+    roundCount: 0,
+    lastResult: null
+  });
+
+  let response;
+
+  try {
+    response = await chrome.runtime.sendMessage({
+      type: "restart-monitoring"
+    });
+  } finally {
+    isStartingMonitoring = false;
+  }
+
+  if (!response?.ok) {
+    summaryText.textContent = response?.error || "Could not restart monitoring.";
+  }
+
+  await render();
 });
 
 saveApiKeyButton.addEventListener("click", async () => {
@@ -275,14 +543,25 @@ contextForm.addEventListener("submit", async (event) => {
   formError.textContent = "";
   formError.classList.add("hidden");
   summaryText.textContent = `Starting ${mode.toUpperCase()} monitoring...`;
-
-  const response = await chrome.runtime.sendMessage({
-    type: "start-monitoring",
-    mode,
-    currentShares: currentSharesInput.value,
-    averageCost: averageCostInput.value,
-    intent: intentSelect.value
+  isStartingMonitoring = true;
+  renderAnalysisCard({
+    ...state,
+    status: STATUS.RUNNING
   });
+
+  let response;
+
+  try {
+    response = await chrome.runtime.sendMessage({
+      type: "start-monitoring",
+      mode,
+      currentShares: currentSharesInput.value,
+      averageCost: averageCostInput.value,
+      intent: intentSelect.value
+    });
+  } finally {
+    isStartingMonitoring = false;
+  }
 
   if (!response?.ok) {
     formError.textContent = response?.error || "Could not start monitoring.";

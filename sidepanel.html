@@ -13,9 +13,14 @@
         <h1>Stock Chart Analyzer</h1>
         <div id="statusBadge" class="status-badge">Loading...</div>
         <p id="summaryText" class="summary-text">Reading extension state...</p>
+        <div class="hero-actions">
+          <button id="stopMonitorButton" class="hero-button hero-button-stop" type="button">Stop</button>
+          <button id="continueMonitorButton" class="hero-button" type="button">Continue</button>
+          <button id="restartMonitorButton" class="hero-button" type="button">Restart</button>
+        </div>
       </header>
 
-      <section class="card">
+      <section id="apiSetupSection" class="card">
         <h2>OpenAI Setup</h2>
         <p>Store your API key locally in this extension. Real analysis requests will use <strong>gpt-5.4</strong>.</p>
         <div class="context-form">
@@ -72,24 +77,9 @@
       </section>
 
       <section class="card">
-        <h2>Session Context</h2>
-        <pre id="sessionJson" class="json-block">Choose a mode to define the session context.</pre>
-      </section>
-
-      <section class="card">
-        <h2>Validation JSON</h2>
-        <pre id="validationJson" class="json-block">Waiting for validation...</pre>
-      </section>
-
-      <section class="card">
-        <h2>Latest Analysis JSON</h2>
-        <pre id="analysisJson" class="json-block">Run a chart analysis to see results.</pre>
-      </section>
-
-      <section class="card">
-        <h2>Recent Rounds</h2>
-        <div id="historyList" class="history-list">
-          <p class="empty-state">No rounds yet.</p>
+        <h2>Latest Recommendation</h2>
+        <div id="analysisCard" class="analysis-card empty-analysis">
+          <p class="empty-state">Run a chart analysis to see the latest recommendation.</p>
         </div>
       </section>
     </main>
