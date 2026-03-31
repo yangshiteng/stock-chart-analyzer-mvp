@@ -58,10 +58,72 @@ h1 {
   line-height: 1.45;
 }
 
-.actions {
+.language-picker {
+  display: grid;
+  gap: 6px;
+  margin-top: 16px;
+}
+
+.language-picker span {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--blue);
+}
+
+.language-picker select {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 12px;
+  font: inherit;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.popup-settings {
+  margin-top: 16px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.popup-settings h2 {
+  margin: 0 0 10px;
+  font-size: 16px;
+}
+
+.popup-settings input {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 12px;
+  font: inherit;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.popup-settings-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 10px;
+  margin-top: 12px;
+}
+
+.secondary-button {
+  color: var(--ink);
+  background: var(--sand);
+}
+
+.settings-status {
+  margin: 12px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.actions {
+  display: block;
   margin-top: 16px;
 }
 
@@ -85,13 +147,17 @@ button:disabled {
 }
 
 .primary-button {
+  width: 100%;
   color: #fff;
   background: linear-gradient(135deg, var(--blue), var(--blue-strong));
 }
 
-.secondary-button {
-  color: var(--ink);
-  background: var(--sand);
+#startButton:disabled {
+  cursor: not-allowed;
+  opacity: 1;
+  color: rgba(255, 255, 255, 0.96);
+  background: #7b92a7;
+  transform: none;
 }
 
 .details {

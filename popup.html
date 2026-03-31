@@ -9,13 +9,33 @@
   <body>
     <main class="popup-shell">
       <section class="panel">
-        <p class="eyebrow">Chrome Extension MVP</p>
-        <h1>Stock Chart Analyzer</h1>
+        <p id="popupEyebrow" class="eyebrow">Chrome Extension MVP</p>
+        <h1 id="popupTitle">Stock Chart Analyzer</h1>
         <p id="statusText" class="status-text">Checking extension status...</p>
+
+        <label class="language-picker">
+          <span id="popupLanguageLabel">Language</span>
+          <select id="popupLanguageSelect">
+            <option value="en">English</option>
+            <option value="zh">中文</option>
+          </select>
+        </label>
+
+        <section class="popup-settings">
+          <h2 id="popupApiSetupTitle">OpenAI Setup</h2>
+          <label class="language-picker">
+            <span id="popupApiKeyLabel">OpenAI API Key</span>
+            <input id="popupApiKeyInput" type="password" autocomplete="off" placeholder="sk-...">
+          </label>
+          <div class="popup-settings-actions">
+            <button id="popupSaveKeyButton" class="primary-button" type="button">Save Key</button>
+            <button id="popupClearKeyButton" class="secondary-button" type="button">Clear Key</button>
+          </div>
+          <p id="popupApiKeyStatus" class="settings-status">No API key saved yet.</p>
+        </section>
 
         <div class="actions">
           <button id="startButton" class="primary-button" type="button">Start</button>
-          <button id="stopButton" class="secondary-button" type="button">Stop</button>
         </div>
 
         <div class="details">

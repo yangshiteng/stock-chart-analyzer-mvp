@@ -9,23 +9,24 @@
   <body>
     <main class="panel-shell">
       <header class="hero">
-        <p class="eyebrow">Live Analysis</p>
-        <h1>Stock Chart Analyzer</h1>
+        <p id="heroEyebrow" class="eyebrow">Live Analysis</p>
+        <h1 id="heroTitle">Stock Chart Analyzer</h1>
         <div id="statusBadge" class="status-badge">Loading...</div>
         <p id="summaryText" class="summary-text">Reading extension state...</p>
         <div class="hero-actions">
           <button id="stopMonitorButton" class="hero-button hero-button-stop" type="button">Stop</button>
           <button id="continueMonitorButton" class="hero-button" type="button">Continue</button>
           <button id="restartMonitorButton" class="hero-button" type="button">Restart</button>
+          <button id="exitMonitorButton" class="hero-button hero-button-exit" type="button">Exit</button>
         </div>
       </header>
 
       <section id="apiSetupSection" class="card">
-        <h2>OpenAI Setup</h2>
-        <p>Store your API key locally in this extension. Real analysis requests will use <strong>gpt-5.4</strong>.</p>
+        <h2 id="apiSetupTitle">OpenAI Setup</h2>
+        <p id="apiSetupCopy">Store your API key locally in this extension. Real analysis requests will use <strong>gpt-5.4</strong>.</p>
         <div class="context-form">
           <label class="field">
-            <span>OpenAI API Key</span>
+            <span id="apiKeyLabel">OpenAI API Key</span>
             <input id="apiKeyInput" type="password" autocomplete="off" placeholder="sk-...">
           </label>
 
@@ -39,8 +40,8 @@
       </section>
 
       <section id="modeSection" class="card hidden">
-        <h2>Choose a mode</h2>
-        <p>The current tab passed validation. Pick one mode to continue to the trade context form.</p>
+        <h2 id="modeSectionTitle">Choose a mode</h2>
+        <p id="modeSectionCopy">The current tab passed validation. Pick one mode to continue to the trade context form.</p>
         <div class="mode-actions">
           <button id="buyButton" class="mode-button buy-button" type="button">Buy</button>
           <button id="sellButton" class="mode-button sell-button" type="button">Sell</button>
@@ -52,17 +53,17 @@
         <p id="contextDescription">Tell the analyzer about your current position and what kind of advice you want.</p>
         <form id="contextForm" class="context-form">
           <label class="field">
-            <span>Current Shares</span>
+            <span id="currentSharesLabel">Current Shares</span>
             <input id="currentSharesInput" type="number" min="0" step="0.0001" inputmode="decimal" placeholder="0">
           </label>
 
           <label class="field">
-            <span>Average Cost</span>
+            <span id="averageCostLabel">Average Cost</span>
             <input id="averageCostInput" type="number" min="0" step="0.0001" inputmode="decimal" placeholder="18.45">
           </label>
 
           <label class="field">
-            <span>Intent</span>
+            <span id="intentLabel">Intent</span>
             <select id="intentSelect"></select>
           </label>
 
@@ -77,7 +78,7 @@
       </section>
 
       <section class="card">
-        <h2>Latest Recommendation</h2>
+        <h2 id="recommendationTitle">Latest Recommendation</h2>
         <div id="analysisCard" class="analysis-card empty-analysis">
           <p class="empty-state">Run a chart analysis to see the latest recommendation.</p>
         </div>

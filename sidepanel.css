@@ -109,6 +109,10 @@ h2 {
   background: rgba(197, 93, 73, 0.22);
 }
 
+.hero-button-exit {
+  background: rgba(255, 255, 255, 0.16);
+}
+
 .card {
   padding: 16px;
   border: 1px solid var(--line);
@@ -351,7 +355,7 @@ h2 {
 
 .guidance-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: 1fr;
   gap: 10px;
 }
 

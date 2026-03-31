@@ -1,15 +1,6 @@
 # Stock Chart Analyzer MVP
 
-A Chrome Extension (Manifest V3) MVP that:
-
-- captures the current tab screenshot
-- validates whether the page looks like a stock chart using keyword rules
-- lets the user choose `Buy` or `Sell`
-- collects simple position context from the user
-- sends the screenshot plus prompt context to OpenAI `gpt-5.4`
-- shows JSON results in the side panel
-- repeats every 5 minutes with `chrome.alarms`
-- stops after 70 rounds or when the user clicks `Stop`
+A Chrome Extension (Manifest V3) MVP that validates stock-chart pages, collects simple trade context, sends chart screenshots to OpenAI `gpt-5.4`, and shows recurring buy/sell recommendations in a side panel.
 
 ## Current Status
 
@@ -17,56 +8,66 @@ This repo is a working MVP prototype.
 
 What is real now:
 
-- Chrome extension flow
-- popup `Start` / `Stop`
-- side panel UI
-- screenshot capture
-- keyword-based stock chart validation
-- session context form for `Buy` / `Sell`
-- OpenAI API integration with `gpt-5.4`
+- popup UI with:
+  - language selector (`English` / `中文`)
+  - OpenAI API key save / clear controls
+  - a single primary `Start` button
+- side panel workflow with:
+  - validation status
+  - `Buy` / `Sell` mode selection
+  - position-context form
+  - user-friendly recommendation card
+  - `Stop`, `Continue`, `Restart`, and `Exit` controls
+- screenshot capture of the active chart tab
+- keyword-based stock-chart validation from page title and URL
+- OpenAI Responses API integration with `gpt-5.4`
 - recurring monitoring every 5 minutes
+- automatic pause if the user leaves the original bound chart tab
 - auto-stop after 70 rounds
-- notifications for stop / error cases
+- bilingual UI strings for English and Simplified Chinese
 
 What is still basic:
 
 - chart validation is keyword-based, not image-based
 - API key is stored in extension local storage for MVP simplicity
-- error handling is improved but still lightweight
 - no automated tests yet
+- the extension depends on visible-tab screenshots, so monitoring only works while the original chart tab remains active
 
-## File Structure
+## Current Product Behavior
 
-- `manifest.json`: extension manifest and permissions
-- `background.js`: service worker, scheduling, capture, monitoring workflow
-- `popup.html`, `popup.js`, `popup.css`: popup UI with `Start` / `Stop`
-- `sidepanel.html`, `sidepanel.js`, `sidepanel.css`: side panel UI, API key setup, Buy/Sell flow, results
-- `lib/constants.js`: shared constants and state enums
-- `lib/storage.js`: local storage helpers for monitor state and app settings
-- `lib/chart-validator.js`: keyword-based stock chart validation
-- `lib/prompt-config.js`: parameterized Buy/Sell prompt configs
-- `lib/llm.js`: OpenAI `gpt-5.4` request logic and prompt assembly
-- `assets/icon-128.png`: extension icon
-- `AGENTS.md`: project guidance for coding agents
-
-## How It Works
-
-1. Open the popup and click `Start`.
-2. The extension captures the current visible tab.
-3. It checks the tab title and URL for stock-chart keywords.
-4. If validation passes, the side panel lets the user choose `Buy` or `Sell`.
-5. The user fills in:
+1. Open a stock-chart page.
+2. Open the popup.
+3. Choose a language if needed.
+4. Save an OpenAI API key in the popup if one is not already stored.
+5. Click `Start`.
+6. The extension validates the current tab.
+7. If validation passes, the side panel opens and lets the user choose `Buy` or `Sell`.
+8. The user fills in:
    - `Current Shares`
    - `Average Cost`
    - `Intent`
-6. The extension sends:
-   - the screenshot
-   - page title / URL
-   - Buy/Sell prompt
-   - user position context
-   to OpenAI `gpt-5.4`
-7. The response must be valid JSON and is shown in the side panel.
-8. The extension repeats every 5 minutes until the user stops it or it reaches 70 rounds.
+9. The extension starts monitoring and immediately runs the first round.
+10. Every later round runs every 5 minutes with `chrome.alarms`.
+11. Monitoring remains bound to the original chart tab.
+12. If the user leaves that tab, monitoring pauses instead of silently switching to another page.
+13. The user can:
+   - `Stop`: pause the session and keep the current context
+   - `Continue`: resume a paused session on the original chart tab
+   - `Restart`: restart monitoring from round 1 using the saved session
+   - `Exit`: fully clear the current monitoring session and close the side panel
+
+## Language Behavior
+
+The extension UI supports English and Simplified Chinese.
+
+Current analysis-language architecture:
+
+- the analysis prompt is always English
+- the analysis JSON schema and enum values remain English
+- English mode returns the analysis directly
+- Chinese mode performs a second LLM call to translate user-facing fields into Simplified Chinese
+
+This keeps the internal analysis path consistent while still giving Chinese users localized output.
 
 ## OpenAI Setup
 
@@ -74,41 +75,79 @@ The extension currently uses the OpenAI Responses API with:
 
 - model: `gpt-5.4`
 - image input: `high` detail
-- JSON output mode
+- strict JSON schema output
 
-Before using Buy/Sell analysis:
+The OpenAI API key is stored in `chrome.storage.local` inside the extension.
 
-1. Open the side panel.
-2. Enter your OpenAI API key in the `OpenAI Setup` section.
-3. Click `Save Key`.
+Current UX:
 
-Without an API key, the extension will not allow you to continue into the Buy/Sell analysis flow.
+- API key management lives in the popup
+- the side panel hides the setup card when a key is already stored
+
+## File Structure
+
+- `manifest.json`: extension manifest and permissions
+- `background.js`: service worker, scheduling, capture, state transitions, pause / resume logic, side panel enablement
+- `popup.html`, `popup.js`, `popup.css`: popup UI for language, API key setup, and `Start`
+- `sidepanel.html`, `sidepanel.js`, `sidepanel.css`: side panel UI, mode selection, context form, recommendation display, monitoring controls
+- `lib/constants.js`: shared constants and state enums
+- `lib/storage.js`: local storage helpers for monitor state and app settings
+- `lib/chart-validator.js`: keyword-based stock chart validation
+- `lib/prompt-config.js`: English analysis prompt configs
+- `lib/llm.js`: OpenAI request logic, JSON parsing, and Chinese translation step
+- `lib/i18n.js`: UI translation dictionary and helpers
+- `assets/icon-128.png`: extension icon
+- `AGENTS.md`: project guidance for coding agents
+
+## State Model
+
+Primary states:
+
+- `idle`
+- `validating`
+- `awaiting_mode`
+- `awaiting_context`
+- `running`
+- `paused`
+
+Important behavior:
+
+- `Start` in the popup triggers validation
+- `Stop` in the side panel pauses, it does not fully exit
+- `Exit` fully clears the current session
+- `Continue` only resumes when the user is back on the original bound chart tab
+
+## Side Panel Availability
+
+The side panel is not meant to be generally available on any stock-looking page.
+
+Current rule:
+
+- before `Start` is used, the extension should not expose the side panel workflow for that tab
+- after validation passes, the validated tab can open the side panel
+- while monitoring is `running` or `paused`, the side panel stays associated with the original bound chart tab
 
 ## Load Locally In Chrome
 
 1. Open `chrome://extensions`
 2. Enable `Developer mode`
 3. Click `Load unpacked`
-4. Select the cloned project folder on your machine, for example:
-
-```text
-stock-chart-analyzer-mvp/
-```
-
-5. Open a stock chart page
+4. Select this project folder
+5. Open a stock-chart page
 6. Click the extension icon
-7. Click `Start`
-8. Use the side panel to save your API key, choose `Buy` or `Sell`, and start monitoring
+7. Save your OpenAI API key if needed
+8. Click `Start`
+9. Use the side panel to choose `Buy` or `Sell`, fill in context, and start monitoring
 
 ## Prompt Design
 
-The prompts are parameterized in `lib/prompt-config.js`.
+The prompts are configured in `lib/prompt-config.js`.
 
 Current prompt behavior:
 
-- `Buy` only produces stock buy guidance
-- `Sell` only produces stock sell / trim / exit guidance
-- responses are expected to be:
+- `Buy` mode only produces buy-side guidance
+- `Sell` mode only produces sell / trim / exit guidance
+- responses must be:
   - concise
   - direct
   - JSON-only
@@ -122,44 +161,25 @@ Expected response fields include:
 - `limitPrice`
 - `confidence`
 - `summary`
-- `levels`
+- `levels.entry`
+- `levels.target`
+- `levels.invalidation`
 - `riskNote`
 - `symbol`
 - `timeframe`
 
-## Notes
+## Limitations
 
-- This extension is for prototype/demo use only.
+- The extension does not do image-native chart validation yet.
+- It uses visible-tab screenshots, so it cannot keep analyzing a background tab that is no longer active.
 - It is not financial advice.
-- All model outputs can be wrong, incomplete, stale, or misleading.
-- Do not use this extension as the sole basis for buying or selling securities.
-- Use at your own risk.
-- Storing an API key in extension local storage is convenient for MVP testing, but not the final security model you would want in production.
-
-## Disclaimer
-
-- This project is an experimental stock-chart analysis prototype.
-- It does not provide financial, investment, legal, or tax advice.
-- Nothing in this repository should be treated as a recommendation to buy, sell, or hold any security.
-- The generated output is only an automated model opinion based on limited context and may be incorrect.
-- This project is not suitable for unattended live trading or production brokerage automation.
-- Always verify prices, order details, and risk manually before placing any real trade.
-- You are fully responsible for any decisions, losses, or consequences arising from use of this project.
+- It is not suitable for unattended live trading or production brokerage automation.
 
 ## Security
 
-- The current MVP stores the OpenAI API key in `chrome.storage.local` inside the extension.
-- That is acceptable for local testing, but it is not a production-grade secret-management design.
+- The current MVP stores the OpenAI API key in `chrome.storage.local`.
+- That is acceptable for local testing, but not a production-grade secret-management model.
 - Do not commit API keys, tokens, or personal credentials into this repository.
-- If you fork or modify this project, review all storage, logging, and network behavior before using real credentials.
-- A stronger production design would move model access behind a backend you control, so the client extension never holds the raw API key.
-- See `SECURITY.md` for a short summary of the current security posture and reporting expectations.
+- A stronger production design would route model access through a backend you control.
 
-## Next Improvements
-
-- validate charts from the screenshot itself, not only page keywords
-- add stronger OpenAI error handling and retry behavior
-- highlight `limitPrice` more clearly in the UI
-- add screenshot cropping so only the chart region is sent
-- add tests for state transitions and message handling
-- move API access behind a safer backend if this evolves beyond MVP
+See `SECURITY.md` for the current security posture summary.
