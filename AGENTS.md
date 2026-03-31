@@ -11,6 +11,7 @@ The extension currently does the following:
 - validates the active tab as a stock-chart page using keyword rules from page title and URL
 - opens a side panel workflow only after the user explicitly starts validation from the popup
 - stores the OpenAI API key locally inside the extension for MVP use
+- stores an optional Discord webhook URL locally inside the extension for alert delivery
 - lets the user choose `Buy` or `Sell`
 - asks the user for trade context:
   - current shares
@@ -19,9 +20,11 @@ The extension currently does the following:
 - sends the visible chart screenshot plus structured context to OpenAI `gpt-5.4`
 - requires all analysis responses to be valid JSON
 - renders the latest recommendation as a user-friendly card in the side panel
+- shows a loading state during each new monitoring round while the next screenshot analysis is in flight
 - monitors every 5 minutes with `chrome.alarms`
 - binds monitoring to the original chart tab instead of silently switching to the current active page
 - pauses automatically if the user leaves the original chart tab
+- can send Discord notifications for successful recommendation rounds when a webhook is configured
 - lets the user:
   - pause with `Stop`
   - resume with `Continue`
@@ -49,12 +52,15 @@ The extension currently does the following:
 - English is the internal analysis language
 - Chinese output is produced as a second translation step after the English analysis
 - schema keys and enum values remain English even when the UI is Chinese
+- Discord webhook alerts are optional and should never be treated as a guaranteed delivery channel
+- Discord webhook URLs are secrets and must never be committed
 
 ## Current UX Scope
 
 - popup with:
   - language selector
   - OpenAI API key management
+  - Discord webhook management
   - single primary `Start` action
 - side panel with:
   - status summary
@@ -83,4 +89,5 @@ The extension currently does the following:
 - improve chart validation beyond title / URL keyword rules
 - consider chart-region cropping before upload
 - make notification / re-entry behavior more polished without fighting Chrome side panel gesture limits
+- add finer control for Discord alerts, such as signal-change-only delivery
 - improve API-key handling if the project evolves beyond MVP

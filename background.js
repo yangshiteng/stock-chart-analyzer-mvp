@@ -36,6 +36,219 @@ async function notifyUser(title, message) {
   }
 }
 
+function isValidDiscordWebhookUrl(value) {
+  try {
+    const url = new URL(value);
+    const validHosts = new Set(["discord.com", "canary.discord.com", "ptb.discord.com", "discordapp.com"]);
+
+    return url.protocol === "https:" && validHosts.has(url.hostname) && url.pathname.startsWith("/api/webhooks/");
+  } catch {
+    return false;
+  }
+}
+
+function truncateText(value, maxLength = 280) {
+  if (!value) {
+    return "";
+  }
+
+  const text = `${value}`.trim();
+
+  if (text.length <= maxLength) {
+    return text;
+  }
+
+  return `${text.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
+}
+
+function getDiscordModeLabel(language, mode) {
+  if (mode === MODE.BUY) {
+    return language === "zh" ? "买入" : "Buy";
+  }
+
+  if (mode === MODE.SELL) {
+    return language === "zh" ? "卖出" : "Sell";
+  }
+
+  return mode || (language === "zh" ? "未知" : "Unknown");
+}
+
+function getDiscordActionLabel(language, signal) {
+  if (signal === "BUY") {
+    return language === "zh" ? "买入" : "Buy";
+  }
+
+  if (signal === "SELL") {
+    return language === "zh" ? "卖出" : "Sell";
+  }
+
+  if (signal === "WAIT_FOR_CONFIRMATION") {
+    return language === "zh" ? "先等待确认" : "Wait for confirmation";
+  }
+
+  return language === "zh" ? "先观望" : "Stand aside";
+}
+
+function getDiscordClarityLabel(language, confidence) {
+  const value = Number(confidence);
+
+  if (!Number.isFinite(value)) {
+    return language === "zh" ? "未知" : "Unknown";
+  }
+
+  if (value < 35) {
+    return language === "zh" ? "低" : "Low";
+  }
+
+  if (value < 70) {
+    return language === "zh" ? "中" : "Medium";
+  }
+
+  return language === "zh" ? "高" : "High";
+}
+
+function getDiscordColor(signal) {
+  if (signal === "BUY") {
+    return 0x1f8f4e;
+  }
+
+  if (signal === "SELL") {
+    return 0xb64a3a;
+  }
+
+  if (signal === "WAIT_FOR_CONFIRMATION") {
+    return 0xa57008;
+  }
+
+  return 0x4f718c;
+}
+
+function getDiscordFallback(language) {
+  return language === "zh" ? "无" : "N/A";
+}
+
+function getDiscordPositionSummary(language, monitoringProfile) {
+  const positionContext = monitoringProfile?.positionContext;
+
+  if (!positionContext || positionContext.currentShares === undefined || positionContext.currentShares === null) {
+    return getDiscordFallback(language);
+  }
+
+  const shares = positionContext.currentShares;
+  const averageCost = positionContext.averageCost ?? getDiscordFallback(language);
+
+  return language === "zh"
+    ? `${shares} 股，成本 ${averageCost}`
+    : `${shares} shares at ${averageCost}`;
+}
+
+function buildDiscordAnalysisPayload(result, state, language) {
+  const analysis = result?.analysis || {};
+  const levels = analysis.levels || {};
+  const fallback = getDiscordFallback(language);
+  const symbol = analysis.symbol || result?.validation?.symbolGuess || fallback;
+  const timeframe = analysis.timeframe || fallback;
+  const action = getDiscordActionLabel(language, analysis.signal);
+  const mode = getDiscordModeLabel(language, analysis.mode || result?.mode);
+  const clarity = getDiscordClarityLabel(language, analysis.confidence);
+  const watchLevel = levels.entry || analysis.limitPrice || fallback;
+  const target = levels.target || fallback;
+  const riskTrigger = levels.invalidation || fallback;
+  const position = getDiscordPositionSummary(language, result?.monitoringProfile);
+  const description = truncateText(
+    analysis.summary || (language === "zh" ? "新的图表分析结果已生成。" : "A new chart analysis result is ready."),
+    350
+  );
+
+  return {
+    username: language === "zh" ? "股票图表分析器" : "Stock Chart Analyzer",
+    allowed_mentions: {
+      parse: []
+    },
+    embeds: [
+      {
+        title: language === "zh" ? `最新建议 · ${symbol}` : `Latest Recommendation · ${symbol}`,
+        url: result?.pageUrl || undefined,
+        description,
+        color: getDiscordColor(analysis.signal),
+        fields: [
+          {
+            name: language === "zh" ? "当前动作" : "Action Now",
+            value: truncateText(action, 100),
+            inline: true
+          },
+          {
+            name: language === "zh" ? "模式" : "Mode",
+            value: truncateText(mode, 100),
+            inline: true
+          },
+          {
+            name: language === "zh" ? "信号清晰度" : "Signal Clarity",
+            value: truncateText(clarity, 100),
+            inline: true
+          },
+          {
+            name: language === "zh" ? "关注价位" : "Watch Level",
+            value: truncateText(watchLevel, 250),
+            inline: true
+          },
+          {
+            name: language === "zh" ? "目标位" : "Target",
+            value: truncateText(target, 250),
+            inline: true
+          },
+          {
+            name: language === "zh" ? "风险触发位" : "Risk Trigger",
+            value: truncateText(riskTrigger, 250),
+            inline: true
+          },
+          {
+            name: language === "zh" ? "周期" : "Timeframe",
+            value: truncateText(timeframe, 100),
+            inline: true
+          },
+          {
+            name: language === "zh" ? "持仓" : "Position",
+            value: truncateText(position, 250),
+            inline: true
+          }
+        ],
+        footer: {
+          text: language === "zh"
+            ? `第 ${result?.round || state?.roundCount || 0} / ${state?.maxRounds || 0} 轮`
+            : `Round ${result?.round || state?.roundCount || 0} of ${state?.maxRounds || 0}`
+        },
+        timestamp: result?.capturedAt || new Date().toISOString()
+      }
+    ]
+  };
+}
+
+async function notifyDiscordAnalysisResult(result, state, language) {
+  const settings = await getSettings();
+  const webhookUrl = settings.discordWebhookUrl?.trim();
+
+  if (!webhookUrl || !isValidDiscordWebhookUrl(webhookUrl)) {
+    return;
+  }
+
+  try {
+    const response = await fetch(webhookUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(buildDiscordAnalysisPayload(result, state, language))
+    });
+
+    if (!response.ok) {
+      throw new Error(`Discord webhook returned ${response.status}`);
+    }
+  } catch (error) {
+    console.warn("Discord notification failed:", error);
+  }
+}
+
 async function clearMonitoringAlarm() {
   await chrome.alarms.clear(ALARM_NAME);
 }
@@ -121,12 +334,17 @@ function scheduleMonitoringAlarm() {
   });
 }
 
-async function getActiveTab() {
+async function getActiveTab(windowId = null) {
   const language = await getUiLanguage();
-  const [tab] = await chrome.tabs.query({
-    active: true,
-    lastFocusedWindow: true
-  });
+  const query = { active: true };
+
+  if (windowId) {
+    query.windowId = windowId;
+  } else {
+    query.lastFocusedWindow = true;
+  }
+
+  const [tab] = await chrome.tabs.query(query);
 
   if (!tab?.windowId) {
     throw new Error(bgText(language, "noActiveTab"));
@@ -135,8 +353,8 @@ async function getActiveTab() {
   return tab;
 }
 
-async function captureActiveTab() {
-  const tab = await getActiveTab();
+async function captureActiveTab(windowId = null) {
+  const tab = await getActiveTab(windowId);
   const imageDataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, {
     format: "png"
   });
@@ -227,6 +445,7 @@ async function pauseMonitoring(reason, currentState = null) {
 
   const nextState = await patchState({
     status: STATUS.PAUSED,
+    isRoundInFlight: false,
     mode,
     monitoringProfile,
     lastMode: mode,
@@ -253,7 +472,7 @@ async function ensureMonitoringTabActive(monitoringProfile, language) {
     throw new Error(getResumeTabMissingReason(language));
   }
 
-  const activeTab = await getActiveTab();
+  const activeTab = await getActiveTab(monitoringProfile?.boundWindowId || null);
 
   if (activeTab.id !== boundTab.id) {
     throw new Error(getResumeTabMismatchReason(language));
@@ -395,6 +614,7 @@ async function stopMonitoring(reason = null) {
 
   const nextState = await patchState({
     status: STATUS.IDLE,
+    isRoundInFlight: false,
     mode: null,
     monitoringProfile: null,
     lastMode: currentState.mode || currentState.lastMode,
@@ -547,7 +767,7 @@ async function runMonitoringRound(modeOverride = null) {
   }
 
   if (monitoringProfile?.boundTabId) {
-    const activeTab = await getActiveTab().catch(() => null);
+    const activeTab = await getActiveTab(monitoringProfile.boundWindowId || null).catch(() => null);
 
     if (!activeTab || activeTab.id !== monitoringProfile.boundTabId) {
       const state = await pauseMonitoring(getPauseReason(language), currentState);
@@ -555,8 +775,16 @@ async function runMonitoringRound(modeOverride = null) {
     }
   }
 
+  await patchState({
+    ...currentState,
+    status: STATUS.RUNNING,
+    isRoundInFlight: true,
+    stopReason: null,
+    lastError: null
+  });
+
   try {
-    const capture = await captureActiveTab();
+    const capture = await captureActiveTab(monitoringProfile?.boundWindowId || null);
     const validation = validateStockChartByKeywordsWithLanguage({
       ...capture,
       language
@@ -566,6 +794,7 @@ async function runMonitoringRound(modeOverride = null) {
     if (!validation.isStockChart) {
       const state = await patchState({
         status: STATUS.IDLE,
+        isRoundInFlight: false,
         mode: null,
         monitoringProfile: null,
         lastMode: mode,
@@ -607,6 +836,7 @@ async function runMonitoringRound(modeOverride = null) {
     let state = await saveState({
       ...currentState,
       status: STATUS.RUNNING,
+      isRoundInFlight: false,
       mode,
       lastMode: mode,
       lastMonitoringProfile: monitoringProfile,
@@ -618,11 +848,14 @@ async function runMonitoringRound(modeOverride = null) {
       lastError: null
     });
 
+    await notifyDiscordAnalysisResult(result, state, language);
+
     if (round >= state.maxRounds) {
       await clearMonitoringAlarm();
       state = await saveState({
         ...state,
         status: STATUS.IDLE,
+        isRoundInFlight: false,
         mode: null,
         monitoringProfile: null,
         lastMode: mode,
@@ -642,6 +875,7 @@ async function runMonitoringRound(modeOverride = null) {
     const state = await saveState({
       ...currentState,
       status: STATUS.IDLE,
+      isRoundInFlight: false,
       mode: null,
       monitoringProfile: null,
       lastMode: mode,
@@ -672,6 +906,7 @@ async function startMonitoring(payload) {
 
   await patchState({
     status: STATUS.RUNNING,
+    isRoundInFlight: false,
     mode: monitoringProfile.mode,
     monitoringProfile,
     lastMode: monitoringProfile.mode,
@@ -725,6 +960,7 @@ async function continueMonitoring() {
 
   await patchState({
     status: STATUS.RUNNING,
+    isRoundInFlight: false,
     mode,
     monitoringProfile,
     lastMode: mode,
@@ -762,6 +998,7 @@ async function restartMonitoring() {
   await saveState({
     ...createDefaultState(),
     status: STATUS.RUNNING,
+    isRoundInFlight: false,
     mode,
     monitoringProfile,
     lastMode: mode,
@@ -822,8 +1059,19 @@ chrome.tabs.onActivated.addListener(async ({ tabId }) => {
   await setSidePanelAvailabilityForTab(tabId);
 
   const state = await getState();
+  const monitoringProfile = state.monitoringProfile || state.lastMonitoringProfile;
 
-  if (state.status === STATUS.RUNNING && state.monitoringProfile?.boundTabId && tabId !== state.monitoringProfile.boundTabId) {
+  if (state.status !== STATUS.RUNNING || !monitoringProfile?.boundTabId) {
+    return;
+  }
+
+  const activatedTab = await getTabById(tabId);
+
+  if (!activatedTab) {
+    return;
+  }
+
+  if (activatedTab.windowId === monitoringProfile.boundWindowId && tabId !== monitoringProfile.boundTabId) {
     await pauseMonitoring(getPauseReason(await getUiLanguage()), state);
   }
 });

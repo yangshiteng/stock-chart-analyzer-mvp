@@ -177,7 +177,7 @@ function renderAnalysisCard(state, language) {
   const analysis = result?.analysis;
   const profile = result?.monitoringProfile;
 
-  if (isStartingMonitoring || (state.status === STATUS.RUNNING && state.roundCount === 0 && !analysis)) {
+  if (isStartingMonitoring || state.isRoundInFlight || (state.status === STATUS.RUNNING && state.roundCount === 0 && !analysis)) {
     analysisCard.className = "analysis-card";
     analysisCard.innerHTML = `
       <section class="loading-card">
@@ -277,6 +277,10 @@ function getSummary(state, language) {
 
   if (state.status === STATUS.AWAITING_CONTEXT) {
     return state.mode === MODE.BUY ? t(language, "buySetupCopy") : t(language, "sellSetupCopy");
+  }
+
+  if (state.status === STATUS.RUNNING && state.isRoundInFlight) {
+    return t(language, "analyzingCopy");
   }
 
   if (state.status === STATUS.RUNNING) {

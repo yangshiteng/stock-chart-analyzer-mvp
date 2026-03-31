@@ -93,6 +93,13 @@ h1 {
   font-size: 16px;
 }
 
+.settings-copy {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
 .popup-settings input {
   width: 100%;
   border: 1px solid var(--line);

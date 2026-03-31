@@ -34,6 +34,25 @@
           <p id="popupApiKeyStatus" class="settings-status">No API key saved yet.</p>
         </section>
 
+        <section class="popup-settings">
+          <h2 id="popupDiscordSetupTitle">Discord Notifications</h2>
+          <p id="popupDiscordSetupCopy" class="settings-copy">Paste a Discord webhook URL to let this extension send Discord alerts later.</p>
+          <label class="language-picker">
+            <span id="popupDiscordWebhookLabel">Discord Webhook URL</span>
+            <input
+              id="popupDiscordWebhookInput"
+              type="url"
+              autocomplete="off"
+              placeholder="https://discord.com/api/webhooks/..."
+            >
+          </label>
+          <div class="popup-settings-actions">
+            <button id="popupSaveDiscordButton" class="primary-button" type="button">Save Webhook</button>
+            <button id="popupClearDiscordButton" class="secondary-button" type="button">Clear Webhook</button>
+          </div>
+          <p id="popupDiscordStatus" class="settings-status">No Discord webhook saved yet.</p>
+        </section>
+
         <div class="actions">
           <button id="startButton" class="primary-button" type="button">Start</button>
         </div>

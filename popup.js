@@ -14,9 +14,27 @@ const popupApiKeyInput = document.getElementById("popupApiKeyInput");
 const popupSaveKeyButton = document.getElementById("popupSaveKeyButton");
 const popupClearKeyButton = document.getElementById("popupClearKeyButton");
 const popupApiKeyStatus = document.getElementById("popupApiKeyStatus");
+const popupDiscordSetupTitle = document.getElementById("popupDiscordSetupTitle");
+const popupDiscordSetupCopy = document.getElementById("popupDiscordSetupCopy");
+const popupDiscordWebhookLabel = document.getElementById("popupDiscordWebhookLabel");
+const popupDiscordWebhookInput = document.getElementById("popupDiscordWebhookInput");
+const popupSaveDiscordButton = document.getElementById("popupSaveDiscordButton");
+const popupClearDiscordButton = document.getElementById("popupClearDiscordButton");
+const popupDiscordStatus = document.getElementById("popupDiscordStatus");
 const startButton = document.getElementById("startButton");
 const statusText = document.getElementById("statusText");
 const detailText = document.getElementById("detailText");
+
+function isValidDiscordWebhookUrl(value) {
+  try {
+    const url = new URL(value);
+    const validHosts = new Set(["discord.com", "canary.discord.com", "ptb.discord.com", "discordapp.com"]);
+
+    return url.protocol === "https:" && validHosts.has(url.hostname) && url.pathname.startsWith("/api/webhooks/");
+  } catch {
+    return false;
+  }
+}
 
 function getModeDisplay(language, mode) {
   if (mode === "buy") {
@@ -108,11 +126,20 @@ async function render() {
   popupApiKeyLabel.textContent = t(language, "openAiApiKey");
   popupSaveKeyButton.textContent = t(language, "saveKey");
   popupClearKeyButton.textContent = t(language, "clearKey");
+  popupDiscordSetupTitle.textContent = t(language, "discordSetup");
+  popupDiscordSetupCopy.textContent = t(language, "discordSetupCopy");
+  popupDiscordWebhookLabel.textContent = t(language, "discordWebhookUrl");
+  popupSaveDiscordButton.textContent = t(language, "saveWebhook");
+  popupClearDiscordButton.textContent = t(language, "clearWebhook");
   startButton.textContent = getStartButtonLabel(state, language);
   popupApiKeyInput.value = "";
+  popupDiscordWebhookInput.value = "";
   popupApiKeyStatus.textContent = settings.openaiApiKey
     ? t(language, "apiKeySaved", { model: settings.model })
     : t(language, "noApiKeySaved");
+  popupDiscordStatus.textContent = settings.discordWebhookUrl
+    ? t(language, "discordWebhookSaved")
+    : t(language, "noDiscordWebhookSaved");
 
   statusText.textContent = view.title;
   detailText.textContent = view.detail;
@@ -120,6 +147,8 @@ async function render() {
   startButton.disabled = state.status === STATUS.VALIDATING || state.status === STATUS.RUNNING || state.status === STATUS.PAUSED;
   popupSaveKeyButton.disabled = false;
   popupClearKeyButton.disabled = false;
+  popupSaveDiscordButton.disabled = false;
+  popupClearDiscordButton.disabled = false;
 }
 
 async function openSidePanel() {
@@ -210,6 +239,49 @@ popupClearKeyButton.addEventListener("click", async () => {
 
   popupApiKeyStatus.textContent = t(language, "apiKeyCleared");
   popupApiKeyInput.value = "";
+  await render();
+});
+
+popupSaveDiscordButton.addEventListener("click", async () => {
+  const settings = await getSettings();
+  const language = getLanguage(settings.language);
+  const nextWebhook = popupDiscordWebhookInput.value.trim();
+
+  if (!nextWebhook) {
+    popupDiscordStatus.textContent = t(language, "enterWebhookFirst");
+    return;
+  }
+
+  if (!isValidDiscordWebhookUrl(nextWebhook)) {
+    popupDiscordStatus.textContent = t(language, "invalidDiscordWebhook");
+    return;
+  }
+
+  popupSaveDiscordButton.disabled = true;
+  popupClearDiscordButton.disabled = true;
+
+  await patchSettings({
+    discordWebhookUrl: nextWebhook
+  });
+
+  popupDiscordStatus.textContent = t(language, "discordWebhookReady");
+  popupDiscordWebhookInput.value = "";
+  await render();
+});
+
+popupClearDiscordButton.addEventListener("click", async () => {
+  const settings = await getSettings();
+  const language = getLanguage(settings.language);
+
+  popupSaveDiscordButton.disabled = true;
+  popupClearDiscordButton.disabled = true;
+
+  await patchSettings({
+    discordWebhookUrl: ""
+  });
+
+  popupDiscordStatus.textContent = t(language, "discordWebhookCleared");
+  popupDiscordWebhookInput.value = "";
   await render();
 });
 
