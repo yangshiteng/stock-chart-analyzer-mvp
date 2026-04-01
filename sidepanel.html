@@ -39,18 +39,9 @@
         </div>
       </section>
 
-      <section id="modeSection" class="card hidden">
-        <h2 id="modeSectionTitle">Choose a mode</h2>
-        <p id="modeSectionCopy">The current tab passed validation. Pick one mode to continue to the trade context form.</p>
-        <div class="mode-actions">
-          <button id="buyButton" class="mode-button buy-button" type="button">Buy</button>
-          <button id="sellButton" class="mode-button sell-button" type="button">Sell</button>
-        </div>
-      </section>
-
       <section id="contextSection" class="card hidden">
-        <h2 id="contextTitle">Trade Context</h2>
-        <p id="contextDescription">Tell the analyzer about your current position and what kind of advice you want.</p>
+        <h2 id="contextTitle">Execution Constraints</h2>
+        <p id="contextDescription">Tell the assistant about your current position, cash, and risk rules.</p>
         <form id="contextForm" class="context-form">
           <label class="field">
             <span id="currentSharesLabel">Current Shares</span>
@@ -63,16 +54,35 @@
           </label>
 
           <label class="field">
-            <span id="intentLabel">Intent</span>
-            <select id="intentSelect"></select>
+            <span id="availableCashLabel">Available Cash</span>
+            <input id="availableCashInput" type="number" min="0" step="0.01" inputmode="decimal" placeholder="5000">
           </label>
 
-          <p id="formHint" class="form-hint">If you are opening a new position, current shares can be 0 and average cost can stay blank.</p>
+          <label class="field">
+            <span id="maxNewCapitalLabel">Max New Capital For This Trade</span>
+            <input id="maxNewCapitalInput" type="number" min="0" step="0.01" inputmode="decimal" placeholder="1500">
+          </label>
+
+          <label class="field">
+            <span id="allowAveragingDownLabel">Allow Averaging Down</span>
+            <select id="allowAveragingDownSelect"></select>
+          </label>
+
+          <label class="field">
+            <span id="allowReducingPositionLabel">Allow Reducing Position</span>
+            <select id="allowReducingPositionSelect"></select>
+          </label>
+
+          <label class="field">
+            <span id="riskStyleLabel">Risk Style</span>
+            <select id="riskStyleSelect"></select>
+          </label>
+
+          <p id="formHint" class="form-hint">If you already hold shares, average cost is required.</p>
           <p id="formError" class="form-error hidden"></p>
 
           <div class="form-actions">
             <button id="confirmButton" class="mode-button buy-button" type="submit">Start Monitoring</button>
-            <button id="backButton" class="ghost-button" type="button">Back</button>
           </div>
         </form>
       </section>

@@ -36,18 +36,6 @@ function isValidDiscordWebhookUrl(value) {
   }
 }
 
-function getModeDisplay(language, mode) {
-  if (mode === "buy") {
-    return t(language, "buy");
-  }
-
-  if (mode === "sell") {
-    return t(language, "sell");
-  }
-
-  return mode ? `${mode}` : "";
-}
-
 function formatStatus(state, language) {
   if (state.status === STATUS.VALIDATING) {
     return {
@@ -56,16 +44,9 @@ function formatStatus(state, language) {
     };
   }
 
-  if (state.status === STATUS.AWAITING_MODE) {
-    return {
-      title: t(language, "detectedTitle"),
-      detail: state.lastValidation?.reason || t(language, "validationPassed")
-    };
-  }
-
   if (state.status === STATUS.AWAITING_CONTEXT) {
     return {
-      title: t(language, "fillSetupTitle", { mode: getModeDisplay(language, state.mode) }),
+      title: t(language, "detectedTitle"),
       detail: t(language, "fillSetupDetail")
     };
   }
@@ -79,11 +60,10 @@ function formatStatus(state, language) {
 
   if (state.status === STATUS.RUNNING) {
     return {
-      title: t(language, "monitoringTitle", { mode: getModeDisplay(language, state.mode) }),
+      title: t(language, "monitoringTitle"),
       detail: t(language, "monitoringDetail", {
         round: state.roundCount,
-        maxRounds: state.maxRounds,
-        mode: getModeDisplay(language, state.mode)
+        maxRounds: state.maxRounds
       })
     };
   }
@@ -171,10 +151,6 @@ async function openSidePanel() {
   });
 }
 
-function closePopup() {
-  window.close();
-}
-
 startButton.addEventListener("click", async () => {
   const settings = await getSettings();
   const language = getLanguage(settings.language);
@@ -185,9 +161,9 @@ startButton.addEventListener("click", async () => {
     type: "start-validation"
   });
 
-  if (response?.ok && response.state?.status === STATUS.AWAITING_MODE) {
+  if (response?.ok && response.state?.status === STATUS.AWAITING_CONTEXT) {
     await openSidePanel();
-    closePopup();
+    window.close();
     return;
   }
 

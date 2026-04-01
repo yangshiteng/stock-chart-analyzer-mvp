@@ -1,4 +1,4 @@
-import { INTENT_OPTIONS, MODE, STATUS } from "./lib/constants.js";
+import { RISK_STYLE_OPTIONS, STATUS } from "./lib/constants.js";
 import { getLanguage, t } from "./lib/i18n.js";
 import { getSettings, getState, patchSettings } from "./lib/storage.js";
 
@@ -18,27 +18,30 @@ const apiKeyInput = document.getElementById("apiKeyInput");
 const saveApiKeyButton = document.getElementById("saveApiKeyButton");
 const clearApiKeyButton = document.getElementById("clearApiKeyButton");
 const apiKeyStatus = document.getElementById("apiKeyStatus");
-const modeSection = document.getElementById("modeSection");
-const modeSectionTitle = document.getElementById("modeSectionTitle");
-const modeSectionCopy = document.getElementById("modeSectionCopy");
 const contextSection = document.getElementById("contextSection");
-const buyButton = document.getElementById("buyButton");
-const sellButton = document.getElementById("sellButton");
 const contextTitle = document.getElementById("contextTitle");
 const contextDescription = document.getElementById("contextDescription");
 const contextForm = document.getElementById("contextForm");
 const currentSharesLabel = document.getElementById("currentSharesLabel");
 const averageCostLabel = document.getElementById("averageCostLabel");
-const intentLabel = document.getElementById("intentLabel");
+const availableCashLabel = document.getElementById("availableCashLabel");
+const maxNewCapitalLabel = document.getElementById("maxNewCapitalLabel");
+const allowAveragingDownLabel = document.getElementById("allowAveragingDownLabel");
+const allowReducingPositionLabel = document.getElementById("allowReducingPositionLabel");
+const riskStyleLabel = document.getElementById("riskStyleLabel");
 const currentSharesInput = document.getElementById("currentSharesInput");
 const averageCostInput = document.getElementById("averageCostInput");
-const intentSelect = document.getElementById("intentSelect");
+const availableCashInput = document.getElementById("availableCashInput");
+const maxNewCapitalInput = document.getElementById("maxNewCapitalInput");
+const allowAveragingDownSelect = document.getElementById("allowAveragingDownSelect");
+const allowReducingPositionSelect = document.getElementById("allowReducingPositionSelect");
+const riskStyleSelect = document.getElementById("riskStyleSelect");
 const formHint = document.getElementById("formHint");
 const formError = document.getElementById("formError");
 const confirmButton = document.getElementById("confirmButton");
-const backButton = document.getElementById("backButton");
 const recommendationTitle = document.getElementById("recommendationTitle");
 const analysisCard = document.getElementById("analysisCard");
+
 let isStartingMonitoring = false;
 
 function escapeHtml(value) {
@@ -50,48 +53,20 @@ function escapeHtml(value) {
     .replaceAll("'", "&#39;");
 }
 
-function formatIntentLabel(language, value) {
-  return value ? t(language, `intent_${value}`) : t(language, "notProvided");
-}
-
-function formatSignalLabel(value) {
-  return value ? value.replaceAll("_", " ") : "N/A";
-}
-
 function formatPrice(value) {
   return value && value !== "N/A" ? value : null;
 }
 
-function getModeDisplay(language, mode) {
-  if (mode === MODE.BUY || mode === "buy") {
-    return t(language, "buy");
-  }
-
-  if (mode === MODE.SELL || mode === "sell") {
-    return t(language, "sell");
-  }
-
-  return mode ? `${mode}` : "";
+function formatActionLabel(language, action) {
+  return action ? t(language, `action_${action}`) : t(language, "unknown");
 }
 
-function getActionLabel(language, signal) {
-  if (signal === "BUY") {
-    return t(language, "actionBuy");
-  }
+function formatBooleanLabel(language, value) {
+  return value ? t(language, "yes") : t(language, "no");
+}
 
-  if (signal === "SELL") {
-    return t(language, "actionSell");
-  }
-
-  if (signal === "WAIT_FOR_CONFIRMATION") {
-    return t(language, "actionWait");
-  }
-
-  if (signal === "NO_TRADE") {
-    return t(language, "actionStandAside");
-  }
-
-  return formatSignalLabel(signal);
+function formatRiskStyleLabel(language, value) {
+  return value ? t(language, `riskStyle_${value}`) : t(language, "notProvided");
 }
 
 function getClarityLabel(language, value) {
@@ -99,11 +74,11 @@ function getClarityLabel(language, value) {
     return t(language, "clarityUnknown");
   }
 
-  if (value < 0.35) {
+  if (value < 35) {
     return t(language, "clarityLow");
   }
 
-  if (value < 0.7) {
+  if (value < 70) {
     return t(language, "clarityMedium");
   }
 
@@ -114,40 +89,50 @@ function getPrimaryLevel(analysis) {
   return formatPrice(analysis.levels?.entry) || formatPrice(analysis.limitPrice);
 }
 
+function getOrderPlanLabel(language, analysis) {
+  if (analysis.orderType === "LIMIT" && formatPrice(analysis.limitPrice)) {
+    return t(language, "orderPlanLimit", { price: analysis.limitPrice });
+  }
+
+  return t(language, "orderPlanNone");
+}
+
 function buildActionCopy(language, analysis) {
   const level = getPrimaryLevel(analysis);
 
-  if (analysis.signal === "BUY") {
-    return level
-      ? t(language, "buyActionCopy", { price: level })
-      : t(language, "buyActionNoPrice");
+  if (analysis.action === "OPEN") {
+    return level ? t(language, "openActionCopy", { price: level }) : t(language, "openActionNoPrice");
   }
 
-  if (analysis.signal === "SELL") {
-    return level
-      ? t(language, "sellActionCopy", { price: level })
-      : t(language, "sellActionNoPrice");
+  if (analysis.action === "ADD") {
+    return level ? t(language, "addActionCopy", { price: level }) : t(language, "addActionNoPrice");
   }
 
-  if (analysis.signal === "WAIT_FOR_CONFIRMATION") {
-    return level
-      ? t(language, "waitActionCopy", { price: level })
-      : t(language, "waitActionNoPrice");
+  if (analysis.action === "HOLD") {
+    return level ? t(language, "holdActionCopy", { price: level }) : t(language, "holdActionNoPrice");
   }
 
-  return t(language, "standAsideCopy");
+  if (analysis.action === "REDUCE") {
+    return level ? t(language, "reduceActionCopy", { price: level }) : t(language, "reduceActionNoPrice");
+  }
+
+  if (analysis.action === "EXIT") {
+    return level ? t(language, "exitActionCopy", { price: level }) : t(language, "exitActionNoPrice");
+  }
+
+  return level ? t(language, "waitActionCopy", { price: level }) : t(language, "waitActionNoPrice");
 }
 
-function getSignalTone(signal) {
-  if (signal === "BUY") {
+function getActionTone(action) {
+  if (action === "OPEN" || action === "ADD") {
     return "buy";
   }
 
-  if (signal === "SELL") {
+  if (action === "REDUCE" || action === "EXIT") {
     return "sell";
   }
 
-  if (signal === "WAIT_FOR_CONFIRMATION") {
+  if (action === "WAIT") {
     return "wait";
   }
 
@@ -195,13 +180,12 @@ function renderAnalysisCard(state, language) {
     return;
   }
 
-  const tone = getSignalTone(analysis.signal);
+  const tone = getActionTone(analysis.action);
   const levels = analysis.levels || {};
   const symbol = analysis.symbol || t(language, "unknown");
-  const mode = getModeDisplay(language, analysis.mode);
-  const intent = formatIntentLabel(language, profile?.intent);
-  const action = getActionLabel(language, analysis.signal);
+  const action = formatActionLabel(language, analysis.action);
   const clarity = getClarityLabel(language, analysis.confidence);
+  const orderPlan = getOrderPlanLabel(language, analysis);
   const positionSummary = profile?.positionContext
     ? t(language, "positionSummary", {
       shares: profile.positionContext.currentShares ?? 0,
@@ -217,7 +201,7 @@ function renderAnalysisCard(state, language) {
           <p class="signal-label">${escapeHtml(t(language, "actionNow"))}</p>
           <h3 class="signal-value">${escapeHtml(action)}</h3>
         </div>
-        <span class="pill">${escapeHtml(t(language, "modeLabel", { mode }))}</span>
+        <span class="pill">${escapeHtml(orderPlan)}</span>
       </div>
       <div class="guidance-grid">
         ${renderGuidanceCard(t(language, "whatToDoNow"), buildActionCopy(language, analysis))}
@@ -232,8 +216,13 @@ function renderAnalysisCard(state, language) {
       ${renderMetricCard(language, t(language, "watchLevel"), levels.entry || analysis.limitPrice || t(language, "nA"))}
       ${renderMetricCard(language, t(language, "target"), levels.target || t(language, "nA"))}
       ${renderMetricCard(language, t(language, "riskTrigger"), levels.invalidation || t(language, "nA"))}
-      ${renderMetricCard(language, t(language, "intent"), intent)}
+      ${renderMetricCard(language, t(language, "suggestedSize"), analysis.sizeSuggestion || t(language, "nA"))}
       ${renderMetricCard(language, t(language, "position"), positionSummary, true)}
+      ${renderMetricCard(language, t(language, "availableCash"), profile?.capitalContext?.availableCash ?? t(language, "nA"))}
+      ${renderMetricCard(language, t(language, "maxNewCapital"), profile?.capitalContext?.maxNewCapital ?? t(language, "nA"))}
+      ${renderMetricCard(language, t(language, "allowAveragingDown"), formatBooleanLabel(language, Boolean(profile?.rules?.allowAveragingDown)))}
+      ${renderMetricCard(language, t(language, "allowReducingPosition"), formatBooleanLabel(language, Boolean(profile?.rules?.allowReducingPosition)))}
+      ${renderMetricCard(language, t(language, "riskStyle"), formatRiskStyleLabel(language, profile?.rules?.riskStyle))}
       ${renderMetricCard(language, t(language, "why"), analysis.summary || t(language, "nA"), true)}
       ${renderMetricCard(language, t(language, "riskNote"), analysis.riskNote || t(language, "nA"), true)}
     </div>
@@ -252,14 +241,16 @@ function updateStaticText(language, settings) {
   apiSetupTitle.textContent = t(language, "openAiSetup");
   apiSetupCopy.innerHTML = `${escapeHtml(t(language, "setupCopy"))}`;
   apiKeyLabel.textContent = t(language, "openAiApiKey");
-  modeSectionTitle.textContent = t(language, "chooseMode");
-  modeSectionCopy.textContent = t(language, "chooseModeCopy");
-  buyButton.textContent = t(language, "buy");
-  sellButton.textContent = t(language, "sell");
+  contextTitle.textContent = t(language, "executionSetup");
+  contextDescription.textContent = t(language, "executionSetupCopy");
   currentSharesLabel.textContent = t(language, "currentShares");
   averageCostLabel.textContent = t(language, "averageCost");
-  intentLabel.textContent = t(language, "intent");
-  backButton.textContent = t(language, "back");
+  availableCashLabel.textContent = t(language, "availableCash");
+  maxNewCapitalLabel.textContent = t(language, "maxNewCapital");
+  allowAveragingDownLabel.textContent = t(language, "allowAveragingDown");
+  allowReducingPositionLabel.textContent = t(language, "allowReducingPosition");
+  riskStyleLabel.textContent = t(language, "riskStyle");
+  confirmButton.textContent = t(language, "start");
   recommendationTitle.textContent = t(language, "latestRecommendation");
   apiKeyStatus.textContent = settings.openaiApiKey
     ? t(language, "apiKeySaved", { model: settings.model })
@@ -271,12 +262,8 @@ function getSummary(state, language) {
     return t(language, "validatingDetail");
   }
 
-  if (state.status === STATUS.AWAITING_MODE) {
-    return t(language, "chooseModeCopy");
-  }
-
   if (state.status === STATUS.AWAITING_CONTEXT) {
-    return state.mode === MODE.BUY ? t(language, "buySetupCopy") : t(language, "sellSetupCopy");
+    return t(language, "fillSetupDetail");
   }
 
   if (state.status === STATUS.RUNNING && state.isRoundInFlight) {
@@ -284,12 +271,10 @@ function getSummary(state, language) {
   }
 
   if (state.status === STATUS.RUNNING) {
-    const intent = formatIntentLabel(language, state.monitoringProfile?.intent);
     return t(language, "monitoringDetail", {
       round: state.roundCount,
-      maxRounds: state.maxRounds,
-      mode: getModeDisplay(language, state.mode)
-    }) + (state.monitoringProfile?.intent ? ` ${intent}.` : "");
+      maxRounds: state.maxRounds
+    });
   }
 
   return state.lastError || state.stopReason || t(language, "clickStart");
@@ -311,57 +296,39 @@ function getStatusBadgeLabel(language, status) {
   return t(language, `status_${status}`);
 }
 
-function populateIntentOptions(mode, language, selectedIntent = null) {
-  const options = INTENT_OPTIONS[mode] || [];
-  intentSelect.innerHTML = options
-    .map((option) => `<option value="${option.value}">${escapeHtml(t(language, `intent_${option.value}`))}</option>`)
-    .join("");
-
-  if (selectedIntent && options.some((option) => option.value === selectedIntent)) {
-    intentSelect.value = selectedIntent;
-  }
+function populateBooleanSelect(select, language, selectedValue) {
+  select.innerHTML = `
+    <option value="yes">${escapeHtml(t(language, "yes"))}</option>
+    <option value="no">${escapeHtml(t(language, "no"))}</option>
+  `;
+  select.value = selectedValue ? "yes" : "no";
 }
 
-function updateFormGuidance(mode, language) {
-  const selectedIntent = intentSelect.value;
-  const requiresExistingPosition = mode === MODE.SELL || selectedIntent !== "new_position";
+function populateRiskStyleOptions(language, selectedValue = "conservative") {
+  riskStyleSelect.innerHTML = RISK_STYLE_OPTIONS
+    .map((option) => `<option value="${option.value}">${escapeHtml(t(language, `riskStyle_${option.value}`))}</option>`)
+    .join("");
+  riskStyleSelect.value = selectedValue;
+}
 
-  currentSharesInput.required = true;
-  currentSharesInput.min = requiresExistingPosition ? "0.0001" : "0";
-  averageCostInput.required = requiresExistingPosition;
-
-  if (mode === MODE.BUY && selectedIntent === "new_position") {
-    formHint.textContent = t(language, "hintNewPosition");
-    confirmButton.textContent = t(language, "startBuyMonitoring");
-    return;
-  }
-
-  if (mode === MODE.BUY) {
-    formHint.textContent = t(language, "hintAverageDown");
-    confirmButton.textContent = t(language, "startBuyMonitoring");
-    return;
-  }
-
-  formHint.textContent = t(language, "hintSell");
-  confirmButton.textContent = t(language, "startSellMonitoring");
+function updateFormGuidance(language) {
+  const currentShares = Number(currentSharesInput.value || 0);
+  const hasPosition = Number.isFinite(currentShares) && currentShares > 0;
+  averageCostInput.required = hasPosition;
+  formHint.textContent = t(language, "constraintsHint");
 }
 
 function populateContextForm(state, language) {
-  const mode = state.mode;
-  const profile = state.monitoringProfile;
-  const selectedIntent = profile?.intent || (INTENT_OPTIONS[mode] || [])[0]?.value || "";
-  const currentShares = profile?.positionContext?.currentShares;
-  const averageCost = profile?.positionContext?.averageCost;
+  const profile = state.monitoringProfile || state.lastMonitoringProfile;
 
-  contextTitle.textContent = mode === MODE.BUY ? t(language, "buySetup") : t(language, "sellSetup");
-  contextDescription.textContent = mode === MODE.BUY
-    ? t(language, "buySetupCopy")
-    : t(language, "sellSetupCopy");
-
-  populateIntentOptions(mode, language, selectedIntent);
-  currentSharesInput.value = currentShares ?? "";
-  averageCostInput.value = averageCost ?? "";
-  updateFormGuidance(mode, language);
+  currentSharesInput.value = profile?.positionContext?.currentShares ?? "";
+  averageCostInput.value = profile?.positionContext?.averageCost ?? "";
+  availableCashInput.value = profile?.capitalContext?.availableCash ?? "";
+  maxNewCapitalInput.value = profile?.capitalContext?.maxNewCapital ?? "";
+  populateBooleanSelect(allowAveragingDownSelect, language, Boolean(profile?.rules?.allowAveragingDown));
+  populateBooleanSelect(allowReducingPositionSelect, language, profile?.rules?.allowReducingPosition !== false);
+  populateRiskStyleOptions(language, profile?.rules?.riskStyle || "conservative");
+  updateFormGuidance(language);
 }
 
 async function render() {
@@ -376,6 +343,7 @@ async function render() {
   apiKeyInput.value = "";
   renderAnalysisCard(state, language);
   apiSetupSection.classList.toggle("hidden", apiReady);
+
   const hasSavedSession = hasSavedMonitoringSession(state);
   const isBusy = state.status === STATUS.RUNNING || state.status === STATUS.VALIDATING || isStartingMonitoring;
 
@@ -383,48 +351,23 @@ async function render() {
   continueMonitorButton.disabled = !apiReady || state.status === STATUS.RUNNING || !hasSavedSession;
   restartMonitorButton.disabled = !apiReady || !hasSavedSession;
   exitMonitorButton.disabled = isStartingMonitoring;
+  confirmButton.disabled = isStartingMonitoring;
 
-  modeSection.classList.toggle("hidden", state.status !== STATUS.AWAITING_MODE);
   contextSection.classList.toggle("hidden", state.status !== STATUS.AWAITING_CONTEXT);
-  buyButton.disabled = state.status !== STATUS.AWAITING_MODE || !apiReady;
-  sellButton.disabled = state.status !== STATUS.AWAITING_MODE || !apiReady;
   saveApiKeyButton.disabled = false;
   clearApiKeyButton.disabled = false;
 
-  if (state.status === STATUS.AWAITING_CONTEXT && state.mode) {
+  if (state.status === STATUS.AWAITING_CONTEXT) {
     populateContextForm(state, language);
   }
 
-  if ((state.status === STATUS.AWAITING_MODE || state.status === STATUS.AWAITING_CONTEXT) && !apiReady) {
+  if (state.status === STATUS.AWAITING_CONTEXT && !apiReady) {
     summaryText.textContent = t(language, "saveKeyFirst");
   }
 
   formError.textContent = "";
   formError.classList.add("hidden");
 }
-
-async function chooseMode(mode) {
-  const settings = await getSettings();
-  const language = getLanguage(settings.language);
-  buyButton.disabled = true;
-  sellButton.disabled = true;
-  summaryText.textContent = t(language, "preparingSetup", { mode: getModeDisplay(language, mode) });
-
-  await chrome.runtime.sendMessage({
-    type: "choose-mode",
-    mode
-  });
-
-  await render();
-}
-
-buyButton.addEventListener("click", async () => {
-  await chooseMode(MODE.BUY);
-});
-
-sellButton.addEventListener("click", async () => {
-  await chooseMode(MODE.SELL);
-});
 
 stopMonitorButton.addEventListener("click", async () => {
   stopMonitorButton.disabled = true;
@@ -549,22 +492,9 @@ clearApiKeyButton.addEventListener("click", async () => {
   await render();
 });
 
-intentSelect.addEventListener("change", async () => {
-  const state = await getState();
+currentSharesInput.addEventListener("input", async () => {
   const settings = await getSettings();
-  const language = getLanguage(settings.language);
-
-  if (state.status === STATUS.AWAITING_CONTEXT && state.mode) {
-    updateFormGuidance(state.mode, language);
-  }
-});
-
-backButton.addEventListener("click", async () => {
-  await chrome.runtime.sendMessage({
-    type: "back-to-mode-selection"
-  });
-
-  await render();
+  updateFormGuidance(getLanguage(settings.language));
 });
 
 contextForm.addEventListener("submit", async (event) => {
@@ -579,23 +509,19 @@ contextForm.addEventListener("submit", async (event) => {
     return;
   }
 
+  updateFormGuidance(language);
+
   if (!contextForm.reportValidity()) {
     return;
   }
 
-  const state = await getState();
-  const mode = state.mode;
-
-  if (!mode) {
-    return;
-  }
-
   confirmButton.disabled = true;
-  backButton.disabled = true;
   formError.textContent = "";
   formError.classList.add("hidden");
-  summaryText.textContent = t(language, "startMonitoringProgress", { mode: getModeDisplay(language, mode) });
+  summaryText.textContent = t(language, "startMonitoringProgress");
   isStartingMonitoring = true;
+
+  const state = await getState();
   renderAnalysisCard({
     ...state,
     status: STATUS.RUNNING
@@ -606,10 +532,13 @@ contextForm.addEventListener("submit", async (event) => {
   try {
     response = await chrome.runtime.sendMessage({
       type: "start-monitoring",
-      mode,
       currentShares: currentSharesInput.value,
       averageCost: averageCostInput.value,
-      intent: intentSelect.value
+      availableCash: availableCashInput.value,
+      maxNewCapital: maxNewCapitalInput.value,
+      allowAveragingDown: allowAveragingDownSelect.value === "yes",
+      allowReducingPosition: allowReducingPositionSelect.value === "yes",
+      riskStyle: riskStyleSelect.value
     });
   } finally {
     isStartingMonitoring = false;
@@ -619,7 +548,6 @@ contextForm.addEventListener("submit", async (event) => {
     formError.textContent = response?.error || t(language, "couldNotStart");
     formError.classList.remove("hidden");
     confirmButton.disabled = false;
-    backButton.disabled = false;
     return;
   }
 

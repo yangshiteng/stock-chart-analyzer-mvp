@@ -2,28 +2,32 @@
 
 ## Current Goal
 
-Maintain and iterate on a working Chrome Extension (Manifest V3) MVP for stock-chart validation, recurring monitoring, and limit-order recommendation workflows.
+Maintain and iterate on a working Chrome Extension (Manifest V3) MVP for stock-chart validation, recurring monitoring, execution-assistant recommendations, and optional Discord delivery.
 
 ## Current Product Behavior
 
 The extension currently does the following:
 
-- validates the active tab as a stock-chart page using keyword rules from page title and URL
-- opens a side panel workflow only after the user explicitly starts validation from the popup
+- validates the active tab as a stock-chart page using keyword rules from the page title and URL
+- opens the side panel workflow only after the user explicitly starts validation from the popup
 - stores the OpenAI API key locally inside the extension for MVP use
 - stores an optional Discord webhook URL locally inside the extension for alert delivery
-- lets the user choose `Buy` or `Sell`
-- asks the user for trade context:
+- asks the user for execution constraints instead of asking the user to choose a trading intent
+- collects:
   - current shares
   - average cost
-  - intent
-- sends the visible chart screenshot plus structured context to OpenAI `gpt-5.4`
-- requires all analysis responses to be valid JSON
+  - available cash
+  - max new capital for this trade
+  - whether averaging down is allowed
+  - whether reducing position is allowed
+  - risk style
+- sends the visible chart screenshot plus structured execution constraints to OpenAI `gpt-5.4`
+- requires every analysis response to be valid JSON
 - renders the latest recommendation as a user-friendly card in the side panel
 - shows a loading state during each new monitoring round while the next screenshot analysis is in flight
 - monitors every 5 minutes with `chrome.alarms`
 - binds monitoring to the original chart tab instead of silently switching to the current active page
-- pauses automatically if the user leaves the original chart tab
+- pauses automatically if the user leaves the original chart tab inside the monitored window
 - can send Discord notifications for successful recommendation rounds when a webhook is configured
 - lets the user:
   - pause with `Stop`
@@ -44,7 +48,7 @@ The extension currently does the following:
 ## Important Behavior Rules
 
 - stock-chart validation is keyword-based right now, not image-based
-- screenshot capture depends on the visible active tab
+- screenshot capture depends on the visible active tab in the bound monitoring window
 - the monitoring session is bound to the original validated chart tab
 - leaving the bound tab should pause monitoring, not capture some unrelated active page
 - `Stop` means pause, not full exit
@@ -64,8 +68,7 @@ The extension currently does the following:
   - single primary `Start` action
 - side panel with:
   - status summary
-  - Buy/Sell selection
-  - position-context form
+  - execution-constraints form
   - recommendation card
   - `Stop`, `Continue`, `Restart`, `Exit`
 - side panel availability tied to validated / active session tabs
@@ -78,9 +81,34 @@ The extension currently does the following:
 - `chrome.alarms` for recurring monitoring
 - OpenAI Responses API using `gpt-5.4`
 - visible-tab screenshot capture
-- English prompt configs in `lib/prompt-config.js`
+- English prompt config in `lib/prompt-config.js`
 - translation-aware output handling in `lib/llm.js`
 - UI translations in `lib/i18n.js`
+
+## Current Recommendation Schema
+
+The model currently returns a strict JSON object with:
+
+- `action`
+  - `OPEN`
+  - `ADD`
+  - `HOLD`
+  - `REDUCE`
+  - `EXIT`
+  - `WAIT`
+- `orderType`
+  - `LIMIT`
+  - `NONE`
+- `limitPrice`
+- `sizeSuggestion`
+- `confidence`
+- `summary`
+- `levels.entry`
+- `levels.target`
+- `levels.invalidation`
+- `riskNote`
+- `symbol`
+- `timeframe`
 
 ## Near-Term Improvement Areas
 
@@ -88,6 +116,5 @@ The extension currently does the following:
 - add tests for state transitions and message handling
 - improve chart validation beyond title / URL keyword rules
 - consider chart-region cropping before upload
-- make notification / re-entry behavior more polished without fighting Chrome side panel gesture limits
 - add finer control for Discord alerts, such as signal-change-only delivery
 - improve API-key handling if the project evolves beyond MVP
