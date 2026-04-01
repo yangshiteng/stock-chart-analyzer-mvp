@@ -1,4 +1,4 @@
-import { RISK_STYLE_OPTIONS, STATUS } from "./lib/constants.js";
+import { AUTO_STOP_OPTIONS, RISK_STYLE_OPTIONS, STATUS } from "./lib/constants.js";
 import { getLanguage, t } from "./lib/i18n.js";
 import { getSettings, getState, patchSettings } from "./lib/storage.js";
 
@@ -29,6 +29,7 @@ const maxNewCapitalLabel = document.getElementById("maxNewCapitalLabel");
 const allowAveragingDownLabel = document.getElementById("allowAveragingDownLabel");
 const allowReducingPositionLabel = document.getElementById("allowReducingPositionLabel");
 const riskStyleLabel = document.getElementById("riskStyleLabel");
+const autoStopLabel = document.getElementById("autoStopLabel");
 const currentSharesInput = document.getElementById("currentSharesInput");
 const averageCostInput = document.getElementById("averageCostInput");
 const availableCashInput = document.getElementById("availableCashInput");
@@ -36,6 +37,7 @@ const maxNewCapitalInput = document.getElementById("maxNewCapitalInput");
 const allowAveragingDownSelect = document.getElementById("allowAveragingDownSelect");
 const allowReducingPositionSelect = document.getElementById("allowReducingPositionSelect");
 const riskStyleSelect = document.getElementById("riskStyleSelect");
+const autoStopSelect = document.getElementById("autoStopSelect");
 const formHint = document.getElementById("formHint");
 const formError = document.getElementById("formError");
 const confirmButton = document.getElementById("confirmButton");
@@ -69,6 +71,14 @@ function formatRiskStyleLabel(language, value) {
   return value ? t(language, `riskStyle_${value}`) : t(language, "notProvided");
 }
 
+function normalizeAutoStopRule(value) {
+  return AUTO_STOP_OPTIONS.some((option) => option.value === value) ? value : "30m";
+}
+
+function formatAutoStopLabel(language, value) {
+  return t(language, `autoStop_${normalizeAutoStopRule(value)}`);
+}
+
 function getClarityLabel(language, value) {
   if (typeof value !== "number" || Number.isNaN(value)) {
     return t(language, "clarityUnknown");
@@ -95,6 +105,14 @@ function getOrderPlanLabel(language, analysis) {
   }
 
   return t(language, "orderPlanNone");
+}
+
+function getWhatToDoNowCopy(language, analysis) {
+  if (analysis.whatToDoNow) {
+    return analysis.whatToDoNow;
+  }
+
+  return buildActionCopy(language, analysis);
 }
 
 function buildActionCopy(language, analysis) {
@@ -204,7 +222,7 @@ function renderAnalysisCard(state, language) {
         <span class="pill">${escapeHtml(orderPlan)}</span>
       </div>
       <div class="guidance-grid">
-        ${renderGuidanceCard(t(language, "whatToDoNow"), buildActionCopy(language, analysis))}
+        ${renderGuidanceCard(t(language, "whatToDoNow"), getWhatToDoNowCopy(language, analysis))}
       </div>
       <div class="signal-meta">
         <span class="pill">${escapeHtml(t(language, "signalClarity"))} ${escapeHtml(clarity)}</span>
@@ -217,6 +235,7 @@ function renderAnalysisCard(state, language) {
       ${renderMetricCard(language, t(language, "target"), levels.target || t(language, "nA"))}
       ${renderMetricCard(language, t(language, "riskTrigger"), levels.invalidation || t(language, "nA"))}
       ${renderMetricCard(language, t(language, "suggestedSize"), analysis.sizeSuggestion || t(language, "nA"))}
+      ${renderMetricCard(language, t(language, "autoStopSetting"), formatAutoStopLabel(language, profile?.rules?.autoStopRule))}
       ${renderMetricCard(language, t(language, "position"), positionSummary, true)}
       ${renderMetricCard(language, t(language, "availableCash"), profile?.capitalContext?.availableCash ?? t(language, "nA"))}
       ${renderMetricCard(language, t(language, "maxNewCapital"), profile?.capitalContext?.maxNewCapital ?? t(language, "nA"))}
@@ -250,6 +269,7 @@ function updateStaticText(language, settings) {
   allowAveragingDownLabel.textContent = t(language, "allowAveragingDown");
   allowReducingPositionLabel.textContent = t(language, "allowReducingPosition");
   riskStyleLabel.textContent = t(language, "riskStyle");
+  autoStopLabel.textContent = t(language, "autoStop");
   confirmButton.textContent = t(language, "start");
   recommendationTitle.textContent = t(language, "latestRecommendation");
   apiKeyStatus.textContent = settings.openaiApiKey
@@ -271,10 +291,15 @@ function getSummary(state, language) {
   }
 
   if (state.status === STATUS.RUNNING) {
-    return t(language, "monitoringDetail", {
+    const base = t(language, "monitoringDetail", {
       round: state.roundCount,
       maxRounds: state.maxRounds
     });
+    const autoStopRule = normalizeAutoStopRule(
+      state.monitoringProfile?.rules?.autoStopRule || state.lastMonitoringProfile?.rules?.autoStopRule
+    );
+
+    return `${base} ${t(language, "autoStop")}: ${formatAutoStopLabel(language, autoStopRule)}.`;
   }
 
   return state.lastError || state.stopReason || t(language, "clickStart");
@@ -311,6 +336,13 @@ function populateRiskStyleOptions(language, selectedValue = "conservative") {
   riskStyleSelect.value = selectedValue;
 }
 
+function populateAutoStopOptions(language, selectedValue = "30m") {
+  autoStopSelect.innerHTML = AUTO_STOP_OPTIONS
+    .map((option) => `<option value="${option.value}">${escapeHtml(t(language, `autoStop_${option.value}`))}</option>`)
+    .join("");
+  autoStopSelect.value = normalizeAutoStopRule(selectedValue);
+}
+
 function updateFormGuidance(language) {
   const currentShares = Number(currentSharesInput.value || 0);
   const hasPosition = Number.isFinite(currentShares) && currentShares > 0;
@@ -328,6 +360,7 @@ function populateContextForm(state, language) {
   populateBooleanSelect(allowAveragingDownSelect, language, Boolean(profile?.rules?.allowAveragingDown));
   populateBooleanSelect(allowReducingPositionSelect, language, profile?.rules?.allowReducingPosition !== false);
   populateRiskStyleOptions(language, profile?.rules?.riskStyle || "conservative");
+  populateAutoStopOptions(language, normalizeAutoStopRule(profile?.rules?.autoStopRule));
   updateFormGuidance(language);
 }
 
@@ -538,7 +571,8 @@ contextForm.addEventListener("submit", async (event) => {
       maxNewCapital: maxNewCapitalInput.value,
       allowAveragingDown: allowAveragingDownSelect.value === "yes",
       allowReducingPosition: allowReducingPositionSelect.value === "yes",
-      riskStyle: riskStyleSelect.value
+      riskStyle: riskStyleSelect.value,
+      autoStopRule: autoStopSelect.value
     });
   } finally {
     isStartingMonitoring = false;

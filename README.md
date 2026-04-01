@@ -16,6 +16,7 @@ Current implemented behavior:
 - side panel workflow with:
   - validation status
   - execution-constraints form
+  - auto-stop selector
   - per-round loading state while a new screenshot analysis is in flight
   - user-friendly recommendation card
   - `Stop`, `Continue`, `Restart`, and `Exit` controls
@@ -23,7 +24,9 @@ Current implemented behavior:
 - keyword-based stock-chart validation from page title and URL
 - OpenAI Responses API integration with `gpt-5.4`
 - recurring monitoring every 5 minutes
+- auto-stop options in the side panel with a default of `30 minutes` and choices up to `8 hours`
 - Discord notifications for each successful recommendation round when a webhook is configured
+- a short audio cue when a fresh recommendation result arrives
 - automatic pause if the user leaves the original bound chart tab inside the monitored window
 - auto-stop after 70 rounds
 - bilingual UI strings for English and Simplified Chinese
@@ -53,13 +56,15 @@ What is still basic:
    - `Allow Averaging Down`
    - `Allow Reducing Position`
    - `Risk Style`
+   - `Auto Stop`
 10. The extension starts monitoring and immediately runs the first round.
 11. Every later round runs every 5 minutes with `chrome.alarms`.
 12. While a new round is running, the side panel shows a loading state instead of silently jumping to the next result.
 13. Monitoring remains bound to the original chart tab.
 14. If the user leaves that tab inside the monitored Chrome window, monitoring pauses instead of silently switching to another page.
 15. Each successful round can also send a Discord notification if a webhook URL is configured.
-16. The user can:
+16. Each successful round also plays a short result sound inside Chrome.
+17. The user can:
    - `Stop`: pause the session and keep the current setup
    - `Continue`: resume a paused session on the original chart tab
    - `Restart`: restart monitoring from round 1 using the saved setup
@@ -105,6 +110,7 @@ The model is required to return strict JSON with these fields:
 - `limitPrice`
 - `sizeSuggestion`
 - `confidence`
+- `whatToDoNow`
 - `summary`
 - `levels.entry`
 - `levels.target`
@@ -118,6 +124,7 @@ Notes:
 - `confidence` is model conviction, not upside probability or backtested win rate
 - `orderType` is currently limited to `LIMIT` or `NONE`
 - `sizeSuggestion` is a user-facing sizing recommendation, not broker-connected position execution
+- `whatToDoNow` is a dedicated natural-language action instruction shown directly in the main recommendation card
 
 ## OpenAI Setup
 
@@ -166,6 +173,7 @@ Notes:
 
 - `manifest.json`: extension manifest and permissions
 - `background.js`: service worker, scheduling, capture, state transitions, pause / resume logic, side panel enablement, Discord delivery
+- `offscreen.html`, `offscreen.js`: offscreen audio document used to play a short result cue
 - `popup.html`, `popup.js`, `popup.css`: popup UI for language, OpenAI API key setup, Discord webhook setup, and `Start`
 - `sidepanel.html`, `sidepanel.js`, `sidepanel.css`: side panel UI, execution setup form, recommendation display, and monitoring controls
 - `lib/constants.js`: shared constants and state enums
@@ -228,6 +236,7 @@ Current prompt behavior:
 - uses EMA 20 / 50 / 100 / 200 only if they are visible in the screenshot
 - takes the user's position, capital, and risk constraints into account
 - returns a single best execution action right now
+- returns a dedicated `whatToDoNow` field so the UI does not have to stitch together the main action copy
 - keeps the response:
   - concise
   - direct

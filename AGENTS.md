@@ -2,7 +2,7 @@
 
 ## Current Goal
 
-Maintain and iterate on a working Chrome Extension (Manifest V3) MVP for stock-chart validation, recurring monitoring, execution-assistant recommendations, and optional Discord delivery.
+Maintain and iterate on a working Chrome Extension (Manifest V3) MVP for stock-chart validation, recurring monitoring, execution-assistant recommendations, optional Discord delivery, and lightweight result cues.
 
 ## Current Product Behavior
 
@@ -21,14 +21,18 @@ The extension currently does the following:
   - whether averaging down is allowed
   - whether reducing position is allowed
   - risk style
+  - auto-stop duration
 - sends the visible chart screenshot plus structured execution constraints to OpenAI `gpt-5.4`
 - requires every analysis response to be valid JSON
+- requires the model to return a dedicated `whatToDoNow` instruction for the primary guidance block
 - renders the latest recommendation as a user-friendly card in the side panel
 - shows a loading state during each new monitoring round while the next screenshot analysis is in flight
 - monitors every 5 minutes with `chrome.alarms`
+- defaults auto-stop to 30 minutes and supports 1h / 2h / 4h / 8h options
 - binds monitoring to the original chart tab instead of silently switching to the current active page
 - pauses automatically if the user leaves the original chart tab inside the monitored window
 - can send Discord notifications for successful recommendation rounds when a webhook is configured
+- plays a short audio cue when a fresh recommendation round finishes successfully
 - lets the user:
   - pause with `Stop`
   - resume with `Continue`
@@ -53,6 +57,7 @@ The extension currently does the following:
 - leaving the bound tab should pause monitoring, not capture some unrelated active page
 - `Stop` means pause, not full exit
 - `Exit` means fully clear the current monitoring session
+- auto-stop should never default to "run forever"; default to 30 minutes if the rule is missing or invalid
 - English is the internal analysis language
 - Chinese output is produced as a second translation step after the English analysis
 - schema keys and enum values remain English even when the UI is Chinese
@@ -69,6 +74,7 @@ The extension currently does the following:
 - side panel with:
   - status summary
   - execution-constraints form
+  - auto-stop selector
   - recommendation card
   - `Stop`, `Continue`, `Restart`, `Exit`
 - side panel availability tied to validated / active session tabs
@@ -81,6 +87,7 @@ The extension currently does the following:
 - `chrome.alarms` for recurring monitoring
 - OpenAI Responses API using `gpt-5.4`
 - visible-tab screenshot capture
+- offscreen audio playback for result cues
 - English prompt config in `lib/prompt-config.js`
 - translation-aware output handling in `lib/llm.js`
 - UI translations in `lib/i18n.js`
@@ -102,6 +109,7 @@ The model currently returns a strict JSON object with:
 - `limitPrice`
 - `sizeSuggestion`
 - `confidence`
+- `whatToDoNow`
 - `summary`
 - `levels.entry`
 - `levels.target`

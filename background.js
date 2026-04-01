@@ -1,6 +1,7 @@
 import {
   ALARM_MINUTES,
   ALARM_NAME,
+  AUTO_STOP_OPTIONS,
   MAX_RESULTS,
   RISK_STYLE_OPTIONS,
   STATUS,
@@ -13,7 +14,11 @@ import { getSettings, getState, patchState, saveState } from "./lib/storage.js";
 
 const ICON_PATH = "assets/icon-128.png";
 const SIDEPANEL_PATH = "sidepanel.html";
+const OFFSCREEN_DOCUMENT_PATH = "offscreen.html";
 const VALID_RISK_STYLES = new Set(RISK_STYLE_OPTIONS.map((option) => option.value));
+const AUTO_STOP_MINUTES = new Map(AUTO_STOP_OPTIONS.map((option) => [option.value, option.minutes]));
+const VALID_AUTO_STOP_RULES = new Set(AUTO_STOP_OPTIONS.map((option) => option.value));
+let creatingOffscreenDocument = null;
 
 function createId() {
   if (globalThis.crypto?.randomUUID) {
@@ -33,6 +38,50 @@ async function notifyUser(title, message) {
     });
   } catch (error) {
     console.warn("Notification failed:", error);
+  }
+}
+
+async function ensureOffscreenDocument() {
+  if (!chrome.offscreen?.createDocument) {
+    return false;
+  }
+
+  if (creatingOffscreenDocument) {
+    await creatingOffscreenDocument;
+    return true;
+  }
+
+  creatingOffscreenDocument = chrome.offscreen.createDocument({
+    url: OFFSCREEN_DOCUMENT_PATH,
+    reasons: ["AUDIO_PLAYBACK"],
+    justification: "Play a short sound when a new chart recommendation is ready."
+  }).catch((error) => {
+    const message = `${error?.message || error}`;
+
+    if (!message.includes("Only a single offscreen")) {
+      throw error;
+    }
+  }).finally(() => {
+    creatingOffscreenDocument = null;
+  });
+
+  await creatingOffscreenDocument;
+  return true;
+}
+
+async function playResultSound() {
+  try {
+    const ready = await ensureOffscreenDocument();
+
+    if (!ready) {
+      return;
+    }
+
+    await chrome.runtime.sendMessage({
+      type: "play-result-sound"
+    });
+  } catch (error) {
+    console.warn("Result sound failed:", error);
   }
 }
 
@@ -434,6 +483,7 @@ function bgText(language, key, vars = {}) {
       averageCostRequired: "Average cost is required when you already hold shares.",
       maxNewCapitalExceedsCash: "Max new capital cannot be greater than available cash.",
       chooseValidRiskStyle: "Choose a valid risk style.",
+      chooseValidAutoStop: "Choose a valid auto stop option.",
       validationFailedChart: "Validation failed because the current tab does not look like a stock chart.",
       notifyChartNotDetectedTitle: "Stock chart not detected",
       notifyChartNotDetectedBody: "Monitoring stopped because the current tab is not recognized as a stock chart.",
@@ -722,6 +772,53 @@ function normalizeBoolean(value) {
   return value === true || value === "true" || value === "yes" || value === 1 || value === "1";
 }
 
+function getAutoStopMinutes(rule) {
+  return AUTO_STOP_MINUTES.get(rule) ?? null;
+}
+
+function normalizeAutoStopRule(rule) {
+  return VALID_AUTO_STOP_RULES.has(rule) ? rule : "30m";
+}
+
+function refreshAutoStopDeadline(monitoringProfile) {
+  const autoStopRule = normalizeAutoStopRule(monitoringProfile?.rules?.autoStopRule);
+  const minutes = getAutoStopMinutes(autoStopRule);
+
+  return {
+    ...monitoringProfile,
+    rules: {
+      ...monitoringProfile?.rules,
+      autoStopRule
+    },
+    autoStopAt: minutes ? new Date(Date.now() + minutes * 60 * 1000).toISOString() : null
+  };
+}
+
+function getAutoStopLabel(language, rule) {
+  const normalizedRule = normalizeAutoStopRule(rule);
+  const labels = {
+    off: language === "zh" ? "不自动停止" : "off",
+    "30m": language === "zh" ? "30 分钟后" : "30 minutes",
+    "1h": language === "zh" ? "1 小时后" : "1 hour",
+    "2h": language === "zh" ? "2 小时后" : "2 hours",
+    "4h": language === "zh" ? "4 小时后" : "4 hours"
+  };
+
+  if (normalizedRule === "8h") {
+    return language === "zh" ? "8 小时后" : "8 hours";
+  }
+
+  return labels[normalizedRule] || labels["30m"];
+}
+
+function getAutoStopReason(language, rule) {
+  const label = getAutoStopLabel(language, rule);
+
+  return language === "zh"
+    ? `已到自动停止时间（${label}），监控已自动暂停。`
+    : `Monitoring paused automatically after ${label}.`;
+}
+
 async function buildMonitoringProfile(payload) {
   const language = await getUiLanguage();
   const currentShares = normalizeDecimal(payload.currentShares, bgText(language, "currentSharesLabel"), language);
@@ -764,6 +861,12 @@ async function buildMonitoringProfile(payload) {
     throw new Error(bgText(language, "chooseValidRiskStyle"));
   }
 
+  const autoStopRule = `${payload.autoStopRule || "30m"}`.trim();
+
+  if (!VALID_AUTO_STOP_RULES.has(autoStopRule)) {
+    throw new Error(bgText(language, "chooseValidAutoStop"));
+  }
+
   return {
     positionContext: {
       currentShares,
@@ -776,7 +879,8 @@ async function buildMonitoringProfile(payload) {
     rules: {
       allowAveragingDown: normalizeBoolean(payload.allowAveragingDown),
       allowReducingPosition: normalizeBoolean(payload.allowReducingPosition),
-      riskStyle
+      riskStyle,
+      autoStopRule
     }
   };
 }
@@ -915,6 +1019,18 @@ async function runMonitoringRound() {
     return { ok: false, state };
   }
 
+  if (monitoringProfile.autoStopAt) {
+    const autoStopAt = Date.parse(monitoringProfile.autoStopAt);
+
+    if (Number.isFinite(autoStopAt) && Date.now() >= autoStopAt) {
+      const state = await pauseMonitoring(
+        getAutoStopReason(language, monitoringProfile.rules?.autoStopRule || "30m"),
+        currentState
+      );
+      return { ok: false, state };
+    }
+  }
+
   if (monitoringProfile.boundTabId) {
     const activeTab = await getActiveTab(monitoringProfile.boundWindowId || null).catch(() => null);
 
@@ -994,6 +1110,7 @@ async function runMonitoringRound() {
     });
 
     await notifyDiscordAnalysisResult(result, state, language);
+    await playResultSound();
 
     if (round >= state.maxRounds) {
       await clearMonitoringAlarm();
@@ -1040,9 +1157,11 @@ async function startMonitoring(payload) {
   await ensureApiKeyConfigured();
 
   const activeTab = await getActiveTab();
-  const monitoringProfile = bindMonitoringProfileToTab(
-    await buildMonitoringProfile(payload),
-    activeTab
+  const monitoringProfile = refreshAutoStopDeadline(
+    bindMonitoringProfileToTab(
+      await buildMonitoringProfile(payload),
+      activeTab
+    )
   );
 
   await patchState({
@@ -1084,12 +1203,13 @@ async function continueMonitoring() {
 
   const currentState = await getState();
   const language = await getUiLanguage();
-  const { monitoringProfile } = getResumeSession({
+  const { monitoringProfile: savedMonitoringProfile } = getResumeSession({
     ...currentState,
     __languageForError: language
   });
 
-  await ensureMonitoringTabActive(monitoringProfile, language);
+  await ensureMonitoringTabActive(savedMonitoringProfile, language);
+  const monitoringProfile = refreshAutoStopDeadline(savedMonitoringProfile);
 
   await patchState({
     status: STATUS.RUNNING,
@@ -1120,12 +1240,13 @@ async function restartMonitoring() {
 
   const currentState = await getState();
   const language = await getUiLanguage();
-  const { monitoringProfile } = getResumeSession({
+  const { monitoringProfile: savedMonitoringProfile } = getResumeSession({
     ...currentState,
     __languageForError: language
   });
 
-  await ensureMonitoringTabActive(monitoringProfile, language);
+  await ensureMonitoringTabActive(savedMonitoringProfile, language);
+  const monitoringProfile = refreshAutoStopDeadline(savedMonitoringProfile);
 
   await saveState({
     ...createDefaultState(),
@@ -1231,6 +1352,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   void sender;
 
   (async () => {
+    if (message?.type === "play-result-sound") {
+      return;
+    }
+
     if (message?.type === "get-state") {
       sendResponse({ ok: true, state: await getState() });
       return;
