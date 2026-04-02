@@ -209,8 +209,9 @@ function buildDiscordAnalysisPayload(result, state, language) {
     analysis.summary || (language === "zh" ? "新的图表分析结果已生成。" : "A new chart analysis result is ready."),
     350
   );
+  const hiddenFieldValue = "__discord_hidden_pending_order__";
 
-  return {
+  const payload = {
     username: language === "zh" ? "股票图表分析器" : "Stock Chart Analyzer",
     allowed_mentions: { parse: [] },
     embeds: [
@@ -248,13 +249,15 @@ function buildDiscordAnalysisPayload(result, state, language) {
         ],
         footer: {
           text: language === "zh"
-            ? `第 ${result?.round || state?.roundCount || 0} / ${state?.maxRounds || 0} 轮`
-            : `Round ${result?.round || state?.roundCount || 0} of ${state?.maxRounds || 0}`
+            ? `第 ${result?.round || state?.roundCount || 0} 轮`
+            : `Round ${result?.round || state?.roundCount || 0}`
         },
         timestamp: result?.capturedAt || new Date().toISOString()
       }
     ]
   };
+  payload.embeds[0].fields = payload.embeds[0].fields.filter((field) => field.value !== hiddenFieldValue);
+  return payload;
 }
 
 function getDiscordFallbackV2(language) {
@@ -320,6 +323,48 @@ function getDiscordOrderLabelV2(language, analysis) {
   return language === "zh" ? "现在不下单" : "No order now";
 }
 
+function getDiscordCurrentPriceLabel(language, analysis) {
+  return truncateText(analysis.currentPrice || getDiscordFallbackV2(language), 120);
+}
+
+function getDiscordPendingOrderSummary(language, pendingOrders, side) {
+  const isBuy = side === "buy";
+  const price = isBuy ? pendingOrders?.limitBuyPrice : pendingOrders?.limitSellPrice;
+  const shares = Number(isBuy ? pendingOrders?.limitBuyShares ?? 0 : pendingOrders?.limitSellShares ?? 0);
+
+  if (shares > 0 && price !== null && price !== undefined && price !== "") {
+    return language === "zh" ? `${shares} 股 @ ${price}` : `${shares} shares @ ${price}`;
+  }
+
+  return language === "zh" ? "当前没有挂单" : "No active order";
+}
+
+function getDiscordSuggestedGuidanceSummary(language, guidance) {
+  const price = guidance?.price || getDiscordFallbackV2(language);
+  const shares = guidance?.shares || getDiscordFallbackV2(language);
+  const reason = guidance?.reason || getDiscordFallbackV2(language);
+
+  return truncateText(
+    language === "zh"
+      ? `状态：仅供参考\n价格：${price}\n股数：${shares}\n原因：${reason}`
+      : `Status: Reference\nPrice: ${price}\nShares: ${shares}\nReason: ${reason}`,
+    500
+  );
+}
+
+function getDiscordReferenceGuidanceSummary(language, guidance) {
+  const price = guidance?.price || getDiscordFallbackV2(language);
+  const shares = guidance?.shares || getDiscordFallbackV2(language);
+  const reason = guidance?.reason || getDiscordFallbackV2(language);
+
+  return truncateText(
+    language === "zh"
+      ? `价格：${price}\n股数：${shares}\n原因：${reason}`
+      : `Price: ${price}\nShares: ${shares}\nReason: ${reason}`,
+    500
+  );
+}
+
 function getDiscordPositionSummaryV2(language, monitoringProfile) {
   const positionContext = monitoringProfile?.positionContext;
 
@@ -345,8 +390,9 @@ function buildDiscordAnalysisPayloadV2(result, state, language) {
     analysis.summary || (language === "zh" ? "新的图表分析结果已经生成。" : "A new chart analysis result is ready."),
     350
   );
+  const hiddenFieldValue = "__discord_hidden_pending_order__";
 
-  return {
+  const payload = {
     username: language === "zh" ? "股票图表分析器" : "Stock Chart Analyzer",
     allowed_mentions: { parse: [] },
     embeds: [
@@ -356,6 +402,11 @@ function buildDiscordAnalysisPayloadV2(result, state, language) {
         description,
         color: getDiscordColor(analysis.action),
         fields: [
+          {
+            name: language === "zh" ? "现在价格" : "Current Price",
+            value: getDiscordCurrentPriceLabel(language, analysis),
+            inline: true
+          },
           {
             name: language === "zh" ? "当前动作" : "Action Now",
             value: truncateText(getDiscordActionLabelV2(language, analysis.action), 100),
@@ -392,6 +443,16 @@ function buildDiscordAnalysisPayloadV2(result, state, language) {
             inline: true
           },
           {
+            name: language === "zh" ? "当前挂买单" : "Current Limit Buy Order",
+            value: hiddenFieldValue,
+            inline: true
+          },
+          {
+            name: language === "zh" ? "当前挂卖单" : "Current Limit Sell Order",
+            value: hiddenFieldValue,
+            inline: true
+          },
+          {
             name: language === "zh" ? "周期" : "Timeframe",
             value: truncateText(analysis.timeframe || fallback, 120),
             inline: true
@@ -402,28 +463,119 @@ function buildDiscordAnalysisPayloadV2(result, state, language) {
             inline: false
           },
           {
-            name: language === "zh" ? "可用资金 / 最大新增资金" : "Cash / Max New Capital",
-            value: truncateText(
-              `${monitoringProfile?.capitalContext?.availableCash ?? fallback} / ${monitoringProfile?.capitalContext?.maxNewCapital ?? fallback}`,
-              220
-            ),
+            name: language === "zh" ? "可用资金" : "Available Cash",
+            value: truncateText(`${monitoringProfile?.capitalContext?.availableCash ?? fallback}`, 220),
             inline: false
           },
           {
             name: language === "zh" ? "风险规则" : "Risk Rules",
             value: truncateText(
               language === "zh"
-                ? `允许摊低成本：${getDiscordBooleanLabelV2(language, monitoringProfile?.rules?.allowAveragingDown)}，允许减仓：${getDiscordBooleanLabelV2(language, monitoringProfile?.rules?.allowReducingPosition)}，风格：${getDiscordRiskStyleLabelV2(language, monitoringProfile?.rules?.riskStyle)}`
-                : `Average down: ${getDiscordBooleanLabelV2(language, monitoringProfile?.rules?.allowAveragingDown)}, Reduce: ${getDiscordBooleanLabelV2(language, monitoringProfile?.rules?.allowReducingPosition)}, Style: ${getDiscordRiskStyleLabelV2(language, monitoringProfile?.rules?.riskStyle)}`,
+                ? `允许摊低成本：${getDiscordBooleanLabelV2(language, monitoringProfile?.rules?.allowAveragingDown)}，允许卖出类动作：${getDiscordBooleanLabelV2(language, monitoringProfile?.rules?.allowReducingPosition)}，风格：${getDiscordRiskStyleLabelV2(language, monitoringProfile?.rules?.riskStyle)}`
+                : `Average down: ${getDiscordBooleanLabelV2(language, monitoringProfile?.rules?.allowAveragingDown)}, Sell-side actions: ${getDiscordBooleanLabelV2(language, monitoringProfile?.rules?.allowReducingPosition)}, Style: ${getDiscordRiskStyleLabelV2(language, monitoringProfile?.rules?.riskStyle)}`,
               280
             ),
+            inline: false
+          },
+          {
+            name: language === "zh" ? "买单指导" : "Limit Buy Guidance",
+            value: getDiscordReferenceGuidanceSummary(language, analysis.buyOrderGuidance),
+            inline: false
+          },
+          {
+            name: language === "zh" ? "卖单指导" : "Limit Sell Guidance",
+            value: getDiscordReferenceGuidanceSummary(language, analysis.sellOrderGuidance),
             inline: false
           }
         ],
         footer: {
           text: language === "zh"
-            ? `第 ${result?.round || state?.roundCount || 0} / ${state?.maxRounds || 0} 轮`
-            : `Round ${result?.round || state?.roundCount || 0} of ${state?.maxRounds || 0}`
+            ? `第 ${result?.round || state?.roundCount || 0} 轮`
+            : `Round ${result?.round || state?.roundCount || 0}`
+        },
+        timestamp: result?.capturedAt || new Date().toISOString()
+      }
+    ]
+  };
+  payload.embeds[0].fields = payload.embeds[0].fields.filter((field) => field.value !== hiddenFieldValue);
+  return payload;
+}
+
+function buildDiscordAnalysisPayloadV3(result, state, language) {
+  const analysis = result?.analysis || {};
+  const levels = analysis.levels || {};
+  const fallback = getDiscordFallbackV2(language);
+  const symbol = analysis.symbol || result?.validation?.symbolGuess || fallback;
+  const description = truncateText(
+    analysis.whatToDoNow || analysis.summary || (language === "zh" ? "新的图表分析结果已经生成。" : "A new chart analysis result is ready."),
+    350
+  );
+
+  return {
+    username: language === "zh" ? "股票图表分析器" : "Stock Chart Analyzer",
+    allowed_mentions: { parse: [] },
+    embeds: [
+      {
+        title: language === "zh" ? `最新建议 - ${symbol}` : `Latest Recommendation - ${symbol}`,
+        url: result?.pageUrl || undefined,
+        description,
+        color: getDiscordColor(analysis.action),
+        fields: [
+          {
+            name: language === "zh" ? "当前动作" : "Action Now",
+            value: truncateText(getDiscordActionLabelV2(language, analysis.action), 100),
+            inline: true
+          },
+          {
+            name: language === "zh" ? "挂单计划" : "Order Plan",
+            value: truncateText(getDiscordOrderLabelV2(language, analysis), 120),
+            inline: true
+          },
+          {
+            name: language === "zh" ? "现在价格" : "Current Price",
+            value: getDiscordCurrentPriceLabel(language, analysis),
+            inline: true
+          },
+          {
+            name: language === "zh" ? "当前支撑位" : "Current Support",
+            value: truncateText(analysis.supportLevels || levels.entry || fallback, 250),
+            inline: true
+          },
+          {
+            name: language === "zh" ? "当前压力位" : "Current Resistance",
+            value: truncateText(analysis.resistanceLevels || levels.target || fallback, 250),
+            inline: true
+          },
+          {
+            name: language === "zh" ? "如果跌到这里要小心" : "Caution Price",
+            value: truncateText(levels.invalidation || fallback, 250),
+            inline: true
+          },
+          {
+            name: language === "zh" ? "建议仓位" : "Suggested Size",
+            value: truncateText(analysis.sizeSuggestion || fallback, 250),
+            inline: true
+          },
+          {
+            name: language === "zh" ? "买入参考" : "Buy Reference",
+            value: getDiscordReferenceGuidanceSummary(language, analysis.buyOrderGuidance),
+            inline: false
+          },
+          {
+            name: language === "zh" ? "卖出参考" : "Sell Reference",
+            value: getDiscordReferenceGuidanceSummary(language, analysis.sellOrderGuidance),
+            inline: false
+          },
+          {
+            name: language === "zh" ? "需要注意" : "Watch Out",
+            value: truncateText(analysis.riskNote || fallback, 300),
+            inline: false
+          }
+        ],
+        footer: {
+          text: language === "zh"
+            ? `第 ${result?.round || state?.roundCount || 0} 轮`
+            : `Round ${result?.round || state?.roundCount || 0}`
         },
         timestamp: result?.capturedAt || new Date().toISOString()
       }
@@ -445,7 +597,7 @@ async function notifyDiscordAnalysisResult(result, state, language) {
       headers: {
         "Content-Type": "application/json"
       },
-      body: JSON.stringify(buildDiscordAnalysisPayloadV2(result, state, language))
+      body: JSON.stringify(buildDiscordAnalysisPayloadV3(result, state, language))
     });
 
     if (!response.ok) {
@@ -475,13 +627,10 @@ function bgText(language, key, vars = {}) {
       currentSharesLabel: "Current shares",
       averageCostLabel: "Average cost",
       availableCashLabel: "Available cash",
-      maxNewCapitalLabel: "Max new capital",
       currentSharesMin: "Current shares must be 0 or greater.",
       averageCostMin: "Average cost must be greater than 0.",
       availableCashMin: "Available cash must be 0 or greater.",
-      maxNewCapitalMin: "Max new capital must be 0 or greater.",
       averageCostRequired: "Average cost is required when you already hold shares.",
-      maxNewCapitalExceedsCash: "Max new capital cannot be greater than available cash.",
       chooseValidRiskStyle: "Choose a valid risk style.",
       chooseValidAutoStop: "Choose a valid auto stop option.",
       validationFailedChart: "Validation failed because the current tab does not look like a stock chart.",
@@ -508,13 +657,10 @@ function bgText(language, key, vars = {}) {
       currentSharesLabel: "当前持股数",
       averageCostLabel: "平均成本",
       availableCashLabel: "可用资金",
-      maxNewCapitalLabel: "本次交易最多新增资金",
       currentSharesMin: "当前持股数必须大于或等于 0。",
       averageCostMin: "平均成本必须大于 0。",
       availableCashMin: "可用资金必须大于或等于 0。",
-      maxNewCapitalMin: "本次交易最多新增资金必须大于或等于 0。",
       averageCostRequired: "如果你已经持有股票，就必须填写平均成本。",
-      maxNewCapitalExceedsCash: "本次交易最多新增资金不能大于可用资金。",
       chooseValidRiskStyle: "请选择有效的风险风格。",
       validationFailedChart: "校验失败，因为当前标签页看起来不像股票图。",
       notifyChartNotDetectedTitle: "未识别到股票图表",
@@ -772,6 +918,23 @@ function normalizeBoolean(value) {
   return value === true || value === "true" || value === "yes" || value === 1 || value === "1";
 }
 
+function normalizeOptionalDecimal(value, label, language) {
+  if (value === "" || value === null || value === undefined) {
+    return null;
+  }
+
+  return normalizeDecimal(value, label, language);
+}
+
+function getPendingOrderFieldLabels(language) {
+  return {
+    limitBuyPrice: language === "zh" ? "当前挂买单价格" : "Current limit buy price",
+    limitBuyShares: language === "zh" ? "当前挂买单股数" : "Current limit buy shares",
+    limitSellPrice: language === "zh" ? "当前挂卖单价格" : "Current limit sell price",
+    limitSellShares: language === "zh" ? "当前挂卖单股数" : "Current limit sell shares"
+  };
+}
+
 function getAutoStopMinutes(rule) {
   return AUTO_STOP_MINUTES.get(rule) ?? null;
 }
@@ -821,6 +984,7 @@ function getAutoStopReason(language, rule) {
 
 async function buildMonitoringProfile(payload) {
   const language = await getUiLanguage();
+  const pendingOrderLabels = getPendingOrderFieldLabels(language);
   const currentShares = normalizeDecimal(payload.currentShares, bgText(language, "currentSharesLabel"), language);
 
   if (currentShares < 0) {
@@ -845,19 +1009,57 @@ async function buildMonitoringProfile(payload) {
     throw new Error(bgText(language, "availableCashMin"));
   }
 
-  const maxNewCapital = normalizeDecimal(payload.maxNewCapital, bgText(language, "maxNewCapitalLabel"), language);
+  const limitBuyPrice = normalizeOptionalDecimal(payload.limitBuyPrice, pendingOrderLabels.limitBuyPrice, language);
+  const limitBuyShares = payload.limitBuyShares === "" || payload.limitBuyShares === null || payload.limitBuyShares === undefined
+    ? 0
+    : normalizeDecimal(payload.limitBuyShares, pendingOrderLabels.limitBuyShares, language);
 
-  if (maxNewCapital < 0) {
-    throw new Error(bgText(language, "maxNewCapitalMin"));
+  if (limitBuyPrice !== null && limitBuyPrice <= 0) {
+    throw new Error(language === "zh" ? "当前挂买单价格必须大于 0。" : "Current limit buy price must be greater than 0.");
   }
 
-  if (maxNewCapital > availableCash) {
-    throw new Error(bgText(language, "maxNewCapitalExceedsCash"));
+  if (limitBuyShares < 0) {
+    throw new Error(language === "zh" ? "当前挂买单股数必须大于或等于 0。" : "Current limit buy shares must be 0 or greater.");
   }
 
-  const riskStyle = `${payload.riskStyle || ""}`.trim();
+  if (limitBuyShares > 0 && limitBuyPrice === null) {
+    throw new Error(language === "zh" ? "如果已经挂了买单股数，就必须填写挂买单价格。" : "Current limit buy price is required when limit buy shares are greater than 0.");
+  }
 
-  if (!VALID_RISK_STYLES.has(riskStyle)) {
+  if (limitBuyPrice !== null && limitBuyShares <= 0) {
+    throw new Error(language === "zh" ? "如果已经填写挂买单价格，就必须填写挂买单股数。" : "Current limit buy shares are required when a limit buy price is set.");
+  }
+
+  const limitSellPrice = normalizeOptionalDecimal(payload.limitSellPrice, pendingOrderLabels.limitSellPrice, language);
+  const limitSellShares = payload.limitSellShares === "" || payload.limitSellShares === null || payload.limitSellShares === undefined
+    ? 0
+    : normalizeDecimal(payload.limitSellShares, pendingOrderLabels.limitSellShares, language);
+
+  if (limitSellPrice !== null && limitSellPrice <= 0) {
+    throw new Error(language === "zh" ? "当前挂卖单价格必须大于 0。" : "Current limit sell price must be greater than 0.");
+  }
+
+  if (limitSellShares < 0) {
+    throw new Error(language === "zh" ? "当前挂卖单股数必须大于或等于 0。" : "Current limit sell shares must be 0 or greater.");
+  }
+
+  if (limitSellShares > 0 && limitSellPrice === null) {
+    throw new Error(language === "zh" ? "如果已经挂了卖单股数，就必须填写挂卖单价格。" : "Current limit sell price is required when limit sell shares are greater than 0.");
+  }
+
+  if (limitSellPrice !== null && limitSellShares <= 0) {
+    throw new Error(language === "zh" ? "如果已经填写挂卖单价格，就必须填写挂卖单股数。" : "Current limit sell shares are required when a limit sell price is set.");
+  }
+
+  if (limitSellShares > currentShares) {
+    throw new Error(language === "zh" ? "当前挂卖单股数不能大于当前持股数。" : "Current limit sell shares cannot be greater than current shares.");
+  }
+
+  const fallbackRiskStyle = `${payload.riskStyle || ""}`.trim();
+  const buyRiskStyle = `${payload.buyRiskStyle || fallbackRiskStyle || ""}`.trim();
+  const sellRiskStyle = `${payload.sellRiskStyle || fallbackRiskStyle || ""}`.trim();
+
+  if (!VALID_RISK_STYLES.has(buyRiskStyle) || !VALID_RISK_STYLES.has(sellRiskStyle)) {
     throw new Error(bgText(language, "chooseValidRiskStyle"));
   }
 
@@ -873,13 +1075,20 @@ async function buildMonitoringProfile(payload) {
       averageCost: currentShares > 0 ? averageCost : null
     },
     capitalContext: {
-      availableCash,
-      maxNewCapital
+      availableCash
+    },
+    pendingOrders: {
+      limitBuyPrice,
+      limitBuyShares,
+      limitSellPrice,
+      limitSellShares
     },
     rules: {
       allowAveragingDown: normalizeBoolean(payload.allowAveragingDown),
       allowReducingPosition: normalizeBoolean(payload.allowReducingPosition),
-      riskStyle,
+      buyRiskStyle,
+      sellRiskStyle,
+      riskStyle: buyRiskStyle,
       autoStopRule
     }
   };
@@ -1080,6 +1289,7 @@ async function runMonitoringRound() {
       ...capture,
       positionContext: monitoringProfile.positionContext,
       capitalContext: monitoringProfile.capitalContext,
+      pendingOrders: monitoringProfile.pendingOrders,
       rules: monitoringProfile.rules
     });
 

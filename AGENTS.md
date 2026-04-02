@@ -17,14 +17,16 @@ The extension currently does the following:
   - current shares
   - average cost
   - available cash
-  - max new capital for this trade
   - whether averaging down is allowed
-  - whether reducing position is allowed
-  - risk style
+  - whether sell-side actions are allowed
+  - buy risk style
+  - sell risk style
   - auto-stop duration
 - sends the visible chart screenshot plus structured execution constraints to OpenAI `gpt-5.4`
 - requires every analysis response to be valid JSON
 - requires the model to return a dedicated `whatToDoNow` instruction for the primary guidance block
+- requires the model to return visible support and resistance references
+- requires the model to return one limit-buy reference and one limit-sell reference
 - renders the latest recommendation as a user-friendly card in the side panel
 - shows a loading state during each new monitoring round while the next screenshot analysis is in flight
 - monitors every 5 minutes with `chrome.alarms`
@@ -61,6 +63,8 @@ The extension currently does the following:
 - English is the internal analysis language
 - Chinese output is produced as a second translation step after the English analysis
 - schema keys and enum values remain English even when the UI is Chinese
+- buy-reference prices must be below current price when current price is readable
+- sell-reference prices must be above current price when current price is readable
 - Discord webhook alerts are optional and should never be treated as a guaranteed delivery channel
 - Discord webhook URLs are secrets and must never be committed
 
@@ -115,7 +119,16 @@ The model currently returns a strict JSON object with:
 - `levels.target`
 - `levels.invalidation`
 - `riskNote`
+- `supportLevels`
+- `resistanceLevels`
 - `symbol`
+- `currentPrice`
+- `buyOrderGuidance.price`
+- `buyOrderGuidance.shares`
+- `buyOrderGuidance.reason`
+- `sellOrderGuidance.price`
+- `sellOrderGuidance.shares`
+- `sellOrderGuidance.reason`
 - `timeframe`
 
 ## Near-Term Improvement Areas

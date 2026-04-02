@@ -18,7 +18,7 @@ Current implemented behavior:
   - execution-constraints form
   - auto-stop selector
   - per-round loading state while a new screenshot analysis is in flight
-  - user-friendly recommendation card
+  - user-friendly recommendation card focused on execution guidance
   - `Stop`, `Continue`, `Restart`, and `Exit` controls
 - screenshot capture of the active chart tab
 - keyword-based stock-chart validation from page title and URL
@@ -28,7 +28,6 @@ Current implemented behavior:
 - Discord notifications for each successful recommendation round when a webhook is configured
 - a short audio cue when a fresh recommendation result arrives
 - automatic pause if the user leaves the original bound chart tab inside the monitored window
-- auto-stop after 70 rounds
 - bilingual UI strings for English and Simplified Chinese
 
 What is still basic:
@@ -52,10 +51,10 @@ What is still basic:
    - `Current Shares`
    - `Average Cost`
    - `Available Cash`
-   - `Max New Capital For This Trade`
    - `Allow Averaging Down`
-   - `Allow Reducing Position`
-   - `Risk Style`
+   - `Allow Sell-Side Actions`
+   - `Buy Risk Style`
+   - `Sell Risk Style`
    - `Auto Stop`
 10. The extension starts monitoring and immediately runs the first round.
 11. Every later round runs every 5 minutes with `chrome.alarms`.
@@ -116,7 +115,16 @@ The model is required to return strict JSON with these fields:
 - `levels.target`
 - `levels.invalidation`
 - `riskNote`
+- `supportLevels`
+- `resistanceLevels`
 - `symbol`
+- `currentPrice`
+- `buyOrderGuidance.price`
+- `buyOrderGuidance.shares`
+- `buyOrderGuidance.reason`
+- `sellOrderGuidance.price`
+- `sellOrderGuidance.shares`
+- `sellOrderGuidance.reason`
 - `timeframe`
 
 Notes:
@@ -125,6 +133,8 @@ Notes:
 - `orderType` is currently limited to `LIMIT` or `NONE`
 - `sizeSuggestion` is a user-facing sizing recommendation, not broker-connected position execution
 - `whatToDoNow` is a dedicated natural-language action instruction shown directly in the main recommendation card
+- `supportLevels` and `resistanceLevels` are short visible price references extracted from the current chart
+- `buyOrderGuidance` and `sellOrderGuidance` are reference ideas, not broker-connected live order management
 
 ## OpenAI Setup
 
@@ -152,16 +162,14 @@ Current behavior:
 - each successful recommendation round posts a Discord embed with:
   - action
   - order plan
-  - signal clarity
-  - watch level
-  - target
+  - current price
+  - current support
+  - current resistance
   - risk trigger
   - suggested size
-  - timeframe
-  - position
-  - cash and max new capital
-  - risk rules
-  - summary
+  - buy reference
+  - sell reference
+  - risk note
 
 Notes:
 
@@ -237,6 +245,13 @@ Current prompt behavior:
 - takes the user's position, capital, and risk constraints into account
 - returns a single best execution action right now
 - returns a dedicated `whatToDoNow` field so the UI does not have to stitch together the main action copy
+- returns visible `supportLevels` and `resistanceLevels`
+- generates one limit-buy reference and one limit-sell reference
+- uses `Buy Risk Style` to choose how aggressive the buy reference should be across support levels
+- uses `Sell Risk Style` to choose how aggressive the sell reference should be across resistance levels
+- enforces that:
+  - the buy reference price must stay below current price
+  - the sell reference price must stay above current price
 - keeps the response:
   - concise
   - direct

@@ -43,45 +43,59 @@
         <h2 id="contextTitle">Execution Constraints</h2>
         <p id="contextDescription">Tell the assistant about your current position, cash, and risk rules.</p>
         <form id="contextForm" class="context-form">
-          <label class="field">
-            <span id="currentSharesLabel">Current Shares</span>
-            <input id="currentSharesInput" type="number" min="0" step="0.0001" inputmode="decimal" placeholder="0">
-          </label>
+          <section class="form-section">
+            <div class="form-section-header">
+              <h3 id="positionSectionTitle" class="form-section-title">Position & Capital Status</h3>
+              <p id="positionSectionCopy" class="form-section-copy">Enter your current holdings, available cash, and any working orders.</p>
+            </div>
 
-          <label class="field">
-            <span id="averageCostLabel">Average Cost</span>
-            <input id="averageCostInput" type="number" min="0" step="0.0001" inputmode="decimal" placeholder="18.45">
-          </label>
+            <label class="field">
+              <span id="currentSharesLabel">Current Shares</span>
+              <input id="currentSharesInput" type="number" min="0" step="0.0001" inputmode="decimal" placeholder="0">
+            </label>
 
-          <label class="field">
-            <span id="availableCashLabel">Available Cash</span>
-            <input id="availableCashInput" type="number" min="0" step="0.01" inputmode="decimal" placeholder="5000">
-          </label>
+            <label class="field">
+              <span id="averageCostLabel">Average Cost</span>
+              <input id="averageCostInput" type="number" min="0" step="0.0001" inputmode="decimal" placeholder="18.45">
+            </label>
 
-          <label class="field">
-            <span id="maxNewCapitalLabel">Max New Capital For This Trade</span>
-            <input id="maxNewCapitalInput" type="number" min="0" step="0.01" inputmode="decimal" placeholder="1500">
-          </label>
+            <label class="field">
+              <span id="availableCashLabel">Available Cash</span>
+              <input id="availableCashInput" type="number" min="0" step="0.01" inputmode="decimal" placeholder="5000">
+            </label>
+          </section>
 
-          <label class="field">
-            <span id="allowAveragingDownLabel">Allow Averaging Down</span>
-            <select id="allowAveragingDownSelect"></select>
-          </label>
+          <section class="form-section">
+            <div class="form-section-header">
+              <h3 id="rulesSectionTitle" class="form-section-title">Execution Constraints</h3>
+              <p id="rulesSectionCopy" class="form-section-copy">Set the guardrails the assistant must respect before placing or adjusting orders.</p>
+            </div>
 
-          <label class="field">
-            <span id="allowReducingPositionLabel">Allow Reducing Position</span>
-            <select id="allowReducingPositionSelect"></select>
-          </label>
+            <label class="field">
+              <span id="allowAveragingDownLabel">Allow Averaging Down</span>
+              <select id="allowAveragingDownSelect"></select>
+            </label>
 
-          <label class="field">
-            <span id="riskStyleLabel">Risk Style</span>
-            <select id="riskStyleSelect"></select>
-          </label>
+            <label class="field">
+              <span id="allowReducingPositionLabel">Allow Reducing Position</span>
+              <select id="allowReducingPositionSelect"></select>
+            </label>
 
-          <label class="field">
-            <span id="autoStopLabel">Auto Stop</span>
-            <select id="autoStopSelect"></select>
-          </label>
+            <label class="field">
+              <span id="buyRiskStyleLabel">Buy Risk Style</span>
+              <select id="buyRiskStyleSelect"></select>
+            </label>
+
+            <label class="field">
+              <span id="sellRiskStyleLabel">Sell Risk Style</span>
+              <select id="sellRiskStyleSelect"></select>
+            </label>
+
+            <label class="field">
+              <span id="autoStopLabel">Auto Stop</span>
+              <select id="autoStopSelect"></select>
+            </label>
+          </section>
 
           <p id="formHint" class="form-hint">If you already hold shares, average cost is required.</p>
           <p id="formError" class="form-error hidden"></p>
