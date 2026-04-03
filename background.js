@@ -110,41 +110,6 @@ function truncateText(value, maxLength = 280) {
   return `${text.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
 }
 
-function getDiscordFallback(language) {
-  return language === "zh" ? "无" : "N/A";
-}
-
-function getDiscordActionLabel(language, action) {
-  const labels = {
-    OPEN: language === "zh" ? "开仓" : "Open",
-    ADD: language === "zh" ? "加仓" : "Add",
-    HOLD: language === "zh" ? "持有" : "Hold",
-    REDUCE: language === "zh" ? "减仓" : "Reduce",
-    EXIT: language === "zh" ? "退出" : "Exit",
-    WAIT: language === "zh" ? "等待" : "Wait"
-  };
-
-  return labels[action] || (language === "zh" ? "未知" : "Unknown");
-}
-
-function getDiscordClarityLabel(language, confidence) {
-  const value = Number(confidence);
-
-  if (!Number.isFinite(value)) {
-    return language === "zh" ? "未知" : "Unknown";
-  }
-
-  if (value < 35) {
-    return language === "zh" ? "低" : "Low";
-  }
-
-  if (value < 70) {
-    return language === "zh" ? "中" : "Medium";
-  }
-
-  return language === "zh" ? "高" : "High";
-}
-
 function getDiscordColor(action) {
   if (action === "OPEN" || action === "ADD") {
     return 0x1f8f4e;
@@ -161,110 +126,11 @@ function getDiscordColor(action) {
   return 0x4f718c;
 }
 
-function getDiscordRiskStyleLabel(language, riskStyle) {
-  if (riskStyle === "conservative") {
-    return language === "zh" ? "保守" : "Conservative";
-  }
-
-  if (riskStyle === "moderate") {
-    return language === "zh" ? "中性" : "Moderate";
-  }
-
-  if (riskStyle === "aggressive") {
-    return language === "zh" ? "激进" : "Aggressive";
-  }
-
-  return getDiscordFallback(language);
-}
-
-function getDiscordOrderLabel(language, analysis) {
-  if (analysis.orderType === "LIMIT" && analysis.limitPrice && analysis.limitPrice !== "N/A") {
-    return language === "zh" ? `限价 ${analysis.limitPrice}` : `LIMIT at ${analysis.limitPrice}`;
-  }
-
-  return language === "zh" ? "现在不下单" : "No order now";
-}
-
-function getDiscordPositionSummary(language, monitoringProfile) {
-  const positionContext = monitoringProfile?.positionContext;
-
-  if (!positionContext || positionContext.currentShares === undefined || positionContext.currentShares === null) {
-    return getDiscordFallback(language);
-  }
-
-  const shares = positionContext.currentShares;
-  const averageCost = positionContext.averageCost ?? getDiscordFallback(language);
-
-  return language === "zh"
-    ? `${shares} 股，成本 ${averageCost}`
-    : `${shares} shares at ${averageCost}`;
-}
-
-function buildDiscordAnalysisPayload(result, state, language) {
-  const analysis = result?.analysis || {};
-  const levels = analysis.levels || {};
-  const fallback = getDiscordFallback(language);
-  const symbol = analysis.symbol || result?.validation?.symbolGuess || fallback;
-  const description = truncateText(
-    analysis.summary || (language === "zh" ? "新的图表分析结果已生成。" : "A new chart analysis result is ready."),
-    350
-  );
-  const hiddenFieldValue = "__discord_hidden_pending_order__";
-
-  const payload = {
-    username: language === "zh" ? "股票图表分析器" : "Stock Chart Analyzer",
-    allowed_mentions: { parse: [] },
-    embeds: [
-      {
-        title: language === "zh" ? `最新建议 - ${symbol}` : `Latest Recommendation - ${symbol}`,
-        url: result?.pageUrl || undefined,
-        description,
-        color: getDiscordColor(analysis.action),
-        fields: [
-          {
-            name: language === "zh" ? "当前动作" : "Action Now",
-            value: truncateText(getDiscordActionLabel(language, analysis.action), 100),
-            inline: true
-          },
-          {
-            name: language === "zh" ? "挂单计划" : "Order Plan",
-            value: truncateText(getDiscordOrderLabel(language, analysis), 120),
-            inline: true
-          },
-          {
-            name: language === "zh" ? "信号清晰度" : "Signal Clarity",
-            value: truncateText(getDiscordClarityLabel(language, analysis.confidence), 120),
-            inline: true
-          },
-          {
-            name: language === "zh" ? "关注价位" : "Watch Level",
-            value: truncateText(levels.entry || analysis.limitPrice || fallback, 250),
-            inline: true
-          },
-          {
-            name: language === "zh" ? "目标位" : "Target",
-            value: truncateText(levels.target || fallback, 250),
-            inline: true
-          }
-        ],
-        footer: {
-          text: language === "zh"
-            ? `第 ${result?.round || state?.roundCount || 0} 轮`
-            : `Round ${result?.round || state?.roundCount || 0}`
-        },
-        timestamp: result?.capturedAt || new Date().toISOString()
-      }
-    ]
-  };
-  payload.embeds[0].fields = payload.embeds[0].fields.filter((field) => field.value !== hiddenFieldValue);
-  return payload;
-}
-
-function getDiscordFallbackV2(language) {
+function getDiscordFallbackText(language) {
   return language === "zh" ? "无" : "N/A";
 }
 
-function getDiscordActionLabelV2(language, action) {
+function getDiscordActionLabelV3(language, action) {
   const labels = {
     OPEN: language === "zh" ? "开仓" : "Open",
     ADD: language === "zh" ? "加仓" : "Add",
@@ -277,85 +143,14 @@ function getDiscordActionLabelV2(language, action) {
   return labels[action] || (language === "zh" ? "未知" : "Unknown");
 }
 
-function getDiscordClarityLabelV2(language, confidence) {
-  const value = Number(confidence);
-
-  if (!Number.isFinite(value)) {
-    return language === "zh" ? "未知" : "Unknown";
-  }
-
-  if (value < 35) {
-    return language === "zh" ? "低" : "Low";
-  }
-
-  if (value < 70) {
-    return language === "zh" ? "中" : "Medium";
-  }
-
-  return language === "zh" ? "高" : "High";
-}
-
-function getDiscordRiskStyleLabelV2(language, riskStyle) {
-  if (riskStyle === "conservative") {
-    return language === "zh" ? "保守" : "Conservative";
-  }
-
-  if (riskStyle === "moderate") {
-    return language === "zh" ? "中性" : "Moderate";
-  }
-
-  if (riskStyle === "aggressive") {
-    return language === "zh" ? "激进" : "Aggressive";
-  }
-
-  return getDiscordFallbackV2(language);
-}
-
-function getDiscordBooleanLabelV2(language, value) {
-  return language === "zh" ? (value ? "是" : "否") : (value ? "Yes" : "No");
-}
-
-function getDiscordOrderLabelV2(language, analysis) {
-  if (analysis.orderType === "LIMIT" && analysis.limitPrice && analysis.limitPrice !== "N/A") {
-    return language === "zh" ? `限价 ${analysis.limitPrice}` : `LIMIT at ${analysis.limitPrice}`;
-  }
-
-  return language === "zh" ? "现在不下单" : "No order now";
-}
-
 function getDiscordCurrentPriceLabel(language, analysis) {
-  return truncateText(analysis.currentPrice || getDiscordFallbackV2(language), 120);
-}
-
-function getDiscordPendingOrderSummary(language, pendingOrders, side) {
-  const isBuy = side === "buy";
-  const price = isBuy ? pendingOrders?.limitBuyPrice : pendingOrders?.limitSellPrice;
-  const shares = Number(isBuy ? pendingOrders?.limitBuyShares ?? 0 : pendingOrders?.limitSellShares ?? 0);
-
-  if (shares > 0 && price !== null && price !== undefined && price !== "") {
-    return language === "zh" ? `${shares} 股 @ ${price}` : `${shares} shares @ ${price}`;
-  }
-
-  return language === "zh" ? "当前没有挂单" : "No active order";
-}
-
-function getDiscordSuggestedGuidanceSummary(language, guidance) {
-  const price = guidance?.price || getDiscordFallbackV2(language);
-  const shares = guidance?.shares || getDiscordFallbackV2(language);
-  const reason = guidance?.reason || getDiscordFallbackV2(language);
-
-  return truncateText(
-    language === "zh"
-      ? `状态：仅供参考\n价格：${price}\n股数：${shares}\n原因：${reason}`
-      : `Status: Reference\nPrice: ${price}\nShares: ${shares}\nReason: ${reason}`,
-    500
-  );
+  return truncateText(analysis.currentPrice || getDiscordFallbackText(language), 120);
 }
 
 function getDiscordReferenceGuidanceSummary(language, guidance) {
-  const price = guidance?.price || getDiscordFallbackV2(language);
-  const shares = guidance?.shares || getDiscordFallbackV2(language);
-  const reason = guidance?.reason || getDiscordFallbackV2(language);
+  const price = guidance?.price || getDiscordFallbackText(language);
+  const shares = guidance?.shares || getDiscordFallbackText(language);
+  const reason = guidance?.reason || getDiscordFallbackText(language);
 
   return truncateText(
     language === "zh"
@@ -365,146 +160,10 @@ function getDiscordReferenceGuidanceSummary(language, guidance) {
   );
 }
 
-function getDiscordPositionSummaryV2(language, monitoringProfile) {
-  const positionContext = monitoringProfile?.positionContext;
-
-  if (!positionContext || positionContext.currentShares === undefined || positionContext.currentShares === null) {
-    return getDiscordFallbackV2(language);
-  }
-
-  const shares = positionContext.currentShares;
-  const averageCost = positionContext.averageCost ?? getDiscordFallbackV2(language);
-
-  return language === "zh"
-    ? `${shares} 股，成本 ${averageCost}`
-    : `${shares} shares at ${averageCost}`;
-}
-
-function buildDiscordAnalysisPayloadV2(result, state, language) {
-  const analysis = result?.analysis || {};
-  const levels = analysis.levels || {};
-  const fallback = getDiscordFallbackV2(language);
-  const symbol = analysis.symbol || result?.validation?.symbolGuess || fallback;
-  const monitoringProfile = result?.monitoringProfile || state?.monitoringProfile || state?.lastMonitoringProfile;
-  const description = truncateText(
-    analysis.summary || (language === "zh" ? "新的图表分析结果已经生成。" : "A new chart analysis result is ready."),
-    350
-  );
-  const hiddenFieldValue = "__discord_hidden_pending_order__";
-
-  const payload = {
-    username: language === "zh" ? "股票图表分析器" : "Stock Chart Analyzer",
-    allowed_mentions: { parse: [] },
-    embeds: [
-      {
-        title: language === "zh" ? `最新建议 - ${symbol}` : `Latest Recommendation - ${symbol}`,
-        url: result?.pageUrl || undefined,
-        description,
-        color: getDiscordColor(analysis.action),
-        fields: [
-          {
-            name: language === "zh" ? "现在价格" : "Current Price",
-            value: getDiscordCurrentPriceLabel(language, analysis),
-            inline: true
-          },
-          {
-            name: language === "zh" ? "当前动作" : "Action Now",
-            value: truncateText(getDiscordActionLabelV2(language, analysis.action), 100),
-            inline: true
-          },
-          {
-            name: language === "zh" ? "挂单计划" : "Order Plan",
-            value: truncateText(getDiscordOrderLabelV2(language, analysis), 120),
-            inline: true
-          },
-          {
-            name: language === "zh" ? "信号清晰度" : "Signal Clarity",
-            value: truncateText(getDiscordClarityLabelV2(language, analysis.confidence), 120),
-            inline: true
-          },
-          {
-            name: language === "zh" ? "关注价位" : "Watch Level",
-            value: truncateText(levels.entry || analysis.limitPrice || fallback, 250),
-            inline: true
-          },
-          {
-            name: language === "zh" ? "目标位" : "Target",
-            value: truncateText(levels.target || fallback, 250),
-            inline: true
-          },
-          {
-            name: language === "zh" ? "风险触发位" : "Risk Trigger",
-            value: truncateText(levels.invalidation || fallback, 250),
-            inline: true
-          },
-          {
-            name: language === "zh" ? "建议仓位" : "Suggested Size",
-            value: truncateText(analysis.sizeSuggestion || fallback, 250),
-            inline: true
-          },
-          {
-            name: language === "zh" ? "当前挂买单" : "Current Limit Buy Order",
-            value: hiddenFieldValue,
-            inline: true
-          },
-          {
-            name: language === "zh" ? "当前挂卖单" : "Current Limit Sell Order",
-            value: hiddenFieldValue,
-            inline: true
-          },
-          {
-            name: language === "zh" ? "周期" : "Timeframe",
-            value: truncateText(analysis.timeframe || fallback, 120),
-            inline: true
-          },
-          {
-            name: language === "zh" ? "持仓" : "Position",
-            value: truncateText(getDiscordPositionSummaryV2(language, monitoringProfile), 220),
-            inline: false
-          },
-          {
-            name: language === "zh" ? "可用资金" : "Available Cash",
-            value: truncateText(`${monitoringProfile?.capitalContext?.availableCash ?? fallback}`, 220),
-            inline: false
-          },
-          {
-            name: language === "zh" ? "风险规则" : "Risk Rules",
-            value: truncateText(
-              language === "zh"
-                ? `允许摊低成本：${getDiscordBooleanLabelV2(language, monitoringProfile?.rules?.allowAveragingDown)}，允许卖出类动作：${getDiscordBooleanLabelV2(language, monitoringProfile?.rules?.allowReducingPosition)}，风格：${getDiscordRiskStyleLabelV2(language, monitoringProfile?.rules?.riskStyle)}`
-                : `Average down: ${getDiscordBooleanLabelV2(language, monitoringProfile?.rules?.allowAveragingDown)}, Sell-side actions: ${getDiscordBooleanLabelV2(language, monitoringProfile?.rules?.allowReducingPosition)}, Style: ${getDiscordRiskStyleLabelV2(language, monitoringProfile?.rules?.riskStyle)}`,
-              280
-            ),
-            inline: false
-          },
-          {
-            name: language === "zh" ? "买单指导" : "Limit Buy Guidance",
-            value: getDiscordReferenceGuidanceSummary(language, analysis.buyOrderGuidance),
-            inline: false
-          },
-          {
-            name: language === "zh" ? "卖单指导" : "Limit Sell Guidance",
-            value: getDiscordReferenceGuidanceSummary(language, analysis.sellOrderGuidance),
-            inline: false
-          }
-        ],
-        footer: {
-          text: language === "zh"
-            ? `第 ${result?.round || state?.roundCount || 0} 轮`
-            : `Round ${result?.round || state?.roundCount || 0}`
-        },
-        timestamp: result?.capturedAt || new Date().toISOString()
-      }
-    ]
-  };
-  payload.embeds[0].fields = payload.embeds[0].fields.filter((field) => field.value !== hiddenFieldValue);
-  return payload;
-}
-
 function buildDiscordAnalysisPayloadV3(result, state, language) {
   const analysis = result?.analysis || {};
   const levels = analysis.levels || {};
-  const fallback = getDiscordFallbackV2(language);
+  const fallback = getDiscordFallbackText(language);
   const symbol = analysis.symbol || result?.validation?.symbolGuess || fallback;
   const description = truncateText(
     analysis.whatToDoNow || analysis.summary || (language === "zh" ? "新的图表分析结果已经生成。" : "A new chart analysis result is ready."),
@@ -523,12 +182,7 @@ function buildDiscordAnalysisPayloadV3(result, state, language) {
         fields: [
           {
             name: language === "zh" ? "当前动作" : "Action Now",
-            value: truncateText(getDiscordActionLabelV2(language, analysis.action), 100),
-            inline: true
-          },
-          {
-            name: language === "zh" ? "挂单计划" : "Order Plan",
-            value: truncateText(getDiscordOrderLabelV2(language, analysis), 120),
+            value: truncateText(getDiscordActionLabelV3(language, analysis.action), 100),
             inline: true
           },
           {
@@ -639,18 +293,15 @@ function bgText(language, key, vars = {}) {
       validationFailedCapture: "Validation failed because the tab could not be captured.",
       notifyCaptureFailed: "Capture failed",
       fillFormFirst: "Fill in the execution constraints form before starting monitoring.",
-      reachedRounds: "Reached {maxRounds} rounds.",
       monitoringStoppedChart: "Monitoring stopped because the current tab is no longer recognized as a stock chart.",
       notifyMonitoringStopped: "Monitoring stopped",
       notifyCurrentTabNotChart: "The current tab is no longer recognized as a stock chart.",
-      notifyMonitoringFinished: "Monitoring finished",
-      notifyStoppedAfterRounds: "Stopped after {maxRounds} rounds.",
       monitoringStoppedAnalyze: "Monitoring stopped because the current tab could not be analyzed.",
       stoppedByUser: "Monitoring paused by the user.",
       noPreviousSession: "No previous monitoring session is available yet."
     },
     zh: {
-      noActiveTab: "没有找到当前活动标签页。请先聚焦到图表页面后再试。",
+      noActiveTab: "没有找到当前活动标签页。请先切到图表页再试。",
       untitledTab: "未命名标签页",
       saveApiKeyFirst: "开始监控前请先保存 OpenAI 密钥。",
       mustBeNumber: "{label} 必须是数字。",
@@ -661,19 +312,17 @@ function bgText(language, key, vars = {}) {
       averageCostMin: "平均成本必须大于 0。",
       availableCashMin: "可用资金必须大于或等于 0。",
       averageCostRequired: "如果你已经持有股票，就必须填写平均成本。",
-      chooseValidRiskStyle: "请选择有效的风险风格。",
+      chooseValidRiskStyle: "请选择有效的风险偏好。",
+      chooseValidAutoStop: "请选择有效的自动停止选项。",
       validationFailedChart: "校验失败，因为当前标签页看起来不像股票图。",
       notifyChartNotDetectedTitle: "未识别到股票图表",
       notifyChartNotDetectedBody: "监控已停止，因为当前标签页未被识别为股票图表。",
-      validationFailedCapture: "校验失败，因为当前标签页无法被截取。",
+      validationFailedCapture: "校验失败，因为当前标签页无法被截图。",
       notifyCaptureFailed: "截图失败",
-      fillFormFirst: "开始监控前请先填写执行约束表单。",
-      reachedRounds: "已达到 {maxRounds} 轮。",
+      fillFormFirst: "开始监控前请先填写交易设置表单。",
       monitoringStoppedChart: "监控已停止，因为当前标签页不再被识别为股票图表。",
       notifyMonitoringStopped: "监控已停止",
       notifyCurrentTabNotChart: "当前标签页不再被识别为股票图表。",
-      notifyMonitoringFinished: "监控已完成",
-      notifyStoppedAfterRounds: "已在 {maxRounds} 轮后停止。",
       monitoringStoppedAnalyze: "监控已停止，因为当前标签页无法完成分析。",
       stoppedByUser: "监控已由用户手动暂停。",
       noPreviousSession: "目前还没有可继续的历史监控会话。"
@@ -749,7 +398,7 @@ function bindMonitoringProfileToTab(monitoringProfile, tab) {
 
 function getPauseReason(language) {
   return language === "zh"
-    ? "你已离开原始图表标签页，监控已自动暂停。返回该标签页后可继续。"
+    ? "你已离开原始图表标签页，监控已自动暂停。返回该标签页后可以继续。"
     : "Monitoring paused because you left the original chart tab. Return to that tab to continue.";
 }
 
@@ -918,21 +567,8 @@ function normalizeBoolean(value) {
   return value === true || value === "true" || value === "yes" || value === 1 || value === "1";
 }
 
-function normalizeOptionalDecimal(value, label, language) {
-  if (value === "" || value === null || value === undefined) {
-    return null;
-  }
-
-  return normalizeDecimal(value, label, language);
-}
-
-function getPendingOrderFieldLabels(language) {
-  return {
-    limitBuyPrice: language === "zh" ? "当前挂买单价格" : "Current limit buy price",
-    limitBuyShares: language === "zh" ? "当前挂买单股数" : "Current limit buy shares",
-    limitSellPrice: language === "zh" ? "当前挂卖单价格" : "Current limit sell price",
-    limitSellShares: language === "zh" ? "当前挂卖单股数" : "Current limit sell shares"
-  };
+function normalizeRiskStyleValue(value) {
+  return VALID_RISK_STYLES.has(value) ? value : "conservative";
 }
 
 function getAutoStopMinutes(rule) {
@@ -944,13 +580,25 @@ function normalizeAutoStopRule(rule) {
 }
 
 function refreshAutoStopDeadline(monitoringProfile) {
-  const autoStopRule = normalizeAutoStopRule(monitoringProfile?.rules?.autoStopRule);
+  const normalizedProfile = monitoringProfile
+    ? {
+        ...monitoringProfile,
+        rules: {
+          allowAveragingDown: Boolean(monitoringProfile.rules?.allowAveragingDown),
+          allowSellSideActions: Boolean(monitoringProfile.rules?.allowSellSideActions),
+          buyRiskStyle: normalizeRiskStyleValue(`${monitoringProfile.rules?.buyRiskStyle || "conservative"}`.trim()),
+          sellRiskStyle: normalizeRiskStyleValue(`${monitoringProfile.rules?.sellRiskStyle || "conservative"}`.trim()),
+          autoStopRule: normalizeAutoStopRule(monitoringProfile.rules?.autoStopRule)
+        }
+      }
+    : null;
+  const autoStopRule = normalizeAutoStopRule(normalizedProfile?.rules?.autoStopRule);
   const minutes = getAutoStopMinutes(autoStopRule);
 
   return {
-    ...monitoringProfile,
+    ...normalizedProfile,
     rules: {
-      ...monitoringProfile?.rules,
+      ...normalizedProfile?.rules,
       autoStopRule
     },
     autoStopAt: minutes ? new Date(Date.now() + minutes * 60 * 1000).toISOString() : null
@@ -984,7 +632,6 @@ function getAutoStopReason(language, rule) {
 
 async function buildMonitoringProfile(payload) {
   const language = await getUiLanguage();
-  const pendingOrderLabels = getPendingOrderFieldLabels(language);
   const currentShares = normalizeDecimal(payload.currentShares, bgText(language, "currentSharesLabel"), language);
 
   if (currentShares < 0) {
@@ -1009,55 +656,8 @@ async function buildMonitoringProfile(payload) {
     throw new Error(bgText(language, "availableCashMin"));
   }
 
-  const limitBuyPrice = normalizeOptionalDecimal(payload.limitBuyPrice, pendingOrderLabels.limitBuyPrice, language);
-  const limitBuyShares = payload.limitBuyShares === "" || payload.limitBuyShares === null || payload.limitBuyShares === undefined
-    ? 0
-    : normalizeDecimal(payload.limitBuyShares, pendingOrderLabels.limitBuyShares, language);
-
-  if (limitBuyPrice !== null && limitBuyPrice <= 0) {
-    throw new Error(language === "zh" ? "当前挂买单价格必须大于 0。" : "Current limit buy price must be greater than 0.");
-  }
-
-  if (limitBuyShares < 0) {
-    throw new Error(language === "zh" ? "当前挂买单股数必须大于或等于 0。" : "Current limit buy shares must be 0 or greater.");
-  }
-
-  if (limitBuyShares > 0 && limitBuyPrice === null) {
-    throw new Error(language === "zh" ? "如果已经挂了买单股数，就必须填写挂买单价格。" : "Current limit buy price is required when limit buy shares are greater than 0.");
-  }
-
-  if (limitBuyPrice !== null && limitBuyShares <= 0) {
-    throw new Error(language === "zh" ? "如果已经填写挂买单价格，就必须填写挂买单股数。" : "Current limit buy shares are required when a limit buy price is set.");
-  }
-
-  const limitSellPrice = normalizeOptionalDecimal(payload.limitSellPrice, pendingOrderLabels.limitSellPrice, language);
-  const limitSellShares = payload.limitSellShares === "" || payload.limitSellShares === null || payload.limitSellShares === undefined
-    ? 0
-    : normalizeDecimal(payload.limitSellShares, pendingOrderLabels.limitSellShares, language);
-
-  if (limitSellPrice !== null && limitSellPrice <= 0) {
-    throw new Error(language === "zh" ? "当前挂卖单价格必须大于 0。" : "Current limit sell price must be greater than 0.");
-  }
-
-  if (limitSellShares < 0) {
-    throw new Error(language === "zh" ? "当前挂卖单股数必须大于或等于 0。" : "Current limit sell shares must be 0 or greater.");
-  }
-
-  if (limitSellShares > 0 && limitSellPrice === null) {
-    throw new Error(language === "zh" ? "如果已经挂了卖单股数，就必须填写挂卖单价格。" : "Current limit sell price is required when limit sell shares are greater than 0.");
-  }
-
-  if (limitSellPrice !== null && limitSellShares <= 0) {
-    throw new Error(language === "zh" ? "如果已经填写挂卖单价格，就必须填写挂卖单股数。" : "Current limit sell shares are required when a limit sell price is set.");
-  }
-
-  if (limitSellShares > currentShares) {
-    throw new Error(language === "zh" ? "当前挂卖单股数不能大于当前持股数。" : "Current limit sell shares cannot be greater than current shares.");
-  }
-
-  const fallbackRiskStyle = `${payload.riskStyle || ""}`.trim();
-  const buyRiskStyle = `${payload.buyRiskStyle || fallbackRiskStyle || ""}`.trim();
-  const sellRiskStyle = `${payload.sellRiskStyle || fallbackRiskStyle || ""}`.trim();
+  const buyRiskStyle = `${payload.buyRiskStyle || ""}`.trim();
+  const sellRiskStyle = `${payload.sellRiskStyle || ""}`.trim();
 
   if (!VALID_RISK_STYLES.has(buyRiskStyle) || !VALID_RISK_STYLES.has(sellRiskStyle)) {
     throw new Error(bgText(language, "chooseValidRiskStyle"));
@@ -1077,18 +677,11 @@ async function buildMonitoringProfile(payload) {
     capitalContext: {
       availableCash
     },
-    pendingOrders: {
-      limitBuyPrice,
-      limitBuyShares,
-      limitSellPrice,
-      limitSellShares
-    },
     rules: {
       allowAveragingDown: normalizeBoolean(payload.allowAveragingDown),
-      allowReducingPosition: normalizeBoolean(payload.allowReducingPosition),
+      allowSellSideActions: normalizeBoolean(payload.allowSellSideActions),
       buyRiskStyle,
       sellRiskStyle,
-      riskStyle: buyRiskStyle,
       autoStopRule
     }
   };
@@ -1223,11 +816,6 @@ async function runMonitoringRound() {
     throw new Error(bgText(language, "fillFormFirst"));
   }
 
-  if (currentState.roundCount >= currentState.maxRounds) {
-    const state = await stopMonitoring(bgText(language, "reachedRounds", { maxRounds: currentState.maxRounds }));
-    return { ok: false, state };
-  }
-
   if (monitoringProfile.autoStopAt) {
     const autoStopAt = Date.parse(monitoringProfile.autoStopAt);
 
@@ -1289,7 +877,6 @@ async function runMonitoringRound() {
       ...capture,
       positionContext: monitoringProfile.positionContext,
       capitalContext: monitoringProfile.capitalContext,
-      pendingOrders: monitoringProfile.pendingOrders,
       rules: monitoringProfile.rules
     });
 
@@ -1321,20 +908,6 @@ async function runMonitoringRound() {
 
     await notifyDiscordAnalysisResult(result, state, language);
     await playResultSound();
-
-    if (round >= state.maxRounds) {
-      await clearMonitoringAlarm();
-      state = await saveState({
-        ...state,
-        status: STATUS.IDLE,
-        isRoundInFlight: false,
-        monitoringProfile: null,
-        lastMonitoringProfile: monitoringProfile,
-        stopReason: bgText(language, "reachedRounds", { maxRounds: state.maxRounds })
-      });
-
-      await notifyUser(bgText(language, "notifyMonitoringFinished"), bgText(language, "notifyStoppedAfterRounds", { maxRounds: state.maxRounds }));
-    }
 
     return {
       ok: true,

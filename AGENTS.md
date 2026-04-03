@@ -34,6 +34,7 @@ The extension currently does the following:
 - binds monitoring to the original chart tab instead of silently switching to the current active page
 - pauses automatically if the user leaves the original chart tab inside the monitored window
 - can send Discord notifications for successful recommendation rounds when a webhook is configured
+- keeps Discord payloads aligned with the compact side-panel recommendation model instead of exposing deprecated order-management fields
 - plays a short audio cue when a fresh recommendation round finishes successfully
 - lets the user:
   - pause with `Stop`

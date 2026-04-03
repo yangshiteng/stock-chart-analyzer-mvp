@@ -28,7 +28,7 @@ const currentSharesLabel = document.getElementById("currentSharesLabel");
 const averageCostLabel = document.getElementById("averageCostLabel");
 const availableCashLabel = document.getElementById("availableCashLabel");
 const allowAveragingDownLabel = document.getElementById("allowAveragingDownLabel");
-const allowReducingPositionLabel = document.getElementById("allowReducingPositionLabel");
+const allowSellSideActionsLabel = document.getElementById("allowSellSideActionsLabel");
 const rulesSectionTitle = document.getElementById("rulesSectionTitle");
 const rulesSectionCopy = document.getElementById("rulesSectionCopy");
 const buyRiskStyleLabel = document.getElementById("buyRiskStyleLabel");
@@ -38,7 +38,7 @@ const currentSharesInput = document.getElementById("currentSharesInput");
 const averageCostInput = document.getElementById("averageCostInput");
 const availableCashInput = document.getElementById("availableCashInput");
 const allowAveragingDownSelect = document.getElementById("allowAveragingDownSelect");
-const allowReducingPositionSelect = document.getElementById("allowReducingPositionSelect");
+const allowSellSideActionsSelect = document.getElementById("allowSellSideActionsSelect");
 const buyRiskStyleSelect = document.getElementById("buyRiskStyleSelect");
 const sellRiskStyleSelect = document.getElementById("sellRiskStyleSelect");
 const autoStopSelect = document.getElementById("autoStopSelect");
@@ -71,80 +71,15 @@ function formatBooleanLabel(language, value) {
   return value ? t(language, "yes") : t(language, "no");
 }
 
-function formatRiskStyleLabel(language, value) {
-  return value ? t(language, `riskStyle_${value}`) : t(language, "notProvided");
-}
-
-function getBuyRiskStyleLabel(language) {
-  return language === "zh" ? "买入风险偏好" : "Buy Risk Style";
-}
-
-function getSellRiskStyleLabel(language) {
-  return language === "zh" ? "卖出风险偏好" : "Sell Risk Style";
-}
-
-function getSellSideActionsLabel(language) {
-  return language === "zh" ? "允许卖出类动作" : "Allow Sell-Side Actions";
-}
-
-function getCurrentPriceLabel(language) {
-  return language === "zh" ? "现在价格" : "Current Price";
-}
-
-function getLimitBuyPriceLabel(language) {
-  return language === "zh" ? "当前挂买单价格" : "Current Limit Buy Price";
-}
-
-function getLimitBuySharesLabel(language) {
-  return language === "zh" ? "当前挂买单股数" : "Current Limit Buy Shares";
-}
-
-function getLimitSellPriceLabel(language) {
-  return language === "zh" ? "当前挂卖单价格" : "Current Limit Sell Price";
-}
-
-function getLimitSellSharesLabel(language) {
-  return language === "zh" ? "当前挂卖单股数" : "Current Limit Sell Shares";
-}
-
-function getPendingOrderLabel(language, side) {
-  if (side === "buy") {
-    return language === "zh" ? "当前挂买单" : "Current Limit Buy Order";
+function normalizeRiskStyleValue(value) {
+  if (value === "aggressive" || value === "moderate" || value === "conservative") {
+    return value;
   }
 
-  return language === "zh" ? "当前挂卖单" : "Current Limit Sell Order";
+  return "conservative";
 }
 
-function getOrderGuidanceLabel(language, side) {
-  if (side === "buy") {
-    return language === "zh" ? "买单指导" : "Limit Buy Guidance";
-  }
 
-  return language === "zh" ? "卖单指导" : "Limit Sell Guidance";
-}
-
-function getOrderGuidanceDecisionLabel(language, decision) {
-  const labels = {
-    KEEP: language === "zh" ? "保留" : "Keep",
-    PLACE: language === "zh" ? "新挂" : "Place",
-    ADJUST: language === "zh" ? "调整" : "Adjust",
-    CANCEL: language === "zh" ? "撤单" : "Cancel",
-    NONE: language === "zh" ? "无操作" : "None"
-  };
-
-  return labels[decision] || decision || t(language, "unknown");
-}
-
-function getOrderGuidanceMetaLabel(language, key) {
-  const labels = {
-    currentOrder: language === "zh" ? "当前挂单" : "Current Order",
-    price: language === "zh" ? "价格" : "Price",
-    shares: language === "zh" ? "股数" : "Shares",
-    reason: language === "zh" ? "原因" : "Reason"
-  };
-
-  return labels[key] || key;
-}
 
 function normalizeAutoStopRule(value) {
   return AUTO_STOP_OPTIONS.some((option) => option.value === value) ? value : "30m";
@@ -154,13 +89,6 @@ function formatAutoStopLabel(language, value) {
   return t(language, `autoStop_${normalizeAutoStopRule(value)}`);
 }
 
-function getMonitoringDetailCopy(language, round) {
-  if (language === "zh") {
-    return `当前第 ${round} 轮。扩展会每 5 分钟自动运行一次。`;
-  }
-
-  return `Current round: ${round}. The extension will run again every 5 minutes.`;
-}
 
 function getClarityLabel(language, value) {
   if (typeof value !== "number" || Number.isNaN(value)) {
@@ -190,16 +118,6 @@ function getOrderPlanLabel(language, analysis) {
   return t(language, "orderPlanNone");
 }
 
-function formatPendingOrderSummary(language, order) {
-  const shares = Number(order?.shares ?? 0);
-  const price = formatPrice(order?.price);
-
-  if (shares > 0 && price) {
-    return language === "zh" ? `${shares} 股 @ ${price}` : `${shares} shares @ ${price}`;
-  }
-
-  return language === "zh" ? "当前没有挂单" : "No active order";
-}
 
 function renderOrderGuidanceCard(language, side, guidance) {
   const normalizedGuidance = guidance || {};
@@ -228,26 +146,6 @@ function renderOrderGuidanceCard(language, side, guidance) {
   `;
 }
 
-function getStaticOrderBadgeLabel(language) {
-  return language === "zh" ? "仅供参考" : "Reference";
-}
-
-function getPlainOrderTitle(language, side) {
-  if (side === "buy") {
-    return language === "zh" ? "买入参考" : "Buy Reference";
-  }
-
-  return language === "zh" ? "卖出参考" : "Sell Reference";
-}
-
-function getPlainOrderMetaLabel(language, key) {
-  const labels = {
-    price: language === "zh" ? "参考价格" : "Reference Price",
-    shares: language === "zh" ? "参考股数" : "Reference Shares"
-  };
-
-  return labels[key] || key;
-}
 
 function getWhatToDoNowCopy(language, analysis) {
   if (analysis.whatToDoNow) {
@@ -283,23 +181,6 @@ function buildActionCopy(language, analysis) {
   return level ? t(language, "waitActionCopy", { price: level }) : t(language, "waitActionNoPrice");
 }
 
-function getPlainResultLabel(language, key) {
-  const labels = {
-    supportLevels: language === "zh" ? "当前支撑位" : "Current Support",
-    resistanceLevels: language === "zh" ? "当前压力位" : "Current Resistance",
-    watchLevel: language === "zh" ? "可以留意的价格" : "Price to Watch",
-    target: language === "zh" ? "可能卖出价" : "Possible Sell Price",
-    riskTrigger: language === "zh" ? "如果跌到这里要小心" : "Caution Price",
-    why: language === "zh" ? "简单说明" : "Simple Why",
-    riskNote: language === "zh" ? "需要注意" : "Watch Out"
-  };
-
-  return labels[key] || t(language, key);
-}
-
-function getPlainOrderReasonLabel(language) {
-  return language === "zh" ? "简单说明" : "Simple Why";
-}
 
 function getActionTone(action) {
   if (action === "OPEN" || action === "ADD") {
@@ -390,178 +271,56 @@ function renderAnalysisCard(state, language) {
   `;
 }
 
-function getCompactOrderInputMetaLabel(language, key) {
+
+
+function getBuyRiskStyleLabel(language) {
+  return t(language, "buyRiskStyle");
+}
+
+function getSellRiskStyleLabel(language) {
+  return t(language, "sellRiskStyle");
+}
+
+function getMonitoringDetailCopy(language, round) {
+  return t(language, "monitoringDetail", { round });
+}
+
+function getStaticOrderBadgeLabel(language) {
+  return t(language, "referenceOnly");
+}
+
+function getPlainOrderTitle(language, side) {
+  return side === "buy" ? t(language, "buyReference") : t(language, "sellReference");
+}
+
+function getPlainOrderMetaLabel(language, key) {
   const labels = {
-    price: language === "zh" ? "浠锋牸" : "Price",
-    shares: language === "zh" ? "鑲℃暟" : "Shares"
+    price: t(language, "referencePrice"),
+    shares: t(language, "referenceShares")
   };
 
   return labels[key] || key;
 }
 
-function getCompactLimitBuyPriceLabel(language) {
-  return getCompactOrderInputMetaLabel(language, "price");
-}
-
-function getCompactLimitBuySharesLabel(language) {
-  return getCompactOrderInputMetaLabel(language, "shares");
-}
-
-function getCompactLimitSellPriceLabel(language) {
-  return getCompactOrderInputMetaLabel(language, "price");
-}
-
-function getCompactLimitSellSharesLabel(language) {
-  return getCompactOrderInputMetaLabel(language, "shares");
-}
-
-function getSafeCompactOrderInputLabel(language, key) {
+function getPlainResultLabel(language, key) {
   const labels = {
-    price: language === "zh" ? "价格" : "Price",
-    shares: language === "zh" ? "股数" : "Shares"
+    supportLevels: t(language, "currentSupport"),
+    resistanceLevels: t(language, "currentResistance"),
+    riskTrigger: t(language, "riskTrigger"),
+    riskNote: t(language, "watchOut")
   };
 
-  return labels[key] || key;
+  return labels[key] || t(language, key);
 }
 
-function getSafeCompactLimitBuyPriceLabel(language) {
-  return getSafeCompactOrderInputLabel(language, "price");
-}
-
-function getSafeCompactLimitBuySharesLabel(language) {
-  return getSafeCompactOrderInputLabel(language, "shares");
-}
-
-function getSafeCompactLimitSellPriceLabel(language) {
-  return getSafeCompactOrderInputLabel(language, "price");
-}
-
-function getSafeCompactLimitSellSharesLabel(language) {
-  return getSafeCompactOrderInputLabel(language, "shares");
-}
-
-function getSafeFormSectionTitle(language, section) {
-  const labels = {
-    position: language === "zh" ? "持仓与资金状态" : "Position & Capital Status",
-    rules: language === "zh" ? "执行约束" : "Execution Rules"
-  };
-
-  return labels[section] || section;
-}
-
-function getSafeFormSectionCopy(language, section) {
-  const labels = {
-    position: language === "zh"
-      ? "填写当前持仓、可用资金，以及你已经挂着的买单和卖单。"
-      : "Enter your current holdings, available cash, and any working buy or sell orders.",
-    rules: language === "zh"
-      ? "设置 AI 必须遵守的执行边界，再决定是否下单或调整挂单。"
-      : "Set the execution boundaries the assistant must respect before placing or adjusting orders."
-  };
-
-  return labels[section] || "";
-}
-
-function getSafeSellSideActionsLabel(language) {
-  return language === "zh" ? "允许卖出类动作" : "Allow Sell-Side Actions";
-}
-
-function getSafeCurrentPriceLabel(language) {
-  return language === "zh" ? "现在价格" : "Current Price";
-}
-
-function getSafePendingOrderLabel(language, side) {
-  if (side === "buy") {
-    return language === "zh" ? "当前挂买单" : "Current Limit Buy Order";
-  }
-
-  return language === "zh" ? "当前挂卖单" : "Current Limit Sell Order";
-}
-
-function getSafeOrderGuidanceLabel(language, side) {
-  if (side === "buy") {
-    return language === "zh" ? "买单指导" : "Limit Buy Guidance";
-  }
-
-  return language === "zh" ? "卖单指导" : "Limit Sell Guidance";
-}
-
-function getSafeOrderGuidanceDecisionLabel(language, decision) {
-  const labels = {
-    KEEP: language === "zh" ? "保留" : "Keep",
-    PLACE: language === "zh" ? "新挂" : "Place",
-    ADJUST: language === "zh" ? "调整" : "Adjust",
-    CANCEL: language === "zh" ? "撤单" : "Cancel",
-    NONE: language === "zh" ? "无操作" : "None"
-  };
-
-  return labels[decision] || decision || t(language, "unknown");
-}
-
-function getSafeOrderGuidanceMetaLabel(language, key) {
-  const labels = {
-    currentOrder: language === "zh" ? "当前挂单" : "Current Order",
-    price: language === "zh" ? "价格" : "Price",
-    shares: language === "zh" ? "股数" : "Shares",
-    reason: language === "zh" ? "原因" : "Reason"
-  };
-
-  return labels[key] || key;
-}
-
-function formatSafePendingOrderSummary(language, order) {
-  const shares = Number(order?.shares ?? 0);
-  const price = formatPrice(order?.price);
-
-  if (shares > 0 && price) {
-    return language === "zh" ? `${shares} 股 @ ${price}` : `${shares} shares @ ${price}`;
-  }
-
-  return language === "zh" ? "当前没有挂单" : "No active order";
-}
-
-function getSuggestedOrderGuidanceLabel(language, side) {
-  if (side === "buy") {
-    return language === "zh" ? "限价买入建议" : "Limit Buy Idea";
-  }
-
-  return language === "zh" ? "限价卖出建议" : "Limit Sell Idea";
-}
-
-function getSuggestedOrderDecisionLabel(language, decision) {
-  const labels = {
-    KEEP: language === "zh" ? "保留" : "Keep",
-    PLACE: language === "zh" ? "建议挂单" : "Place Idea",
-    ADJUST: language === "zh" ? "调整" : "Adjust",
-    CANCEL: language === "zh" ? "撤单" : "Cancel",
-    NONE: language === "zh" ? "仅供参考" : "Reference"
-  };
-
-  return labels[decision] || decision || t(language, "unknown");
-}
-
-function getSuggestedOrderBadgeLabel(language, decision, action) {
-  if ((action === "HOLD" || action === "WAIT") && decision === "PLACE") {
-    return language === "zh" ? "参考位" : "Reference";
-  }
-
-  return getSuggestedOrderDecisionLabel(language, decision);
-}
-
-function getSuggestedOrderMetaLabel(language, key) {
-  const labels = {
-    price: language === "zh" ? "价格" : "Price",
-    shares: language === "zh" ? "股数" : "Shares",
-    reason: language === "zh" ? "原因" : "Reason"
-  };
-
-  return labels[key] || key;
+function getPlainOrderReasonLabel(language) {
+  return t(language, "simpleWhy");
 }
 
 function getPanelSectionTitle(language, section) {
   const labels = {
-    position: language === "zh" ? "持仓与资金状态" : "Position & Capital Status",
-    rules: language === "zh" ? "执行约束" : "Execution Constraints"
+    position: t(language, "positionCapitalStatus"),
+    rules: t(language, "executionRules")
   };
 
   return labels[section] || section;
@@ -569,25 +328,27 @@ function getPanelSectionTitle(language, section) {
 
 function getPanelSectionCopy(language, section) {
   const labels = {
-    position: language === "zh"
-      ? "先填写当前持仓、平均成本和可用资金，助手会据此推导买入和卖出的限价参考位。"
-      : "Enter your current holdings, average cost, and available cash so the assistant can derive fresh limit-buy and limit-sell ideas.",
-    rules: language === "zh"
-      ? "再设置 AI 必须遵守的执行约束，比如是否允许摊低成本、卖出和自动停止。"
-      : "Set the guardrails the assistant must respect before placing or adjusting orders."
+    position: t(language, "positionCapitalStatusCopy"),
+    rules: t(language, "executionRulesCopy")
   };
 
   return labels[section] || "";
 }
 
 function getContextCardTitle(language) {
-  return language === "zh" ? "交易设置" : "Trading Setup";
+  return t(language, "tradingSetup");
 }
 
 function getContextCardCopy(language) {
-  return language === "zh"
-    ? "填写当前持仓、资金状态和执行约束，助手会据此给出更具体的操作建议，以及买入和卖出的限价参考位。"
-    : "Share your current position, cash status, and execution rules so the assistant can give more precise actions plus fresh limit-buy and limit-sell ideas.";
+  return t(language, "tradingSetupCopy");
+}
+
+function getSafeSellSideActionsLabel(language) {
+  return t(language, "allowSellSideActions");
+}
+
+function getSafeCurrentPriceLabel(language) {
+  return t(language, "currentPrice");
 }
 
 function updateStaticText(language, settings) {
@@ -612,7 +373,7 @@ function updateStaticText(language, settings) {
   rulesSectionTitle.textContent = getPanelSectionTitle(language, "rules");
   rulesSectionCopy.textContent = getPanelSectionCopy(language, "rules");
   allowAveragingDownLabel.textContent = t(language, "allowAveragingDown");
-  allowReducingPositionLabel.textContent = getSafeSellSideActionsLabel(language);
+  allowSellSideActionsLabel.textContent = getSafeSellSideActionsLabel(language);
   buyRiskStyleLabel.textContent = getBuyRiskStyleLabel(language);
   sellRiskStyleLabel.textContent = getSellRiskStyleLabel(language);
   autoStopLabel.textContent = t(language, "autoStop");
@@ -696,15 +457,17 @@ function updateFormGuidance(language) {
 
 function populateContextForm(state, language) {
   const profile = state.monitoringProfile || state.lastMonitoringProfile;
-  const storedRiskStyle = profile?.rules?.riskStyle || "conservative";
+  const buyRiskStyle = normalizeRiskStyleValue(profile?.rules?.buyRiskStyle);
+  const sellRiskStyle = normalizeRiskStyleValue(profile?.rules?.sellRiskStyle);
+  const allowSellSideActions = profile?.rules?.allowSellSideActions ?? true;
 
   currentSharesInput.value = profile?.positionContext?.currentShares ?? "";
   averageCostInput.value = profile?.positionContext?.averageCost ?? "";
   availableCashInput.value = profile?.capitalContext?.availableCash ?? "";
   populateBooleanSelect(allowAveragingDownSelect, language, Boolean(profile?.rules?.allowAveragingDown));
-  populateBooleanSelect(allowReducingPositionSelect, language, profile?.rules?.allowReducingPosition !== false);
-  populateRiskStyleOptions(buyRiskStyleSelect, language, profile?.rules?.buyRiskStyle || storedRiskStyle);
-  populateRiskStyleOptions(sellRiskStyleSelect, language, profile?.rules?.sellRiskStyle || storedRiskStyle);
+  populateBooleanSelect(allowSellSideActionsSelect, language, allowSellSideActions);
+  populateRiskStyleOptions(buyRiskStyleSelect, language, buyRiskStyle);
+  populateRiskStyleOptions(sellRiskStyleSelect, language, sellRiskStyle);
   populateAutoStopOptions(language, normalizeAutoStopRule(profile?.rules?.autoStopRule));
   updateFormGuidance(language);
 }
@@ -914,7 +677,7 @@ contextForm.addEventListener("submit", async (event) => {
       averageCost: averageCostInput.value,
       availableCash: availableCashInput.value,
       allowAveragingDown: allowAveragingDownSelect.value === "yes",
-      allowReducingPosition: allowReducingPositionSelect.value === "yes",
+      allowSellSideActions: allowSellSideActionsSelect.value === "yes",
       buyRiskStyle: buyRiskStyleSelect.value,
       sellRiskStyle: sellRiskStyleSelect.value,
       autoStopRule: autoStopSelect.value

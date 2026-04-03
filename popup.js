@@ -62,8 +62,7 @@ function formatStatus(state, language) {
     return {
       title: t(language, "monitoringTitle"),
       detail: t(language, "monitoringDetail", {
-        round: state.roundCount,
-        maxRounds: state.maxRounds
+        round: state.roundCount
       })
     };
   }

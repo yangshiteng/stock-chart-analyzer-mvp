@@ -161,7 +161,6 @@ Current behavior:
 - the popup lets the user save or clear the webhook URL
 - each successful recommendation round posts a Discord embed with:
   - action
-  - order plan
   - current price
   - current support
   - current resistance
@@ -170,6 +169,8 @@ Current behavior:
   - buy reference
   - sell reference
   - risk note
+
+The Discord payload is intentionally aligned with the compact side-panel result model and does not include deprecated order-management fields.
 
 Notes:
 
