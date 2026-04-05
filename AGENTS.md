@@ -17,8 +17,6 @@ The extension currently does the following:
   - current shares
   - average cost
   - available cash
-  - whether averaging down is allowed
-  - whether sell-side actions are allowed
   - buy risk style
   - sell risk style
   - auto-stop duration
@@ -26,7 +24,6 @@ The extension currently does the following:
 - requires every analysis response to be valid JSON
 - requires the model to return a dedicated `whatToDoNow` instruction for the primary guidance block
 - requires the model to return visible support and resistance references
-- requires the model to return one limit-buy reference and one limit-sell reference
 - renders the latest recommendation as a user-friendly card in the side panel
 - shows a loading state during each new monitoring round while the next screenshot analysis is in flight
 - monitors every 5 minutes with `chrome.alarms`
@@ -80,7 +77,7 @@ The extension currently does the following:
   - single primary `Start` action
 - side panel with:
   - status summary
-  - execution-constraints form
+  - trading settings form
   - auto-stop selector
   - recommendation card
   - `Stop`, `Continue`, `Restart`, `Exit`
@@ -126,12 +123,6 @@ The model currently returns a strict JSON object with:
 - `resistanceLevels`
 - `symbol`
 - `currentPrice`
-- `buyOrderGuidance.price`
-- `buyOrderGuidance.shares`
-- `buyOrderGuidance.reason`
-- `sellOrderGuidance.price`
-- `sellOrderGuidance.shares`
-- `sellOrderGuidance.reason`
 - `timeframe`
 
 ## Near-Term Improvement Areas

@@ -120,15 +120,20 @@ function getSafeDiscordActionLabel(language, action) {
   return label === key ? t(language, "unknown") : label;
 }
 
-function getSafeDiscordReferenceSummary(language, guidance) {
-  const price = guidance?.price || getSafeDiscordFallback(language);
-  const shares = guidance?.shares || getSafeDiscordFallback(language);
-  const reason = guidance?.reason || getSafeDiscordFallback(language);
+function formatDiscordLevelCluster(levels, fallback) {
+  if (!levels) {
+    return fallback;
+  }
 
-  return truncateText(
-    `${t(language, "referencePrice")}: ${price}\n${t(language, "referenceShares")}: ${shares}\n${t(language, "simpleWhy")}: ${reason}`,
-    500
-  );
+  if (typeof levels === "string") {
+    return truncateText(levels || fallback, 250);
+  }
+
+  const primary = levels.primary && levels.primary !== "N/A" ? `${levels.primary}` : "";
+  const secondary = levels.secondary && levels.secondary !== "N/A" ? `${levels.secondary}` : "";
+  const combined = [primary, secondary].filter(Boolean).join(" / ");
+
+  return truncateText(combined || fallback, 250);
 }
 
 function getDiscordColor(action) {
@@ -182,12 +187,12 @@ function buildDiscordAnalysisPayloadV4(result, state, language) {
           },
           {
             name: t(language, "currentSupport"),
-            value: truncateText(analysis.supportLevels || levels.entry || fallback, 250),
+            value: formatDiscordLevelCluster(analysis.supportLevels, levels.entry || fallback),
             inline: true
           },
           {
             name: t(language, "currentResistance"),
-            value: truncateText(analysis.resistanceLevels || levels.target || fallback, 250),
+            value: formatDiscordLevelCluster(analysis.resistanceLevels, levels.target || fallback),
             inline: true
           },
           {
@@ -199,16 +204,6 @@ function buildDiscordAnalysisPayloadV4(result, state, language) {
             name: t(language, "suggestedSize"),
             value: truncateText(analysis.sizeSuggestion || fallback, 250),
             inline: true
-          },
-          {
-            name: t(language, "buyReference"),
-            value: getSafeDiscordReferenceSummary(language, analysis.buyOrderGuidance),
-            inline: false
-          },
-          {
-            name: t(language, "sellReference"),
-            value: getSafeDiscordReferenceSummary(language, analysis.sellOrderGuidance),
-            inline: false
           },
           {
             name: t(language, "watchOut"),
@@ -552,10 +547,6 @@ function normalizeDecimal(value, label, language) {
   return Number(parsed.toFixed(4));
 }
 
-function normalizeBoolean(value) {
-  return value === true || value === "true" || value === "yes" || value === 1 || value === "1";
-}
-
 function normalizeRiskStyleValue(value) {
   return VALID_RISK_STYLES.has(value) ? value : "conservative";
 }
@@ -573,8 +564,6 @@ function refreshAutoStopDeadline(monitoringProfile) {
     ? {
         ...monitoringProfile,
         rules: {
-          allowAveragingDown: Boolean(monitoringProfile.rules?.allowAveragingDown),
-          allowSellSideActions: Boolean(monitoringProfile.rules?.allowSellSideActions),
           buyRiskStyle: normalizeRiskStyleValue(`${monitoringProfile.rules?.buyRiskStyle || "conservative"}`.trim()),
           sellRiskStyle: normalizeRiskStyleValue(`${monitoringProfile.rules?.sellRiskStyle || "conservative"}`.trim()),
           autoStopRule: normalizeAutoStopRule(monitoringProfile.rules?.autoStopRule)
@@ -667,8 +656,6 @@ async function buildMonitoringProfile(payload) {
       availableCash
     },
     rules: {
-      allowAveragingDown: normalizeBoolean(payload.allowAveragingDown),
-      allowSellSideActions: normalizeBoolean(payload.allowSellSideActions),
       buyRiskStyle,
       sellRiskStyle,
       autoStopRule

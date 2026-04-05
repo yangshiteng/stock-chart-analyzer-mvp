@@ -27,8 +27,6 @@ const positionSectionCopy = document.getElementById("positionSectionCopy");
 const currentSharesLabel = document.getElementById("currentSharesLabel");
 const averageCostLabel = document.getElementById("averageCostLabel");
 const availableCashLabel = document.getElementById("availableCashLabel");
-const allowAveragingDownLabel = document.getElementById("allowAveragingDownLabel");
-const allowSellSideActionsLabel = document.getElementById("allowSellSideActionsLabel");
 const rulesSectionTitle = document.getElementById("rulesSectionTitle");
 const rulesSectionCopy = document.getElementById("rulesSectionCopy");
 const buyRiskStyleLabel = document.getElementById("buyRiskStyleLabel");
@@ -37,8 +35,6 @@ const autoStopLabel = document.getElementById("autoStopLabel");
 const currentSharesInput = document.getElementById("currentSharesInput");
 const averageCostInput = document.getElementById("averageCostInput");
 const availableCashInput = document.getElementById("availableCashInput");
-const allowAveragingDownSelect = document.getElementById("allowAveragingDownSelect");
-const allowSellSideActionsSelect = document.getElementById("allowSellSideActionsSelect");
 const buyRiskStyleSelect = document.getElementById("buyRiskStyleSelect");
 const sellRiskStyleSelect = document.getElementById("sellRiskStyleSelect");
 const autoStopSelect = document.getElementById("autoStopSelect");
@@ -61,6 +57,25 @@ function escapeHtml(value) {
 
 function formatPrice(value) {
   return value && value !== "N/A" ? value : null;
+}
+
+function formatLevelClusterText(levels, fallback = null) {
+  if (!levels) {
+    return fallback;
+  }
+
+  if (typeof levels === "string") {
+    return formatPrice(levels) || fallback;
+  }
+
+  const primary = formatPrice(levels.primary);
+  const secondary = formatPrice(levels.secondary);
+
+  if (primary && secondary) {
+    return `${primary} / ${secondary}`;
+  }
+
+  return primary || secondary || fallback;
 }
 
 function formatActionLabel(language, action) {
@@ -116,34 +131,6 @@ function getOrderPlanLabel(language, analysis) {
   }
 
   return t(language, "orderPlanNone");
-}
-
-
-function renderOrderGuidanceCard(language, side, guidance) {
-  const normalizedGuidance = guidance || {};
-
-  return `
-    <article class="metric-card order-guidance-card full-span">
-      <div class="order-guidance-header">
-        <p class="metric-label">${escapeHtml(getPlainOrderTitle(language, side))}</p>
-        <span class="order-guidance-badge">${escapeHtml(getStaticOrderBadgeLabel(language))}</span>
-      </div>
-      <div class="order-guidance-grid">
-        <div>
-          <p class="metric-label">${escapeHtml(getPlainOrderMetaLabel(language, "price"))}</p>
-          <p class="metric-value">${escapeHtml(normalizedGuidance.price || t(language, "nA"))}</p>
-        </div>
-        <div>
-          <p class="metric-label">${escapeHtml(getPlainOrderMetaLabel(language, "shares"))}</p>
-          <p class="metric-value">${escapeHtml(normalizedGuidance.shares || t(language, "nA"))}</p>
-        </div>
-      </div>
-      <div class="order-guidance-reason">
-        <p class="metric-label">${escapeHtml(getPlainOrderReasonLabel(language))}</p>
-        <p class="metric-value">${escapeHtml(normalizedGuidance.reason || t(language, "nA"))}</p>
-      </div>
-    </article>
-  `;
 }
 
 
@@ -260,12 +247,10 @@ function renderAnalysisCard(state, language) {
     </section>
     <div class="analysis-grid">
       ${renderMetricCard(language, getSafeCurrentPriceLabel(language), analysis.currentPrice || t(language, "nA"))}
-      ${renderMetricCard(language, getPlainResultLabel(language, "supportLevels"), analysis.supportLevels || levels.entry || t(language, "nA"))}
-      ${renderMetricCard(language, getPlainResultLabel(language, "resistanceLevels"), analysis.resistanceLevels || levels.target || t(language, "nA"))}
+      ${renderMetricCard(language, getPlainResultLabel(language, "supportLevels"), formatLevelClusterText(analysis.supportLevels, levels.entry || t(language, "nA")))}
+      ${renderMetricCard(language, getPlainResultLabel(language, "resistanceLevels"), formatLevelClusterText(analysis.resistanceLevels, levels.target || t(language, "nA")))}
       ${renderMetricCard(language, getPlainResultLabel(language, "riskTrigger"), levels.invalidation || t(language, "nA"))}
       ${renderMetricCard(language, t(language, "suggestedSize"), analysis.sizeSuggestion || t(language, "nA"))}
-      ${renderOrderGuidanceCard(language, "buy", analysis.buyOrderGuidance)}
-      ${renderOrderGuidanceCard(language, "sell", analysis.sellOrderGuidance)}
       ${renderMetricCard(language, getPlainResultLabel(language, "riskNote"), analysis.riskNote || t(language, "nA"), true)}
     </div>
   `;
@@ -285,23 +270,6 @@ function getMonitoringDetailCopy(language, round) {
   return t(language, "monitoringDetail", { round });
 }
 
-function getStaticOrderBadgeLabel(language) {
-  return t(language, "referenceOnly");
-}
-
-function getPlainOrderTitle(language, side) {
-  return side === "buy" ? t(language, "buyReference") : t(language, "sellReference");
-}
-
-function getPlainOrderMetaLabel(language, key) {
-  const labels = {
-    price: t(language, "referencePrice"),
-    shares: t(language, "referenceShares")
-  };
-
-  return labels[key] || key;
-}
-
 function getPlainResultLabel(language, key) {
   const labels = {
     supportLevels: t(language, "currentSupport"),
@@ -311,10 +279,6 @@ function getPlainResultLabel(language, key) {
   };
 
   return labels[key] || t(language, key);
-}
-
-function getPlainOrderReasonLabel(language) {
-  return t(language, "simpleWhy");
 }
 
 function getPanelSectionTitle(language, section) {
@@ -343,10 +307,6 @@ function getContextCardCopy(language) {
   return t(language, "tradingSetupCopy");
 }
 
-function getSafeSellSideActionsLabel(language) {
-  return t(language, "allowSellSideActions");
-}
-
 function getSafeCurrentPriceLabel(language) {
   return t(language, "currentPrice");
 }
@@ -372,8 +332,6 @@ function updateStaticText(language, settings) {
   availableCashLabel.textContent = t(language, "availableCash");
   rulesSectionTitle.textContent = getPanelSectionTitle(language, "rules");
   rulesSectionCopy.textContent = getPanelSectionCopy(language, "rules");
-  allowAveragingDownLabel.textContent = t(language, "allowAveragingDown");
-  allowSellSideActionsLabel.textContent = getSafeSellSideActionsLabel(language);
   buyRiskStyleLabel.textContent = getBuyRiskStyleLabel(language);
   sellRiskStyleLabel.textContent = getSellRiskStyleLabel(language);
   autoStopLabel.textContent = t(language, "autoStop");
@@ -425,14 +383,6 @@ function getStatusBadgeLabel(language, status) {
   return t(language, `status_${status}`);
 }
 
-function populateBooleanSelect(select, language, selectedValue) {
-  select.innerHTML = `
-    <option value="yes">${escapeHtml(t(language, "yes"))}</option>
-    <option value="no">${escapeHtml(t(language, "no"))}</option>
-  `;
-  select.value = selectedValue ? "yes" : "no";
-}
-
 function populateRiskStyleOptions(select, language, selectedValue = "conservative") {
   select.innerHTML = RISK_STYLE_OPTIONS
     .map((option) => `<option value="${option.value}">${escapeHtml(t(language, `riskStyle_${option.value}`))}</option>`)
@@ -459,13 +409,10 @@ function populateContextForm(state, language) {
   const profile = state.monitoringProfile || state.lastMonitoringProfile;
   const buyRiskStyle = normalizeRiskStyleValue(profile?.rules?.buyRiskStyle);
   const sellRiskStyle = normalizeRiskStyleValue(profile?.rules?.sellRiskStyle);
-  const allowSellSideActions = profile?.rules?.allowSellSideActions ?? true;
 
   currentSharesInput.value = profile?.positionContext?.currentShares ?? "";
   averageCostInput.value = profile?.positionContext?.averageCost ?? "";
   availableCashInput.value = profile?.capitalContext?.availableCash ?? "";
-  populateBooleanSelect(allowAveragingDownSelect, language, Boolean(profile?.rules?.allowAveragingDown));
-  populateBooleanSelect(allowSellSideActionsSelect, language, allowSellSideActions);
   populateRiskStyleOptions(buyRiskStyleSelect, language, buyRiskStyle);
   populateRiskStyleOptions(sellRiskStyleSelect, language, sellRiskStyle);
   populateAutoStopOptions(language, normalizeAutoStopRule(profile?.rules?.autoStopRule));
@@ -676,8 +623,6 @@ contextForm.addEventListener("submit", async (event) => {
       currentShares: currentSharesInput.value,
       averageCost: averageCostInput.value,
       availableCash: availableCashInput.value,
-      allowAveragingDown: allowAveragingDownSelect.value === "yes",
-      allowSellSideActions: allowSellSideActionsSelect.value === "yes",
       buyRiskStyle: buyRiskStyleSelect.value,
       sellRiskStyle: sellRiskStyleSelect.value,
       autoStopRule: autoStopSelect.value

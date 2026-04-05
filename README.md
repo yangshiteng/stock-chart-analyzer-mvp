@@ -15,7 +15,7 @@ Current implemented behavior:
   - a single primary `Start` button
 - side panel workflow with:
   - validation status
-  - execution-constraints form
+  - trading settings form
   - auto-stop selector
   - per-round loading state while a new screenshot analysis is in flight
   - user-friendly recommendation card focused on execution guidance
@@ -52,8 +52,6 @@ What is still basic:
    - `Current Shares`
    - `Average Cost`
    - `Available Cash`
-   - `Allow Averaging Down`
-   - `Allow Sell-Side Actions`
    - `Buy Risk Style`
    - `Sell Risk Style`
    - `Auto Stop`
@@ -122,12 +120,6 @@ The model is required to return strict JSON with these fields:
 - `resistanceLevels`
 - `symbol`
 - `currentPrice`
-- `buyOrderGuidance.price`
-- `buyOrderGuidance.shares`
-- `buyOrderGuidance.reason`
-- `sellOrderGuidance.price`
-- `sellOrderGuidance.shares`
-- `sellOrderGuidance.reason`
 - `timeframe`
 
 Notes:
@@ -137,7 +129,6 @@ Notes:
 - `sizeSuggestion` is a user-facing sizing recommendation, not broker-connected position execution
 - `whatToDoNow` is a dedicated natural-language action instruction shown directly in the main recommendation card
 - `supportLevels` and `resistanceLevels` are short visible price references extracted from the current chart
-- `buyOrderGuidance` and `sellOrderGuidance` are reference ideas, not broker-connected live order management
 
 ## OpenAI Setup
 
@@ -169,8 +160,6 @@ Current behavior:
   - current resistance
   - risk trigger
   - suggested size
-  - buy reference
-  - sell reference
   - risk note
 
 The Discord payload is intentionally aligned with the compact side-panel result model and does not include deprecated order-management fields.
@@ -236,7 +225,7 @@ Current rule:
 7. Save your OpenAI API key if needed
 8. Save a Discord webhook URL if you want Discord alerts
 9. Click `Start`
-10. Fill in the execution constraints in the side panel and start monitoring
+10. Fill in the trading settings in the side panel and start monitoring
 
 ## Current Prompt Design
 
@@ -247,16 +236,12 @@ Current prompt behavior:
 - assumes the stock has already passed the user's separate fundamental screening
 - focuses on a 5-minute chart
 - uses EMA 20 / 50 / 100 / 200 only if they are visible in the screenshot
-- takes the user's position, capital, and risk constraints into account
+- takes the user's position, available cash, and buy/sell risk preferences into account
 - returns a single best execution action right now
 - returns a dedicated `whatToDoNow` field so the UI does not have to stitch together the main action copy
 - returns visible `supportLevels` and `resistanceLevels`
-- generates one limit-buy reference and one limit-sell reference
-- uses `Buy Risk Style` to choose how aggressive the buy reference should be across support levels
-- uses `Sell Risk Style` to choose how aggressive the sell reference should be across resistance levels
-- enforces that:
-  - the buy reference price must stay below current price
-  - the sell reference price must stay above current price
+- uses `Buy Risk Style` and `Sell Risk Style` to shape how patient or aggressive the execution recommendation should be
+- allows both pullback entries and reclaim / breakout-hold entries when the chart clearly supports them
 - keeps the response:
   - concise
   - direct
