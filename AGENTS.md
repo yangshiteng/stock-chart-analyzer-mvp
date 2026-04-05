@@ -33,6 +33,7 @@ The extension currently does the following:
 - defaults auto-stop to 30 minutes and supports 1h / 2h / 4h / 8h options
 - binds monitoring to the original chart tab instead of silently switching to the current active page
 - pauses automatically if the user leaves the original chart tab inside the monitored window
+- pauses and preserves the current session if a single monitoring round fails instead of resetting everything to idle
 - can send Discord notifications for successful recommendation rounds when a webhook is configured
 - keeps Discord payloads aligned with the compact side-panel recommendation model instead of exposing deprecated order-management fields
 - plays a short audio cue when a fresh recommendation round finishes successfully
@@ -58,6 +59,7 @@ The extension currently does the following:
 - screenshot capture depends on the visible active tab in the bound monitoring window
 - the monitoring session is bound to the original validated chart tab
 - leaving the bound tab should pause monitoring, not capture some unrelated active page
+- a single OpenAI/capture round failure should pause the session and keep the saved setup available for `Continue`
 - `Stop` means pause, not full exit
 - `Exit` means fully clear the current monitoring session
 - auto-stop should never default to "run forever"; default to 30 minutes if the rule is missing or invalid
@@ -134,7 +136,6 @@ The model currently returns a strict JSON object with:
 
 ## Near-Term Improvement Areas
 
-- clean up remaining encoding / mojibake issues in older string tables
 - add tests for state transitions and message handling
 - improve chart validation beyond title / URL keyword rules
 - consider chart-region cropping before upload

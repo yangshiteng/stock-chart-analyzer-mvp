@@ -28,6 +28,7 @@ Current implemented behavior:
 - Discord notifications for each successful recommendation round when a webhook is configured
 - a short audio cue when a fresh recommendation result arrives
 - automatic pause if the user leaves the original bound chart tab inside the monitored window
+- automatic pause instead of full session loss when a single screenshot-analysis round fails
 - bilingual UI strings for English and Simplified Chinese
 
 What is still basic:
@@ -63,7 +64,9 @@ What is still basic:
 14. If the user leaves that tab inside the monitored Chrome window, monitoring pauses instead of silently switching to another page.
 15. Each successful round can also send a Discord notification if a webhook URL is configured.
 16. Each successful round also plays a short result sound inside Chrome.
-17. The user can:
+17. If one round fails because of an OpenAI or capture issue, the session pauses and keeps the current setup instead of clearing everything.
+18. The user can resume from that paused state after checking the chart tab.
+19. The user can:
    - `Stop`: pause the session and keep the current setup
    - `Continue`: resume a paused session on the original chart tab
    - `Restart`: restart monitoring from round 1 using the saved setup
@@ -210,6 +213,7 @@ Important behavior:
 - `Stop` in the side panel pauses, it does not fully exit
 - `Exit` fully clears the current session
 - `Continue` only resumes when the user is back on the original bound chart tab
+- if a single monitoring round fails, the extension pauses and preserves the current session instead of resetting to `idle`
 
 ## Side Panel Availability
 

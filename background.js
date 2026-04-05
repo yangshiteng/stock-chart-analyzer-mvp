@@ -1,4 +1,4 @@
-import {
+﻿import {
   ALARM_MINUTES,
   ALARM_NAME,
   AUTO_STOP_OPTIONS,
@@ -8,7 +8,7 @@ import {
   createDefaultState
 } from "./lib/constants.js";
 import { validateStockChartByKeywordsWithLanguage } from "./lib/chart-validator.js";
-import { getLanguage } from "./lib/i18n.js";
+import { getLanguage, t } from "./lib/i18n.js";
 import { analyzeChartCapture } from "./lib/llm.js";
 import { getSettings, getState, patchState, saveState } from "./lib/storage.js";
 
@@ -110,6 +110,27 @@ function truncateText(value, maxLength = 280) {
   return `${text.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
 }
 
+function getSafeDiscordFallback(language) {
+  return t(language, "nA");
+}
+
+function getSafeDiscordActionLabel(language, action) {
+  const key = `action_${action}`;
+  const label = t(language, key);
+  return label === key ? t(language, "unknown") : label;
+}
+
+function getSafeDiscordReferenceSummary(language, guidance) {
+  const price = guidance?.price || getSafeDiscordFallback(language);
+  const shares = guidance?.shares || getSafeDiscordFallback(language);
+  const reason = guidance?.reason || getSafeDiscordFallback(language);
+
+  return truncateText(
+    `${t(language, "referencePrice")}: ${price}\n${t(language, "referenceShares")}: ${shares}\n${t(language, "simpleWhy")}: ${reason}`,
+    500
+  );
+}
+
 function getDiscordColor(action) {
   if (action === "OPEN" || action === "ADD") {
     return 0x1f8f4e;
@@ -126,102 +147,71 @@ function getDiscordColor(action) {
   return 0x4f718c;
 }
 
-function getDiscordFallbackText(language) {
-  return language === "zh" ? "无" : "N/A";
-}
 
-function getDiscordActionLabelV3(language, action) {
-  const labels = {
-    OPEN: language === "zh" ? "开仓" : "Open",
-    ADD: language === "zh" ? "加仓" : "Add",
-    HOLD: language === "zh" ? "持有" : "Hold",
-    REDUCE: language === "zh" ? "减仓" : "Reduce",
-    EXIT: language === "zh" ? "退出" : "Exit",
-    WAIT: language === "zh" ? "等待" : "Wait"
-  };
-
-  return labels[action] || (language === "zh" ? "未知" : "Unknown");
-}
-
-function getDiscordCurrentPriceLabel(language, analysis) {
-  return truncateText(analysis.currentPrice || getDiscordFallbackText(language), 120);
-}
-
-function getDiscordReferenceGuidanceSummary(language, guidance) {
-  const price = guidance?.price || getDiscordFallbackText(language);
-  const shares = guidance?.shares || getDiscordFallbackText(language);
-  const reason = guidance?.reason || getDiscordFallbackText(language);
-
-  return truncateText(
-    language === "zh"
-      ? `价格：${price}\n股数：${shares}\n原因：${reason}`
-      : `Price: ${price}\nShares: ${shares}\nReason: ${reason}`,
-    500
-  );
-}
-
-function buildDiscordAnalysisPayloadV3(result, state, language) {
+function buildDiscordAnalysisPayloadV4(result, state, language) {
   const analysis = result?.analysis || {};
   const levels = analysis.levels || {};
-  const fallback = getDiscordFallbackText(language);
+  const fallback = getSafeDiscordFallback(language);
   const symbol = analysis.symbol || result?.validation?.symbolGuess || fallback;
   const description = truncateText(
-    analysis.whatToDoNow || analysis.summary || (language === "zh" ? "新的图表分析结果已经生成。" : "A new chart analysis result is ready."),
+    analysis.whatToDoNow
+      || analysis.summary
+      || (language === "zh" ? "新的图表分析结果已经生成。" : "A new chart analysis result is ready."),
     350
   );
 
   return {
-    username: language === "zh" ? "股票图表分析器" : "Stock Chart Analyzer",
+    username: t(language, "appTitle"),
     allowed_mentions: { parse: [] },
     embeds: [
       {
-        title: language === "zh" ? `最新建议 - ${symbol}` : `Latest Recommendation - ${symbol}`,
+        title: `${t(language, "latestRecommendation")} - ${symbol}`,
         url: result?.pageUrl || undefined,
         description,
         color: getDiscordColor(analysis.action),
         fields: [
           {
-            name: language === "zh" ? "当前动作" : "Action Now",
-            value: truncateText(getDiscordActionLabelV3(language, analysis.action), 100),
+            name: t(language, "actionNow"),
+            value: truncateText(getSafeDiscordActionLabel(language, analysis.action), 100),
             inline: true
           },
           {
-            name: language === "zh" ? "现在价格" : "Current Price",
-            value: getDiscordCurrentPriceLabel(language, analysis),
+            name: t(language, "currentPrice"),
+            value: truncateText(analysis.currentPrice || fallback, 120),
             inline: true
           },
           {
-            name: language === "zh" ? "当前支撑位" : "Current Support",
+            name: t(language, "currentSupport"),
             value: truncateText(analysis.supportLevels || levels.entry || fallback, 250),
             inline: true
           },
           {
-            name: language === "zh" ? "当前压力位" : "Current Resistance",
+            name: t(language, "currentResistance"),
             value: truncateText(analysis.resistanceLevels || levels.target || fallback, 250),
             inline: true
           },
           {
-            name: language === "zh" ? "如果跌到这里要小心" : "Caution Price",
+            name: t(language, "riskTrigger"),
             value: truncateText(levels.invalidation || fallback, 250),
             inline: true
           },
           {
-            name: language === "zh" ? "建议仓位" : "Suggested Size",
+            name: t(language, "suggestedSize"),
             value: truncateText(analysis.sizeSuggestion || fallback, 250),
             inline: true
           },
           {
-            name: language === "zh" ? "买入参考" : "Buy Reference",
-            value: getDiscordReferenceGuidanceSummary(language, analysis.buyOrderGuidance),
+            name: t(language, "buyReference"),
+            value: getSafeDiscordReferenceSummary(language, analysis.buyOrderGuidance),
             inline: false
           },
           {
-            name: language === "zh" ? "卖出参考" : "Sell Reference",
-            value: getDiscordReferenceGuidanceSummary(language, analysis.sellOrderGuidance),
+            name: t(language, "sellReference"),
+            value: getSafeDiscordReferenceSummary(language, analysis.sellOrderGuidance),
             inline: false
           },
           {
-            name: language === "zh" ? "需要注意" : "Watch Out",
+            name: t(language, "watchOut"),
             value: truncateText(analysis.riskNote || fallback, 300),
             inline: false
           }
@@ -251,7 +241,7 @@ async function notifyDiscordAnalysisResult(result, state, language) {
       headers: {
         "Content-Type": "application/json"
       },
-      body: JSON.stringify(buildDiscordAnalysisPayloadV3(result, state, language))
+      body: JSON.stringify(buildDiscordAnalysisPayloadV4(result, state, language))
     });
 
     if (!response.ok) {
@@ -272,65 +262,64 @@ async function getUiLanguage() {
 }
 
 function bgText(language, key, vars = {}) {
-  const dict = {
-    en: {
-      noActiveTab: "No active tab was found. Focus a chart tab and try again.",
-      untitledTab: "Untitled tab",
-      saveApiKeyFirst: "Save your OpenAI API key before starting monitoring.",
-      mustBeNumber: "{label} must be a number.",
-      currentSharesLabel: "Current shares",
-      averageCostLabel: "Average cost",
-      availableCashLabel: "Available cash",
-      currentSharesMin: "Current shares must be 0 or greater.",
-      averageCostMin: "Average cost must be greater than 0.",
-      availableCashMin: "Available cash must be 0 or greater.",
-      averageCostRequired: "Average cost is required when you already hold shares.",
-      chooseValidRiskStyle: "Choose a valid risk style.",
-      chooseValidAutoStop: "Choose a valid auto stop option.",
-      validationFailedChart: "Validation failed because the current tab does not look like a stock chart.",
-      notifyChartNotDetectedTitle: "Stock chart not detected",
-      notifyChartNotDetectedBody: "Monitoring stopped because the current tab is not recognized as a stock chart.",
-      validationFailedCapture: "Validation failed because the tab could not be captured.",
-      notifyCaptureFailed: "Capture failed",
-      fillFormFirst: "Fill in the execution constraints form before starting monitoring.",
-      monitoringStoppedChart: "Monitoring stopped because the current tab is no longer recognized as a stock chart.",
-      notifyMonitoringStopped: "Monitoring stopped",
-      notifyCurrentTabNotChart: "The current tab is no longer recognized as a stock chart.",
-      monitoringStoppedAnalyze: "Monitoring stopped because the current tab could not be analyzed.",
-      stoppedByUser: "Monitoring paused by the user.",
-      noPreviousSession: "No previous monitoring session is available yet."
-    },
-    zh: {
-      noActiveTab: "没有找到当前活动标签页。请先切到图表页再试。",
-      untitledTab: "未命名标签页",
-      saveApiKeyFirst: "开始监控前请先保存 OpenAI 密钥。",
-      mustBeNumber: "{label} 必须是数字。",
-      currentSharesLabel: "当前持股数",
-      averageCostLabel: "平均成本",
-      availableCashLabel: "可用资金",
-      currentSharesMin: "当前持股数必须大于或等于 0。",
-      averageCostMin: "平均成本必须大于 0。",
-      availableCashMin: "可用资金必须大于或等于 0。",
-      averageCostRequired: "如果你已经持有股票，就必须填写平均成本。",
-      chooseValidRiskStyle: "请选择有效的风险偏好。",
-      chooseValidAutoStop: "请选择有效的自动停止选项。",
-      validationFailedChart: "校验失败，因为当前标签页看起来不像股票图。",
-      notifyChartNotDetectedTitle: "未识别到股票图表",
-      notifyChartNotDetectedBody: "监控已停止，因为当前标签页未被识别为股票图表。",
-      validationFailedCapture: "校验失败，因为当前标签页无法被截图。",
-      notifyCaptureFailed: "截图失败",
-      fillFormFirst: "开始监控前请先填写交易设置表单。",
-      monitoringStoppedChart: "监控已停止，因为当前标签页不再被识别为股票图表。",
-      notifyMonitoringStopped: "监控已停止",
-      notifyCurrentTabNotChart: "当前标签页不再被识别为股票图表。",
-      monitoringStoppedAnalyze: "监控已停止，因为当前标签页无法完成分析。",
-      stoppedByUser: "监控已由用户手动暂停。",
-      noPreviousSession: "目前还没有可继续的历史监控会话。"
-    }
+  const en = {
+    noActiveTab: "No active tab was found. Focus a chart tab and try again.",
+    untitledTab: "Untitled tab",
+    saveApiKeyFirst: "Save your OpenAI API key before starting monitoring.",
+    mustBeNumber: "{label} must be a number.",
+    currentSharesLabel: "Current shares",
+    averageCostLabel: "Average cost",
+    availableCashLabel: "Available cash",
+    currentSharesMin: "Current shares must be 0 or greater.",
+    averageCostMin: "Average cost must be greater than 0.",
+    availableCashMin: "Available cash must be 0 or greater.",
+    averageCostRequired: "Average cost is required when you already hold shares.",
+    chooseValidRiskStyle: "Choose a valid risk style.",
+    chooseValidAutoStop: "Choose a valid auto stop option.",
+    validationFailedChart: "Validation failed because the current tab does not look like a stock chart.",
+    notifyChartNotDetectedTitle: "Stock chart not detected",
+    notifyChartNotDetectedBody: "Monitoring stopped because the current tab is not recognized as a stock chart.",
+    validationFailedCapture: "Validation failed because the tab could not be captured.",
+    notifyCaptureFailed: "Capture failed",
+    fillFormFirst: "Fill in the trading settings form before starting monitoring.",
+    monitoringStoppedChart: "Monitoring stopped because the current tab is no longer recognized as a stock chart.",
+    notifyMonitoringStopped: "Monitoring stopped",
+    notifyMonitoringPaused: "Monitoring paused",
+    notifyCurrentTabNotChart: "The current tab is no longer recognized as a stock chart.",
+    monitoringStoppedAnalyze: "This round failed, so monitoring has been paused.",
+    stoppedByUser: "Monitoring paused by the user.",
+    noPreviousSession: "No previous monitoring session is available yet."
+  };
+  const zh = {
+    noActiveTab: "没有找到当前活动标签页。请先切到图表页再试。",
+    untitledTab: "未命名标签页",
+    saveApiKeyFirst: "开始监控前请先保存 OpenAI 密钥。",
+    mustBeNumber: "{label} 必须是数字。",
+    currentSharesLabel: "当前持股数",
+    averageCostLabel: "平均成本",
+    availableCashLabel: "可用资金",
+    currentSharesMin: "当前持股数必须大于或等于 0。",
+    averageCostMin: "平均成本必须大于 0。",
+    availableCashMin: "可用资金必须大于或等于 0。",
+    averageCostRequired: "如果你已经持有股票，就必须填写平均成本。",
+    chooseValidRiskStyle: "请选择有效的风险偏好。",
+    chooseValidAutoStop: "请选择有效的自动停止选项。",
+    validationFailedChart: "校验失败，因为当前标签页看起来不像股票图。",
+    notifyChartNotDetectedTitle: "未识别到股票图表",
+    notifyChartNotDetectedBody: "监控已停止，因为当前标签页未被识别为股票图表。",
+    validationFailedCapture: "校验失败，因为当前标签页无法被截图。",
+    notifyCaptureFailed: "截图失败",
+    fillFormFirst: "开始监控前请先填写交易设置表单。",
+    monitoringStoppedChart: "监控已停止，因为当前标签页不再被识别为股票图表。",
+    notifyMonitoringStopped: "监控已停止",
+    notifyMonitoringPaused: "监控已暂停",
+    notifyCurrentTabNotChart: "当前标签页不再被识别为股票图表。",
+    monitoringStoppedAnalyze: "这一轮分析失败，监控已暂停。",
+    stoppedByUser: "监控已由用户手动暂停。",
+    noPreviousSession: "目前还没有可继续的历史监控会话。"
   };
 
-  const locale = language === "zh" ? dict.zh : dict.en;
-  const template = locale[key] || dict.en[key] || key;
+  const locale = language === "zh" ? zh : en;  const template = locale[key] || en[key] || key;
   return template.replace(/\{(\w+)\}/g, (_, name) => `${vars[name] ?? ""}`);
 }
 
@@ -398,13 +387,13 @@ function bindMonitoringProfileToTab(monitoringProfile, tab) {
 
 function getPauseReason(language) {
   return language === "zh"
-    ? "你已离开原始图表标签页，监控已自动暂停。返回该标签页后可以继续。"
+    ? "监控已暂停，因为你离开了最初启动监控的图表标签页。回到原始图表页后即可继续。"
     : "Monitoring paused because you left the original chart tab. Return to that tab to continue.";
 }
 
 function getClosedTabReason(language) {
   return language === "zh"
-    ? "原始图表标签页已关闭，监控已停止。"
+    ? "监控已停止，因为最初绑定的图表标签页已经被关闭。"
     : "Monitoring stopped because the original chart tab was closed.";
 }
 
@@ -416,13 +405,13 @@ function getUserPauseReason(language) {
 
 function getResumeTabMismatchReason(language) {
   return language === "zh"
-    ? "请先返回原始图表标签页，再继续监控。"
+    ? "继续监控前，请先回到最初启动监控的图表标签页。"
     : "Return to the original chart tab before continuing monitoring.";
 }
 
 function getResumeTabMissingReason(language) {
   return language === "zh"
-    ? "原始图表标签页已不存在，请重新开始。"
+    ? "最初绑定的图表标签页已不存在。请回到图表页重新开始。"
     : "The original chart tab is no longer available. Start again from the chart tab.";
 }
 
@@ -442,7 +431,7 @@ function getSessionTabIds(state) {
   ].filter(Boolean)));
 }
 
-async function pauseMonitoring(reason, currentState = null) {
+async function pauseMonitoring(reason, currentState = null, lastError = null) {
   await clearMonitoringAlarm();
 
   const state = currentState || await getState();
@@ -455,7 +444,7 @@ async function pauseMonitoring(reason, currentState = null) {
     monitoringProfile,
     lastMonitoringProfile: monitoringProfile,
     stopReason: reason,
-    lastError: null
+    lastError
   });
 
   if (boundTabId) {
@@ -608,15 +597,15 @@ function refreshAutoStopDeadline(monitoringProfile) {
 function getAutoStopLabel(language, rule) {
   const normalizedRule = normalizeAutoStopRule(rule);
   const labels = {
-    off: language === "zh" ? "不自动停止" : "off",
-    "30m": language === "zh" ? "30 分钟后" : "30 minutes",
-    "1h": language === "zh" ? "1 小时后" : "1 hour",
-    "2h": language === "zh" ? "2 小时后" : "2 hours",
-    "4h": language === "zh" ? "4 小时后" : "4 hours"
+    off: language === "zh" ? "关闭" : "off",
+    "30m": language === "zh" ? "30 分钟" : "30 minutes",
+    "1h": language === "zh" ? "1 小时" : "1 hour",
+    "2h": language === "zh" ? "2 小时" : "2 hours",
+    "4h": language === "zh" ? "4 小时" : "4 hours"
   };
 
   if (normalizedRule === "8h") {
-    return language === "zh" ? "8 小时后" : "8 hours";
+    return language === "zh" ? "8 小时" : "8 hours";
   }
 
   return labels[normalizedRule] || labels["30m"];
@@ -626,7 +615,7 @@ function getAutoStopReason(language, rule) {
   const label = getAutoStopLabel(language, rule);
 
   return language === "zh"
-    ? `已到自动停止时间（${label}），监控已自动暂停。`
+    ? "监控已在运行 " + label + " 后自动暂停。"
     : `Monitoring paused automatically after ${label}.`;
 }
 
@@ -915,18 +904,13 @@ async function runMonitoringRound() {
       result
     };
   } catch (error) {
-    const state = await saveState({
-      ...currentState,
-      status: STATUS.IDLE,
-      isRoundInFlight: false,
-      monitoringProfile: null,
-      lastMonitoringProfile: monitoringProfile,
-      lastError: error.message,
-      stopReason: bgText(language, "monitoringStoppedAnalyze")
-    });
+    const state = await pauseMonitoring(
+      bgText(language, "monitoringStoppedAnalyze"),
+      currentState,
+      error.message
+    );
 
-    await clearMonitoringAlarm();
-    await notifyUser(bgText(language, "notifyMonitoringStopped"), error.message);
+    await notifyUser(bgText(language, "notifyMonitoringPaused"), error.message);
 
     return {
       ok: false,
@@ -1194,3 +1178,5 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   return true;
 });
+
+
