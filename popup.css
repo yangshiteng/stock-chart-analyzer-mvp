@@ -179,3 +179,9 @@ button:disabled {
 .details p {
   margin: 0;
 }
+
+.chart-setup-text {
+  margin-top: 10px !important;
+  font-weight: 700;
+  color: var(--blue);
+}

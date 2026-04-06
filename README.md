@@ -4,8 +4,6 @@ A Chrome Extension (Manifest V3) MVP that validates stock-chart pages, captures 
 
 ## What It Does Now
 
-This repo is a working MVP prototype.
-
 Current implemented behavior:
 
 - popup UI with:
@@ -13,30 +11,35 @@ Current implemented behavior:
   - OpenAI API key save / clear controls
   - Discord webhook URL save / clear controls
   - a single primary `Start` button
+  - a chart setup reminder: use a `5-minute candlestick chart` with `EMA 20 / 50 / 100 / 200`
 - side panel workflow with:
   - validation status
   - trading settings form
-  - auto-stop selector
+  - chart setup reminder
   - per-round loading state while a new screenshot analysis is in flight
-  - user-friendly recommendation card focused on execution guidance
+  - compact recommendation card focused on execution guidance
   - `Stop`, `Continue`, `Restart`, and `Exit` controls
-- screenshot capture of the active chart tab
+- screenshot capture of the active chart tab in the bound monitoring window
 - keyword-based stock-chart validation from page title and URL
 - OpenAI Responses API integration with `gpt-5.4`
-- recurring monitoring every 5 minutes
-- auto-stop options in the side panel with a default of `30 minutes` and choices up to `8 hours`
+- recurring monitoring using a user-selected analysis interval and total rounds
 - Discord notifications for each successful recommendation round when a webhook is configured
 - a short audio cue when a fresh recommendation result arrives
 - automatic pause if the user leaves the original bound chart tab inside the monitored window
 - automatic pause instead of full session loss when a single screenshot-analysis round fails
 - bilingual UI strings for English and Simplified Chinese
 
-What is still basic:
+## Recommended Chart Setup
 
-- chart validation is keyword-based, not image-based
-- API key is stored in extension local storage for MVP simplicity
-- no automated tests yet
-- the extension depends on visible-tab screenshots, so monitoring only works while the original chart tab remains active
+For best results, users should prepare the chart like this:
+
+- `5-minute candlestick chart`
+- `EMA 20`
+- `EMA 50`
+- `EMA 100`
+- `EMA 200`
+
+The current prompt assumes those elements may be visible and avoids inferring EMA relationships that are not actually shown in the screenshot.
 
 ## Current User Flow
 
@@ -47,16 +50,17 @@ What is still basic:
 5. Optionally save a Discord webhook URL in the popup if you want Discord alerts.
 6. Click `Start`.
 7. The extension validates the current tab.
-8. If validation passes, the side panel opens and shows the execution setup form.
+8. If validation passes, the side panel opens and shows the trading settings form.
 9. The user fills in:
    - `Current Shares`
    - `Average Cost`
    - `Available Cash`
    - `Buy Risk Style`
    - `Sell Risk Style`
-   - `Auto Stop`
+   - `Analysis Interval`
+   - `Total Rounds`
 10. The extension starts monitoring and immediately runs the first round.
-11. Every later round runs every 5 minutes with `chrome.alarms`.
+11. Later rounds run with `chrome.alarms` using the selected interval.
 12. While a new round is running, the side panel shows a loading state instead of silently jumping to the next result.
 13. Monitoring remains bound to the original chart tab.
 14. If the user leaves that tab inside the monitored Chrome window, monitoring pauses instead of silently switching to another page.
@@ -74,20 +78,22 @@ What is still basic:
 
 The extension no longer asks the user to choose `Buy`, `Sell`, or a manual intent.
 
-Instead, the user provides execution constraints, and the model decides the best action right now from:
+Instead, the user provides current trading context, and the model decides the best action right now from:
 
 - `OPEN`
-- `ADD`
+- `ADD_STRENGTH`
+- `ADD_WEAKNESS`
 - `HOLD`
-- `REDUCE`
+- `REDUCE_PROFIT`
+- `REDUCE_RISK`
 - `EXIT`
 - `WAIT`
 
-The goal is to make the extension behave more like an execution assistant than a manual intent picker.
+The goal is to make the extension behave like an execution assistant rather than a manual intent picker.
 
 ## Prompt and Language Architecture
 
-The prompt system is deliberately split into two stages:
+The prompt system is split into two stages:
 
 1. English analysis
 2. Optional Chinese translation
@@ -99,36 +105,48 @@ Current behavior:
 - English mode returns the analysis directly
 - Chinese mode performs a second LLM call that translates only user-facing fields into Simplified Chinese
 
-This keeps the internal analysis path consistent while still giving Chinese users localized output.
+The main analysis prompt is now structured into sections:
+
+- `[ROLE]`
+- `[OBJECTIVE]`
+- `[USER_CONTEXT]`
+- `[CHART_CONTEXT]`
+- `[CHART_FOCUS]`
+- `[CHART_GUARDRAILS]`
+- `[RISK_STYLE_RULE]`
+- `[ACTION_RULES]`
+- `[OUTPUT_RULES]`
+- `[LANGUAGE_RULES]`
+- `[OUTPUT_FORMAT]`
+
+The translation prompt is also section-based and keeps:
+
+- schema keys unchanged
+- `action` unchanged
+- raw prices and raw price zones unchanged
 
 ## Current Analysis Schema
 
 The model is required to return strict JSON with these fields:
 
 - `action`
-- `orderType`
-- `limitPrice`
 - `sizeSuggestion`
-- `confidence`
 - `whatToDoNow`
-- `summary`
-- `levels.entry`
-- `levels.target`
 - `levels.invalidation`
+- `supportLevels.primary`
+- `supportLevels.secondary`
+- `resistanceLevels.primary`
+- `resistanceLevels.secondary`
 - `riskNote`
-- `supportLevels`
-- `resistanceLevels`
 - `symbol`
 - `currentPrice`
-- `timeframe`
 
 Notes:
 
-- `confidence` is model conviction, not upside probability or backtested win rate
-- `orderType` is currently limited to `LIMIT` or `NONE`
-- `sizeSuggestion` is a user-facing sizing recommendation, not broker-connected position execution
-- `whatToDoNow` is a dedicated natural-language action instruction shown directly in the main recommendation card
+- `whatToDoNow` is the main natural-language instruction shown in the recommendation card
+- `sizeSuggestion` is a user-facing sizing recommendation, not broker-connected execution
 - `supportLevels` and `resistanceLevels` are short visible price references extracted from the current chart
+- `levels.invalidation` is the downside risk trigger / caution price
 
 ## OpenAI Setup
 
@@ -162,7 +180,7 @@ Current behavior:
   - suggested size
   - risk note
 
-The Discord payload is intentionally aligned with the compact side-panel result model and does not include deprecated order-management fields.
+The Discord payload is intentionally aligned with the compact side-panel result model.
 
 Notes:
 
@@ -175,13 +193,13 @@ Notes:
 - `manifest.json`: extension manifest and permissions
 - `background.js`: service worker, scheduling, capture, state transitions, pause / resume logic, side panel enablement, Discord delivery
 - `offscreen.html`, `offscreen.js`: offscreen audio document used to play a short result cue
-- `popup.html`, `popup.js`, `popup.css`: popup UI for language, OpenAI API key setup, Discord webhook setup, and `Start`
-- `sidepanel.html`, `sidepanel.js`, `sidepanel.css`: side panel UI, execution setup form, recommendation display, and monitoring controls
+- `popup.html`, `popup.js`, `popup.css`: popup UI for language, OpenAI API key setup, Discord webhook setup, chart guidance, and `Start`
+- `sidepanel.html`, `sidepanel.js`, `sidepanel.css`: side panel UI, trading settings form, chart guidance, recommendation display, and monitoring controls
 - `lib/constants.js`: shared constants and state enums
 - `lib/storage.js`: local storage helpers for monitor state and app settings
 - `lib/chart-validator.js`: keyword-based stock chart validation
-- `lib/prompt-config.js`: English analysis prompt config
-- `lib/llm.js`: OpenAI request logic, JSON parsing, and Chinese translation step
+- `lib/prompt-config.js`: structured English analysis prompt config
+- `lib/llm.js`: OpenAI request logic, JSON parsing, English analysis, and Chinese translation step
 - `lib/i18n.js`: UI translation dictionary and helpers
 - `assets/icon-128.png`: extension icon
 - `AGENTS.md`: project guidance for coding agents
@@ -224,8 +242,9 @@ Current rule:
 6. Click the extension icon
 7. Save your OpenAI API key if needed
 8. Save a Discord webhook URL if you want Discord alerts
-9. Click `Start`
-10. Fill in the trading settings in the side panel and start monitoring
+9. Confirm the chart is a `5-minute candlestick chart` with `EMA 20 / 50 / 100 / 200`
+10. Click `Start`
+11. Fill in the trading settings in the side panel and start monitoring
 
 ## Current Prompt Design
 
@@ -246,7 +265,7 @@ Current prompt behavior:
   - concise
   - direct
   - JSON-only
-  - focused on `LIMIT` orders when an order should be placed
+  - focused on beginner-friendly execution guidance
 
 ## Limitations
 

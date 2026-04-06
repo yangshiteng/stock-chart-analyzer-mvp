@@ -12,27 +12,28 @@ The extension currently does the following:
 - opens the side panel workflow only after the user explicitly starts validation from the popup
 - stores the OpenAI API key locally inside the extension for MVP use
 - stores an optional Discord webhook URL locally inside the extension for alert delivery
-- asks the user for execution constraints instead of asking the user to choose a trading intent
+- asks the user for current trading context instead of asking the user to choose a trading intent
 - collects:
   - current shares
   - average cost
   - available cash
   - buy risk style
   - sell risk style
-  - auto-stop duration
-- sends the visible chart screenshot plus structured execution constraints to OpenAI `gpt-5.4`
+  - analysis interval
+  - total rounds
+- reminds the user to use a `5-minute candlestick chart` with `EMA 20 / 50 / 100 / 200`
+- sends the visible chart screenshot plus structured trading context to OpenAI `gpt-5.4`
 - requires every analysis response to be valid JSON
 - requires the model to return a dedicated `whatToDoNow` instruction for the primary guidance block
 - requires the model to return visible support and resistance references
-- renders the latest recommendation as a user-friendly card in the side panel
+- renders the latest recommendation as a compact user-friendly card in the side panel
 - shows a loading state during each new monitoring round while the next screenshot analysis is in flight
-- monitors every 5 minutes with `chrome.alarms`
-- defaults auto-stop to 30 minutes and supports 1h / 2h / 4h / 8h options
+- monitors using the selected interval and selected total rounds
 - binds monitoring to the original chart tab instead of silently switching to the current active page
 - pauses automatically if the user leaves the original chart tab inside the monitored window
 - pauses and preserves the current session if a single monitoring round fails instead of resetting everything to idle
 - can send Discord notifications for successful recommendation rounds when a webhook is configured
-- keeps Discord payloads aligned with the compact side-panel recommendation model instead of exposing deprecated order-management fields
+- keeps Discord payloads aligned with the compact side-panel recommendation model
 - plays a short audio cue when a fresh recommendation round finishes successfully
 - lets the user:
   - pause with `Stop`
@@ -59,12 +60,9 @@ The extension currently does the following:
 - a single OpenAI/capture round failure should pause the session and keep the saved setup available for `Continue`
 - `Stop` means pause, not full exit
 - `Exit` means fully clear the current monitoring session
-- auto-stop should never default to "run forever"; default to 30 minutes if the rule is missing or invalid
 - English is the internal analysis language
 - Chinese output is produced as a second translation step after the English analysis
 - schema keys and enum values remain English even when the UI is Chinese
-- buy-reference prices must be below current price when current price is readable
-- sell-reference prices must be above current price when current price is readable
 - Discord webhook alerts are optional and should never be treated as a guaranteed delivery channel
 - Discord webhook URLs are secrets and must never be committed
 
@@ -74,11 +72,12 @@ The extension currently does the following:
   - language selector
   - OpenAI API key management
   - Discord webhook management
+  - chart setup reminder
   - single primary `Start` action
 - side panel with:
   - status summary
   - trading settings form
-  - auto-stop selector
+  - chart setup reminder
   - recommendation card
   - `Stop`, `Continue`, `Restart`, `Exit`
 - side panel availability tied to validated / active session tabs
@@ -92,7 +91,8 @@ The extension currently does the following:
 - OpenAI Responses API using `gpt-5.4`
 - visible-tab screenshot capture
 - offscreen audio playback for result cues
-- English prompt config in `lib/prompt-config.js`
+- structured English prompt config in `lib/prompt-config.js`
+- section-based prompt construction in `lib/llm.js`
 - translation-aware output handling in `lib/llm.js`
 - UI translations in `lib/i18n.js`
 
@@ -102,33 +102,54 @@ The model currently returns a strict JSON object with:
 
 - `action`
   - `OPEN`
-  - `ADD`
+  - `ADD_STRENGTH`
+  - `ADD_WEAKNESS`
   - `HOLD`
-  - `REDUCE`
+  - `REDUCE_PROFIT`
+  - `REDUCE_RISK`
   - `EXIT`
   - `WAIT`
-- `orderType`
-  - `LIMIT`
-  - `NONE`
-- `limitPrice`
 - `sizeSuggestion`
-- `confidence`
 - `whatToDoNow`
-- `summary`
-- `levels.entry`
-- `levels.target`
 - `levels.invalidation`
+- `supportLevels.primary`
+- `supportLevels.secondary`
+- `resistanceLevels.primary`
+- `resistanceLevels.secondary`
 - `riskNote`
-- `supportLevels`
-- `resistanceLevels`
 - `symbol`
 - `currentPrice`
-- `timeframe`
+
+## Current Prompt Architecture
+
+The main English analysis prompt is section-based and organized as:
+
+- `[ROLE]`
+- `[OBJECTIVE]`
+- `[USER_CONTEXT]`
+- `[CHART_CONTEXT]`
+- `[CHART_FOCUS]`
+- `[CHART_GUARDRAILS]`
+- `[RISK_STYLE_RULE]`
+- `[ACTION_RULES]`
+- `[OUTPUT_RULES]`
+- `[LANGUAGE_RULES]`
+- `[OUTPUT_FORMAT]`
+
+The Chinese translation prompt is also section-based and organized as:
+
+- `[ROLE]`
+- `[GOAL]`
+- `[KEEP_UNCHANGED]`
+- `[TRANSLATE_FIELDS]`
+- `[LANGUAGE_RULES]`
+- `[OUTPUT_FORMAT]`
+- `[INPUT_JSON]`
 
 ## Near-Term Improvement Areas
 
 - add tests for state transitions and message handling
 - improve chart validation beyond title / URL keyword rules
 - consider chart-region cropping before upload
-- add finer control for Discord alerts, such as signal-change-only delivery
+- add finer control for Discord alerts, such as action-change-only delivery
 - improve API-key handling if the project evolves beyond MVP

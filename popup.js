@@ -24,6 +24,7 @@ const popupDiscordStatus = document.getElementById("popupDiscordStatus");
 const startButton = document.getElementById("startButton");
 const statusText = document.getElementById("statusText");
 const detailText = document.getElementById("detailText");
+const chartSetupText = document.getElementById("chartSetupText");
 
 function isValidDiscordWebhookUrl(value) {
   try {
@@ -122,6 +123,7 @@ async function render() {
 
   statusText.textContent = view.title;
   detailText.textContent = view.detail;
+  chartSetupText.textContent = t(language, "chartSetupCopy");
 
   startButton.disabled = state.status === STATUS.VALIDATING || state.status === STATUS.RUNNING || state.status === STATUS.PAUSED;
   popupSaveKeyButton.disabled = false;

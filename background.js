@@ -1,10 +1,12 @@
 ﻿import {
-  ALARM_MINUTES,
   ALARM_NAME,
-  AUTO_STOP_OPTIONS,
+  ANALYSIS_INTERVAL_OPTIONS,
+  DEFAULT_ANALYSIS_INTERVAL,
+  DEFAULT_TOTAL_ROUNDS,
   MAX_RESULTS,
   RISK_STYLE_OPTIONS,
   STATUS,
+  TOTAL_ROUNDS_OPTIONS,
   createDefaultState
 } from "./lib/constants.js";
 import { validateStockChartByKeywordsWithLanguage } from "./lib/chart-validator.js";
@@ -16,8 +18,10 @@ const ICON_PATH = "assets/icon-128.png";
 const SIDEPANEL_PATH = "sidepanel.html";
 const OFFSCREEN_DOCUMENT_PATH = "offscreen.html";
 const VALID_RISK_STYLES = new Set(RISK_STYLE_OPTIONS.map((option) => option.value));
-const AUTO_STOP_MINUTES = new Map(AUTO_STOP_OPTIONS.map((option) => [option.value, option.minutes]));
-const VALID_AUTO_STOP_RULES = new Set(AUTO_STOP_OPTIONS.map((option) => option.value));
+const ANALYSIS_INTERVAL_MINUTES = new Map(ANALYSIS_INTERVAL_OPTIONS.map((option) => [option.value, option.minutes]));
+const VALID_ANALYSIS_INTERVALS = new Set(ANALYSIS_INTERVAL_OPTIONS.map((option) => option.value));
+const TOTAL_ROUNDS_MAP = new Map(TOTAL_ROUNDS_OPTIONS.map((option) => [option.value, option.rounds]));
+const VALID_TOTAL_ROUNDS = new Set(TOTAL_ROUNDS_OPTIONS.map((option) => option.value));
 let creatingOffscreenDocument = null;
 
 function createId() {
@@ -137,11 +141,11 @@ function formatDiscordLevelCluster(levels, fallback) {
 }
 
 function getDiscordColor(action) {
-  if (action === "OPEN" || action === "ADD") {
+  if (action === "OPEN" || action === "ADD_STRENGTH" || action === "ADD_WEAKNESS") {
     return 0x1f8f4e;
   }
 
-  if (action === "REDUCE" || action === "EXIT") {
+  if (action === "REDUCE_PROFIT" || action === "REDUCE_RISK" || action === "EXIT") {
     return 0xb64a3a;
   }
 
@@ -160,7 +164,6 @@ function buildDiscordAnalysisPayloadV4(result, state, language) {
   const symbol = analysis.symbol || result?.validation?.symbolGuess || fallback;
   const description = truncateText(
     analysis.whatToDoNow
-      || analysis.summary
       || (language === "zh" ? "新的图表分析结果已经生成。" : "A new chart analysis result is ready."),
     350
   );
@@ -187,12 +190,12 @@ function buildDiscordAnalysisPayloadV4(result, state, language) {
           },
           {
             name: t(language, "currentSupport"),
-            value: formatDiscordLevelCluster(analysis.supportLevels, levels.entry || fallback),
+            value: formatDiscordLevelCluster(analysis.supportLevels, fallback),
             inline: true
           },
           {
             name: t(language, "currentResistance"),
-            value: formatDiscordLevelCluster(analysis.resistanceLevels, levels.target || fallback),
+            value: formatDiscordLevelCluster(analysis.resistanceLevels, fallback),
             inline: true
           },
           {
@@ -270,7 +273,8 @@ function bgText(language, key, vars = {}) {
     availableCashMin: "Available cash must be 0 or greater.",
     averageCostRequired: "Average cost is required when you already hold shares.",
     chooseValidRiskStyle: "Choose a valid risk style.",
-    chooseValidAutoStop: "Choose a valid auto stop option.",
+    chooseValidAnalysisInterval: "Choose a valid analysis interval.",
+    chooseValidTotalRounds: "Choose a valid total rounds option.",
     validationFailedChart: "Validation failed because the current tab does not look like a stock chart.",
     notifyChartNotDetectedTitle: "Stock chart not detected",
     notifyChartNotDetectedBody: "Monitoring stopped because the current tab is not recognized as a stock chart.",
@@ -298,7 +302,8 @@ function bgText(language, key, vars = {}) {
     availableCashMin: "可用资金必须大于或等于 0。",
     averageCostRequired: "如果你已经持有股票，就必须填写平均成本。",
     chooseValidRiskStyle: "请选择有效的风险偏好。",
-    chooseValidAutoStop: "请选择有效的自动停止选项。",
+    chooseValidAnalysisInterval: "请选择有效的分析间隔。",
+    chooseValidTotalRounds: "请选择有效的分析轮数。",
     validationFailedChart: "校验失败，因为当前标签页看起来不像股票图。",
     notifyChartNotDetectedTitle: "未识别到股票图表",
     notifyChartNotDetectedBody: "监控已停止，因为当前标签页未被识别为股票图表。",
@@ -318,10 +323,10 @@ function bgText(language, key, vars = {}) {
   return template.replace(/\{(\w+)\}/g, (_, name) => `${vars[name] ?? ""}`);
 }
 
-function scheduleMonitoringAlarm() {
+function scheduleMonitoringAlarm(intervalMinutes = DEFAULT_ANALYSIS_INTERVAL) {
   chrome.alarms.create(ALARM_NAME, {
-    delayInMinutes: ALARM_MINUTES,
-    periodInMinutes: ALARM_MINUTES
+    delayInMinutes: intervalMinutes,
+    periodInMinutes: intervalMinutes
   });
 }
 
@@ -551,61 +556,59 @@ function normalizeRiskStyleValue(value) {
   return VALID_RISK_STYLES.has(value) ? value : "conservative";
 }
 
-function getAutoStopMinutes(rule) {
-  return AUTO_STOP_MINUTES.get(rule) ?? null;
+function getAnalysisIntervalMinutes(rule) {
+  return ANALYSIS_INTERVAL_MINUTES.get(rule) ?? DEFAULT_ANALYSIS_INTERVAL;
 }
 
-function normalizeAutoStopRule(rule) {
-  return VALID_AUTO_STOP_RULES.has(rule) ? rule : "30m";
+function normalizeAnalysisInterval(rule) {
+  return VALID_ANALYSIS_INTERVALS.has(rule) ? rule : "5m";
 }
 
-function refreshAutoStopDeadline(monitoringProfile) {
+function getTotalRoundsValue(rule) {
+  return TOTAL_ROUNDS_MAP.get(`${rule}`) ?? DEFAULT_TOTAL_ROUNDS;
+}
+
+function normalizeTotalRounds(rule) {
+  return VALID_TOTAL_ROUNDS.has(`${rule}`) ? `${rule}` : `${DEFAULT_TOTAL_ROUNDS}`;
+}
+
+function normalizeMonitoringProfileRules(monitoringProfile) {
   const normalizedProfile = monitoringProfile
     ? {
         ...monitoringProfile,
         rules: {
           buyRiskStyle: normalizeRiskStyleValue(`${monitoringProfile.rules?.buyRiskStyle || "conservative"}`.trim()),
           sellRiskStyle: normalizeRiskStyleValue(`${monitoringProfile.rules?.sellRiskStyle || "conservative"}`.trim()),
-          autoStopRule: normalizeAutoStopRule(monitoringProfile.rules?.autoStopRule)
+          analysisInterval: normalizeAnalysisInterval(monitoringProfile.rules?.analysisInterval),
+          totalRounds: normalizeTotalRounds(monitoringProfile.rules?.totalRounds)
         }
       }
     : null;
-  const autoStopRule = normalizeAutoStopRule(normalizedProfile?.rules?.autoStopRule);
-  const minutes = getAutoStopMinutes(autoStopRule);
 
   return {
     ...normalizedProfile,
     rules: {
       ...normalizedProfile?.rules,
-      autoStopRule
-    },
-    autoStopAt: minutes ? new Date(Date.now() + minutes * 60 * 1000).toISOString() : null
+      analysisInterval: normalizeAnalysisInterval(normalizedProfile?.rules?.analysisInterval),
+      totalRounds: normalizeTotalRounds(normalizedProfile?.rules?.totalRounds)
+    }
   };
 }
 
-function getAutoStopLabel(language, rule) {
-  const normalizedRule = normalizeAutoStopRule(rule);
-  const labels = {
-    off: language === "zh" ? "关闭" : "off",
-    "30m": language === "zh" ? "30 分钟" : "30 minutes",
-    "1h": language === "zh" ? "1 小时" : "1 hour",
-    "2h": language === "zh" ? "2 小时" : "2 hours",
-    "4h": language === "zh" ? "4 小时" : "4 hours"
-  };
-
-  if (normalizedRule === "8h") {
-    return language === "zh" ? "8 小时" : "8 hours";
-  }
-
-  return labels[normalizedRule] || labels["30m"];
+function getAnalysisIntervalLabel(language, rule) {
+  return t(language, `analysisInterval_${normalizeAnalysisInterval(rule)}`);
 }
 
-function getAutoStopReason(language, rule) {
-  const label = getAutoStopLabel(language, rule);
+function getTotalRoundsLabel(language, rule) {
+  return t(language, `totalRounds_${normalizeTotalRounds(rule)}`);
+}
+
+function getCompletedRoundsReason(language, totalRounds) {
+  const roundsLabel = getTotalRoundsLabel(language, totalRounds);
 
   return language === "zh"
-    ? "监控已在运行 " + label + " 后自动暂停。"
-    : `Monitoring paused automatically after ${label}.`;
+    ? `监控已完成 ${roundsLabel}，并自动暂停。`
+    : `Monitoring completed ${roundsLabel} and has been paused automatically.`;
 }
 
 async function buildMonitoringProfile(payload) {
@@ -641,10 +644,16 @@ async function buildMonitoringProfile(payload) {
     throw new Error(bgText(language, "chooseValidRiskStyle"));
   }
 
-  const autoStopRule = `${payload.autoStopRule || "30m"}`.trim();
+  const analysisInterval = `${payload.analysisInterval || "5m"}`.trim();
 
-  if (!VALID_AUTO_STOP_RULES.has(autoStopRule)) {
-    throw new Error(bgText(language, "chooseValidAutoStop"));
+  if (!VALID_ANALYSIS_INTERVALS.has(analysisInterval)) {
+    throw new Error(bgText(language, "chooseValidAnalysisInterval"));
+  }
+
+  const totalRounds = `${payload.totalRounds || `${DEFAULT_TOTAL_ROUNDS}`}`.trim();
+
+  if (!VALID_TOTAL_ROUNDS.has(totalRounds)) {
+    throw new Error(bgText(language, "chooseValidTotalRounds"));
   }
 
   return {
@@ -658,7 +667,8 @@ async function buildMonitoringProfile(payload) {
     rules: {
       buyRiskStyle,
       sellRiskStyle,
-      autoStopRule
+      analysisInterval,
+      totalRounds
     }
   };
 }
@@ -792,18 +802,6 @@ async function runMonitoringRound() {
     throw new Error(bgText(language, "fillFormFirst"));
   }
 
-  if (monitoringProfile.autoStopAt) {
-    const autoStopAt = Date.parse(monitoringProfile.autoStopAt);
-
-    if (Number.isFinite(autoStopAt) && Date.now() >= autoStopAt) {
-      const state = await pauseMonitoring(
-        getAutoStopReason(language, monitoringProfile.rules?.autoStopRule || "30m"),
-        currentState
-      );
-      return { ok: false, state };
-    }
-  }
-
   if (monitoringProfile.boundTabId) {
     const activeTab = await getActiveTab(monitoringProfile.boundWindowId || null).catch(() => null);
 
@@ -885,6 +883,21 @@ async function runMonitoringRound() {
     await notifyDiscordAnalysisResult(result, state, language);
     await playResultSound();
 
+    const totalRounds = getTotalRoundsValue(monitoringProfile.rules?.totalRounds);
+
+    if (round >= totalRounds) {
+      state = await pauseMonitoring(
+        getCompletedRoundsReason(language, monitoringProfile.rules?.totalRounds),
+        state
+      );
+
+      return {
+        ok: true,
+        state,
+        result
+      };
+    }
+
     return {
       ok: true,
       state,
@@ -911,7 +924,7 @@ async function startMonitoring(payload) {
   await ensureApiKeyConfigured();
 
   const activeTab = await getActiveTab();
-  const monitoringProfile = refreshAutoStopDeadline(
+  const monitoringProfile = normalizeMonitoringProfileRules(
     bindMonitoringProfileToTab(
       await buildMonitoringProfile(payload),
       activeTab
@@ -933,7 +946,7 @@ async function startMonitoring(payload) {
     return roundResult;
   }
 
-  scheduleMonitoringAlarm();
+  scheduleMonitoringAlarm(getAnalysisIntervalMinutes(monitoringProfile.rules?.analysisInterval));
 
   return {
     ok: true,
@@ -963,7 +976,7 @@ async function continueMonitoring() {
   });
 
   await ensureMonitoringTabActive(savedMonitoringProfile, language);
-  const monitoringProfile = refreshAutoStopDeadline(savedMonitoringProfile);
+  const monitoringProfile = normalizeMonitoringProfileRules(savedMonitoringProfile);
 
   await patchState({
     status: STATUS.RUNNING,
@@ -980,7 +993,7 @@ async function continueMonitoring() {
     return roundResult;
   }
 
-  scheduleMonitoringAlarm();
+  scheduleMonitoringAlarm(getAnalysisIntervalMinutes(monitoringProfile.rules?.analysisInterval));
 
   return {
     ok: true,
@@ -1000,7 +1013,7 @@ async function restartMonitoring() {
   });
 
   await ensureMonitoringTabActive(savedMonitoringProfile, language);
-  const monitoringProfile = refreshAutoStopDeadline(savedMonitoringProfile);
+  const monitoringProfile = normalizeMonitoringProfileRules(savedMonitoringProfile);
 
   await saveState({
     ...createDefaultState(),
@@ -1016,7 +1029,7 @@ async function restartMonitoring() {
     return roundResult;
   }
 
-  scheduleMonitoringAlarm();
+  scheduleMonitoringAlarm(getAnalysisIntervalMinutes(monitoringProfile.rules?.analysisInterval));
 
   return {
     ok: true,

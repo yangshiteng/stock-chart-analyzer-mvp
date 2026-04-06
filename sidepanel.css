@@ -132,6 +132,17 @@ h2 {
   line-height: 1.5;
 }
 
+.context-requirements {
+  margin-top: 8px !important;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(13, 93, 99, 0.08);
+  border: 1px solid rgba(13, 93, 99, 0.12);
+  color: var(--ink) !important;
+  font-size: 13px;
+  font-weight: 700;
+}
+
 .mode-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;

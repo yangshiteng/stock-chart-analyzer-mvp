@@ -42,6 +42,7 @@
       <section id="contextSection" class="card hidden">
         <h2 id="contextTitle">Execution Constraints</h2>
         <p id="contextDescription">Tell the assistant about your current position, cash, and risk rules.</p>
+        <p id="chartRequirementsText" class="context-requirements">For best results, use a 5-minute candlestick chart with EMA 20 / 50 / 100 / 200 visible.</p>
         <form id="contextForm" class="context-form">
           <section class="form-section">
             <div class="form-section-header">
@@ -82,8 +83,13 @@
             </label>
 
             <label class="field">
-              <span id="autoStopLabel">Auto Stop</span>
-              <select id="autoStopSelect"></select>
+              <span id="analysisIntervalLabel">Analysis Interval</span>
+              <select id="analysisIntervalSelect"></select>
+            </label>
+
+            <label class="field">
+              <span id="totalRoundsLabel">Total Rounds</span>
+              <select id="totalRoundsSelect"></select>
             </label>
           </section>
 

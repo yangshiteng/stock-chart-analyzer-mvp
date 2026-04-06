@@ -1,4 +1,4 @@
-import { AUTO_STOP_OPTIONS, RISK_STYLE_OPTIONS, STATUS } from "./lib/constants.js";
+import { ANALYSIS_INTERVAL_OPTIONS, DEFAULT_TOTAL_ROUNDS, RISK_STYLE_OPTIONS, STATUS, TOTAL_ROUNDS_OPTIONS } from "./lib/constants.js";
 import { getLanguage, t } from "./lib/i18n.js";
 import { getSettings, getState, patchSettings } from "./lib/storage.js";
 
@@ -21,6 +21,7 @@ const apiKeyStatus = document.getElementById("apiKeyStatus");
 const contextSection = document.getElementById("contextSection");
 const contextTitle = document.getElementById("contextTitle");
 const contextDescription = document.getElementById("contextDescription");
+const chartRequirementsText = document.getElementById("chartRequirementsText");
 const contextForm = document.getElementById("contextForm");
 const positionSectionTitle = document.getElementById("positionSectionTitle");
 const positionSectionCopy = document.getElementById("positionSectionCopy");
@@ -31,13 +32,15 @@ const rulesSectionTitle = document.getElementById("rulesSectionTitle");
 const rulesSectionCopy = document.getElementById("rulesSectionCopy");
 const buyRiskStyleLabel = document.getElementById("buyRiskStyleLabel");
 const sellRiskStyleLabel = document.getElementById("sellRiskStyleLabel");
-const autoStopLabel = document.getElementById("autoStopLabel");
+const analysisIntervalLabel = document.getElementById("analysisIntervalLabel");
+const totalRoundsLabel = document.getElementById("totalRoundsLabel");
 const currentSharesInput = document.getElementById("currentSharesInput");
 const averageCostInput = document.getElementById("averageCostInput");
 const availableCashInput = document.getElementById("availableCashInput");
 const buyRiskStyleSelect = document.getElementById("buyRiskStyleSelect");
 const sellRiskStyleSelect = document.getElementById("sellRiskStyleSelect");
-const autoStopSelect = document.getElementById("autoStopSelect");
+const analysisIntervalSelect = document.getElementById("analysisIntervalSelect");
+const totalRoundsSelect = document.getElementById("totalRoundsSelect");
 const formHint = document.getElementById("formHint");
 const formError = document.getElementById("formError");
 const confirmButton = document.getElementById("confirmButton");
@@ -96,85 +99,29 @@ function normalizeRiskStyleValue(value) {
 
 
 
-function normalizeAutoStopRule(value) {
-  return AUTO_STOP_OPTIONS.some((option) => option.value === value) ? value : "30m";
+function normalizeAnalysisInterval(value) {
+  return ANALYSIS_INTERVAL_OPTIONS.some((option) => option.value === value) ? value : "5m";
 }
 
-function formatAutoStopLabel(language, value) {
-  return t(language, `autoStop_${normalizeAutoStopRule(value)}`);
+function normalizeTotalRounds(value) {
+  return TOTAL_ROUNDS_OPTIONS.some((option) => option.value === `${value}`) ? `${value}` : `${DEFAULT_TOTAL_ROUNDS}`;
 }
 
-
-function getClarityLabel(language, value) {
-  if (typeof value !== "number" || Number.isNaN(value)) {
-    return t(language, "clarityUnknown");
-  }
-
-  if (value < 35) {
-    return t(language, "clarityLow");
-  }
-
-  if (value < 70) {
-    return t(language, "clarityMedium");
-  }
-
-  return t(language, "clarityHigh");
+function formatAnalysisIntervalLabel(language, value) {
+  return t(language, `analysisInterval_${normalizeAnalysisInterval(value)}`);
 }
 
-function getPrimaryLevel(analysis) {
-  return formatPrice(analysis.levels?.entry) || formatPrice(analysis.limitPrice);
-}
-
-function getOrderPlanLabel(language, analysis) {
-  if (analysis.orderType === "LIMIT" && formatPrice(analysis.limitPrice)) {
-    return t(language, "orderPlanLimit", { price: analysis.limitPrice });
-  }
-
-  return t(language, "orderPlanNone");
-}
-
-
-function getWhatToDoNowCopy(language, analysis) {
-  if (analysis.whatToDoNow) {
-    return analysis.whatToDoNow;
-  }
-
-  return buildActionCopy(language, analysis);
-}
-
-function buildActionCopy(language, analysis) {
-  const level = getPrimaryLevel(analysis);
-
-  if (analysis.action === "OPEN") {
-    return level ? t(language, "openActionCopy", { price: level }) : t(language, "openActionNoPrice");
-  }
-
-  if (analysis.action === "ADD") {
-    return level ? t(language, "addActionCopy", { price: level }) : t(language, "addActionNoPrice");
-  }
-
-  if (analysis.action === "HOLD") {
-    return level ? t(language, "holdActionCopy", { price: level }) : t(language, "holdActionNoPrice");
-  }
-
-  if (analysis.action === "REDUCE") {
-    return level ? t(language, "reduceActionCopy", { price: level }) : t(language, "reduceActionNoPrice");
-  }
-
-  if (analysis.action === "EXIT") {
-    return level ? t(language, "exitActionCopy", { price: level }) : t(language, "exitActionNoPrice");
-  }
-
-  return level ? t(language, "waitActionCopy", { price: level }) : t(language, "waitActionNoPrice");
+function formatTotalRoundsLabel(language, value) {
+  return t(language, `totalRounds_${normalizeTotalRounds(value)}`);
 }
 
 
 function getActionTone(action) {
-  if (action === "OPEN" || action === "ADD") {
+  if (action === "OPEN" || action === "ADD_STRENGTH" || action === "ADD_WEAKNESS") {
     return "buy";
   }
 
-  if (action === "REDUCE" || action === "EXIT") {
+  if (action === "REDUCE_PROFIT" || action === "REDUCE_RISK" || action === "EXIT") {
     return "sell";
   }
 
@@ -229,7 +176,6 @@ function renderAnalysisCard(state, language) {
   const tone = getActionTone(analysis.action);
   const levels = analysis.levels || {};
   const action = formatActionLabel(language, analysis.action);
-  const orderPlan = getOrderPlanLabel(language, analysis);
 
   analysisCard.className = "analysis-card";
   analysisCard.innerHTML = `
@@ -239,16 +185,15 @@ function renderAnalysisCard(state, language) {
           <p class="signal-label">${escapeHtml(t(language, "actionNow"))}</p>
           <h3 class="signal-value">${escapeHtml(action)}</h3>
         </div>
-        <span class="pill">${escapeHtml(orderPlan)}</span>
       </div>
       <div class="guidance-grid">
-        ${renderGuidanceCard(t(language, "whatToDoNow"), getWhatToDoNowCopy(language, analysis))}
+        ${renderGuidanceCard(t(language, "whatToDoNow"), analysis.whatToDoNow || t(language, "nA"))}
       </div>
     </section>
     <div class="analysis-grid">
       ${renderMetricCard(language, getSafeCurrentPriceLabel(language), analysis.currentPrice || t(language, "nA"))}
-      ${renderMetricCard(language, getPlainResultLabel(language, "supportLevels"), formatLevelClusterText(analysis.supportLevels, levels.entry || t(language, "nA")))}
-      ${renderMetricCard(language, getPlainResultLabel(language, "resistanceLevels"), formatLevelClusterText(analysis.resistanceLevels, levels.target || t(language, "nA")))}
+      ${renderMetricCard(language, getPlainResultLabel(language, "supportLevels"), formatLevelClusterText(analysis.supportLevels, t(language, "nA")))}
+      ${renderMetricCard(language, getPlainResultLabel(language, "resistanceLevels"), formatLevelClusterText(analysis.resistanceLevels, t(language, "nA")))}
       ${renderMetricCard(language, getPlainResultLabel(language, "riskTrigger"), levels.invalidation || t(language, "nA"))}
       ${renderMetricCard(language, t(language, "suggestedSize"), analysis.sizeSuggestion || t(language, "nA"))}
       ${renderMetricCard(language, getPlainResultLabel(language, "riskNote"), analysis.riskNote || t(language, "nA"), true)}
@@ -266,8 +211,8 @@ function getSellRiskStyleLabel(language) {
   return t(language, "sellRiskStyle");
 }
 
-function getMonitoringDetailCopy(language, round) {
-  return t(language, "monitoringDetail", { round });
+function getMonitoringDetailCopy(language, round, interval, totalRounds) {
+  return t(language, "monitoringDetail", { round, interval, totalRounds });
 }
 
 function getPlainResultLabel(language, key) {
@@ -325,6 +270,7 @@ function updateStaticText(language, settings) {
   apiKeyLabel.textContent = t(language, "openAiApiKey");
   contextTitle.textContent = getContextCardTitle(language);
   contextDescription.textContent = getContextCardCopy(language);
+  chartRequirementsText.textContent = t(language, "chartSetupCopy");
   positionSectionTitle.textContent = getPanelSectionTitle(language, "position");
   positionSectionCopy.textContent = getPanelSectionCopy(language, "position");
   currentSharesLabel.textContent = t(language, "currentShares");
@@ -334,7 +280,8 @@ function updateStaticText(language, settings) {
   rulesSectionCopy.textContent = getPanelSectionCopy(language, "rules");
   buyRiskStyleLabel.textContent = getBuyRiskStyleLabel(language);
   sellRiskStyleLabel.textContent = getSellRiskStyleLabel(language);
-  autoStopLabel.textContent = t(language, "autoStop");
+  analysisIntervalLabel.textContent = t(language, "analysisInterval");
+  totalRoundsLabel.textContent = t(language, "totalRounds");
   confirmButton.textContent = t(language, "start");
   recommendationTitle.textContent = t(language, "latestRecommendation");
   apiKeyStatus.textContent = settings.openaiApiKey
@@ -356,12 +303,19 @@ function getSummary(state, language) {
   }
 
   if (state.status === STATUS.RUNNING) {
-    const base = getMonitoringDetailCopy(language, state.roundCount);
-    const autoStopRule = normalizeAutoStopRule(
-      state.monitoringProfile?.rules?.autoStopRule || state.lastMonitoringProfile?.rules?.autoStopRule
+    const intervalRule = normalizeAnalysisInterval(
+      state.monitoringProfile?.rules?.analysisInterval || state.lastMonitoringProfile?.rules?.analysisInterval
+    );
+    const totalRounds = normalizeTotalRounds(
+      state.monitoringProfile?.rules?.totalRounds || state.lastMonitoringProfile?.rules?.totalRounds
     );
 
-    return `${base} ${t(language, "autoStop")}: ${formatAutoStopLabel(language, autoStopRule)}.`;
+    return getMonitoringDetailCopy(
+      language,
+      state.roundCount,
+      formatAnalysisIntervalLabel(language, intervalRule),
+      formatTotalRoundsLabel(language, totalRounds)
+    );
   }
 
   return state.lastError || state.stopReason || t(language, "clickStart");
@@ -390,11 +344,18 @@ function populateRiskStyleOptions(select, language, selectedValue = "conservativ
   select.value = selectedValue;
 }
 
-function populateAutoStopOptions(language, selectedValue = "30m") {
-  autoStopSelect.innerHTML = AUTO_STOP_OPTIONS
-    .map((option) => `<option value="${option.value}">${escapeHtml(t(language, `autoStop_${option.value}`))}</option>`)
+function populateAnalysisIntervalOptions(language, selectedValue = "5m") {
+  analysisIntervalSelect.innerHTML = ANALYSIS_INTERVAL_OPTIONS
+    .map((option) => `<option value="${option.value}">${escapeHtml(t(language, `analysisInterval_${option.value}`))}</option>`)
     .join("");
-  autoStopSelect.value = normalizeAutoStopRule(selectedValue);
+  analysisIntervalSelect.value = normalizeAnalysisInterval(selectedValue);
+}
+
+function populateTotalRoundsOptions(language, selectedValue = `${DEFAULT_TOTAL_ROUNDS}`) {
+  totalRoundsSelect.innerHTML = TOTAL_ROUNDS_OPTIONS
+    .map((option) => `<option value="${option.value}">${escapeHtml(t(language, `totalRounds_${option.value}`))}</option>`)
+    .join("");
+  totalRoundsSelect.value = normalizeTotalRounds(selectedValue);
 }
 
 function updateFormGuidance(language) {
@@ -415,7 +376,8 @@ function populateContextForm(state, language) {
   availableCashInput.value = profile?.capitalContext?.availableCash ?? "";
   populateRiskStyleOptions(buyRiskStyleSelect, language, buyRiskStyle);
   populateRiskStyleOptions(sellRiskStyleSelect, language, sellRiskStyle);
-  populateAutoStopOptions(language, normalizeAutoStopRule(profile?.rules?.autoStopRule));
+  populateAnalysisIntervalOptions(language, normalizeAnalysisInterval(profile?.rules?.analysisInterval));
+  populateTotalRoundsOptions(language, normalizeTotalRounds(profile?.rules?.totalRounds));
   updateFormGuidance(language);
 }
 
@@ -625,7 +587,8 @@ contextForm.addEventListener("submit", async (event) => {
       availableCash: availableCashInput.value,
       buyRiskStyle: buyRiskStyleSelect.value,
       sellRiskStyle: sellRiskStyleSelect.value,
-      autoStopRule: autoStopSelect.value
+      analysisInterval: analysisIntervalSelect.value,
+      totalRounds: totalRoundsSelect.value
     });
   } finally {
     isStartingMonitoring = false;
