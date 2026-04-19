@@ -564,6 +564,70 @@ h2 {
   display: none;
 }
 
+.recent-rounds-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.recent-rounds-list .round-item {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.recent-rounds-list .round-round {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.recent-rounds-list .round-action {
+  font-weight: 600;
+}
+
+.recent-rounds-list .round-time {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Color-code the timeline by action. Left border + action label tint. */
+.recent-rounds-list .round-item[data-action="BUY_NOW"],
+.recent-rounds-list .round-item[data-action="BUY_LIMIT"] {
+  border-left: 3px solid #1f8f4e;
+  background: rgba(31, 143, 78, 0.08);
+}
+.recent-rounds-list .round-item[data-action="BUY_NOW"] .round-action,
+.recent-rounds-list .round-item[data-action="BUY_LIMIT"] .round-action {
+  color: #4ecb82;
+}
+
+.recent-rounds-list .round-item[data-action="SELL_NOW"],
+.recent-rounds-list .round-item[data-action="SELL_LIMIT"] {
+  border-left: 3px solid #b64a3a;
+  background: rgba(182, 74, 58, 0.08);
+}
+.recent-rounds-list .round-item[data-action="SELL_NOW"] .round-action,
+.recent-rounds-list .round-item[data-action="SELL_LIMIT"] .round-action {
+  color: #e37867;
+}
+
+.recent-rounds-list .round-item[data-action="WAIT"] {
+  border-left: 3px solid #a57008;
+  background: rgba(165, 112, 8, 0.06);
+}
+.recent-rounds-list .round-item[data-action="WAIT"] .round-action {
+  color: #d6a54c;
+}
+
 @media (max-width: 640px) {
   .panel-shell {
     padding: 14px;
