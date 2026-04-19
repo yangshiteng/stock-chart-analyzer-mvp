@@ -94,10 +94,38 @@ Completed (Batch 5 — structural cleanup + tests):
 - B4 Removed unused `confidence` field from `lib/chart-validator.js`
 - B5 Added `node:test` unit tests under `test/` (29 tests: symbol, chart-validator, market-hours, llm). Run via `npm test`.
 
+## Future work (registered, not done)
+
+### Stage D — paper-trading mode + 30-day stats dashboard
+**Prerequisite**: 1–2 weeks of real live-mode usage first. Without a baseline dataset, paper-trading statistics are optimizing against noise.
+
+Scope:
+- `popup.html` adds a `tradingMode: "live" | "paper"` radio (default live). Stored in settings.
+- Paper mode: `BUY_NOW`/`BUY_LIMIT` auto-creates a `virtualPosition` at the AI's `entryPrice`; next round reads `currentPrice` from the analysis output and auto-closes if price crosses `stopLossPrice` or `targetPrice`. No manual Mark bought / Mark sold buttons — fully hands-off.
+- Paper trades go into `state.paperTradeHistory` (separate from `tradeHistory`) so real and simulated data never mix.
+- New sidepanel stats card: rolling-30-day win rate, avg RR ratio, total PnL, breakdown by action (BUY_NOW vs BUY_LIMIT), breakdown by confidence (high/medium/low hit rates — calibration check).
+- Yellow banner "🟡 PAPER TRADING MODE" at top of sidepanel while paper mode is active.
+- Open design question: where does `currentPrice` come from? Options: (a) ask the LLM to report it each round (risk: hallucinated prices; add sanity check vs previous round), (b) call a separate quote API (more deps, rate limits). Start with (a) + sanity check.
+
+Rationale: Stage D is the **verification layer** for Stages A/B/C — it answers "does this signal pipeline actually have positive expectancy?" Without it, every subsequent prompt tweak is subjective.
+
+### Known risks / follow-ups (small)
+- `state.tradeHistory` is capped at `MAX_RESULTS` (50) via `slice` — older trades silently drop off. Long-term this loses journal history for the RECENT_LESSONS feedback loop. Consider: export-to-CSV button, or split `tradeHistory` into a separate unbounded `journalArchive`.
+- `generateTradeLesson` is fire-and-forget with a swallowed catch. If the call fails (network / rate limit), the trade's `lesson` stays `null` forever — no retry, no backfill. Fine for now; revisit if many lessons end up stuck at null.
+- `chrome.runtime.onInstalled` resets the full monitorState (including `tradeHistory`) on every extension reload. For a user who actively uses the journal, losing history on each version bump is annoying. Consider preserving `tradeHistory` + `virtualPosition` across reinstalls once Stage D lands and the data becomes valuable.
+- No tab-activity freshness check: if user leaves the tab backgrounded for 30+ min, the screenshot still fires on schedule but the chart data may be stale. Currently ignored because users actively watching wouldn't hit this; worth revisiting if false signals correlate with tab-switch patterns.
+
+### Design decisions worth preserving
+- **One trade per day, manual Continue to start a second**: chosen over auto-resume because the manual click is a natural cool-off period. Do not add an "allow multi-trade per day" toggle without first getting Stage D win-rate data; if multi-trading dilutes edge, the toggle will become a foot-gun.
+- **Overnight positions auto-abandoned without asking**: day-trading by definition cannot hold overnight, so resurrecting a cross-day position is never the right answer. No confirmation dialog — the `status: "abandoned"` journal entry preserves the audit trail.
+- **No ad-hoc STATUS flags**: mode (entry/exit/force_exit) is derived from `virtualPosition` presence + `isNearUsMarketClose()`, not stored. This keeps the STATUS state machine (`IDLE`/`VALIDATING`/`AWAITING_CONTEXT`/`RUNNING`/`PAUSED`) as the single source of truth per original design.
+
 ## Rejected (do not re-propose)
 - #1 Changing the model name — `gpt-5.4` is verified to work; user uses it intentionally
 - #7 Compressing screenshots — user prefers high-resolution captures for chart accuracy
 - #13 Encrypting the API key in storage — single-user local tool, not worth the complexity
+- Auto multi-trade per day — current manual Continue is the cool-off period; revisit only after Stage D shows multi-trading doesn't dilute edge
+- Compression / batching of `tradeHistory` for older entries — premature optimization until user hits the 50-trade cap
 
 ## Conventions
 - User writes in Chinese; respond in Chinese.
