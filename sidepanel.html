@@ -40,46 +40,19 @@
       </section>
 
       <section id="contextSection" class="card hidden">
-        <h2 id="contextTitle">Execution Constraints</h2>
-        <p id="contextDescription">Tell the assistant about your current position, cash, and risk rules.</p>
+        <h2 id="contextTitle">Day-Trade Setup</h2>
+        <p id="contextDescription">Enter the ticker you are watching. The assistant returns an executable signal each round.</p>
         <p id="chartRequirementsText" class="context-requirements">For best results, use a 5-minute candlestick chart with EMA 20 / 50 / 100 / 200 visible.</p>
         <form id="contextForm" class="context-form">
           <section class="form-section">
             <div class="form-section-header">
-              <h3 id="positionSectionTitle" class="form-section-title">Position & Capital Status</h3>
-              <p id="positionSectionCopy" class="form-section-copy">Enter your current holdings, available cash, and any working orders.</p>
+              <h3 id="positionSectionTitle" class="form-section-title">Session Setup</h3>
+              <p id="positionSectionCopy" class="form-section-copy">Enter the ticker you are watching, then pick how often and how long the assistant should analyze the chart.</p>
             </div>
 
             <label class="field">
-              <span id="currentSharesLabel">Current Shares</span>
-              <input id="currentSharesInput" type="number" min="0" step="0.0001" inputmode="decimal" placeholder="0">
-            </label>
-
-            <label class="field">
-              <span id="averageCostLabel">Average Cost</span>
-              <input id="averageCostInput" type="number" min="0" step="0.0001" inputmode="decimal" placeholder="18.45">
-            </label>
-
-            <label class="field">
-              <span id="availableCashLabel">Available Cash</span>
-              <input id="availableCashInput" type="number" min="0" step="0.01" inputmode="decimal" placeholder="5000">
-            </label>
-          </section>
-
-          <section class="form-section">
-            <div class="form-section-header">
-              <h3 id="rulesSectionTitle" class="form-section-title">Execution Constraints</h3>
-              <p id="rulesSectionCopy" class="form-section-copy">Set the guardrails the assistant must respect before placing or adjusting orders.</p>
-            </div>
-
-            <label class="field">
-              <span id="buyRiskStyleLabel">Buy Risk Style</span>
-              <select id="buyRiskStyleSelect"></select>
-            </label>
-
-            <label class="field">
-              <span id="sellRiskStyleLabel">Sell Risk Style</span>
-              <select id="sellRiskStyleSelect"></select>
+              <span id="symbolOverrideLabel">Ticker Symbol</span>
+              <input id="symbolOverrideInput" type="text" autocomplete="off" maxlength="10" placeholder="AAPL" required>
             </label>
 
             <label class="field">
@@ -93,7 +66,6 @@
             </label>
           </section>
 
-          <p id="formHint" class="form-hint">If you already hold shares, average cost is required.</p>
           <p id="formError" class="form-error hidden"></p>
 
           <div class="form-actions">
@@ -107,6 +79,13 @@
         <div id="analysisCard" class="analysis-card empty-analysis">
           <p class="empty-state">Run a chart analysis to see the latest recommendation.</p>
         </div>
+      </section>
+
+      <section class="card">
+        <h2 id="recentRoundsTitle">Recent Rounds</h2>
+        <ol id="recentRoundsList" class="recent-rounds-list">
+          <li class="empty-state">No rounds yet.</li>
+        </ol>
       </section>
     </main>
 

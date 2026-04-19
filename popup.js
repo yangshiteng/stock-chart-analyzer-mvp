@@ -21,6 +21,8 @@ const popupDiscordWebhookInput = document.getElementById("popupDiscordWebhookInp
 const popupSaveDiscordButton = document.getElementById("popupSaveDiscordButton");
 const popupClearDiscordButton = document.getElementById("popupClearDiscordButton");
 const popupDiscordStatus = document.getElementById("popupDiscordStatus");
+const popupMarketHoursToggle = document.getElementById("popupMarketHoursToggle");
+const popupMarketHoursLabel = document.getElementById("popupMarketHoursLabel");
 const startButton = document.getElementById("startButton");
 const statusText = document.getElementById("statusText");
 const detailText = document.getElementById("detailText");
@@ -117,6 +119,8 @@ async function render() {
   popupApiKeyStatus.textContent = settings.openaiApiKey
     ? t(language, "apiKeySaved", { model: settings.model })
     : t(language, "noApiKeySaved");
+  popupMarketHoursLabel.textContent = t(language, "marketHoursOnly");
+  popupMarketHoursToggle.checked = Boolean(settings.marketHoursOnly);
   popupDiscordStatus.textContent = settings.discordWebhookUrl
     ? t(language, "discordWebhookSaved")
     : t(language, "noDiscordWebhookSaved");
@@ -169,6 +173,10 @@ startButton.addEventListener("click", async () => {
   }
 
   await render();
+});
+
+popupMarketHoursToggle.addEventListener("change", async () => {
+  await patchSettings({ marketHoursOnly: popupMarketHoursToggle.checked });
 });
 
 popupLanguageSelect.addEventListener("change", async () => {

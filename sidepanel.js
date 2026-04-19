@@ -1,4 +1,4 @@
-import { ANALYSIS_INTERVAL_OPTIONS, DEFAULT_TOTAL_ROUNDS, RISK_STYLE_OPTIONS, STATUS, TOTAL_ROUNDS_OPTIONS } from "./lib/constants.js";
+import { ANALYSIS_INTERVAL_OPTIONS, DEFAULT_TOTAL_ROUNDS, STATUS, TOTAL_ROUNDS_OPTIONS } from "./lib/constants.js";
 import { getLanguage, t } from "./lib/i18n.js";
 import { getSettings, getState, patchSettings } from "./lib/storage.js";
 
@@ -25,27 +25,18 @@ const chartRequirementsText = document.getElementById("chartRequirementsText");
 const contextForm = document.getElementById("contextForm");
 const positionSectionTitle = document.getElementById("positionSectionTitle");
 const positionSectionCopy = document.getElementById("positionSectionCopy");
-const currentSharesLabel = document.getElementById("currentSharesLabel");
-const averageCostLabel = document.getElementById("averageCostLabel");
-const availableCashLabel = document.getElementById("availableCashLabel");
-const rulesSectionTitle = document.getElementById("rulesSectionTitle");
-const rulesSectionCopy = document.getElementById("rulesSectionCopy");
-const buyRiskStyleLabel = document.getElementById("buyRiskStyleLabel");
-const sellRiskStyleLabel = document.getElementById("sellRiskStyleLabel");
+const symbolOverrideLabel = document.getElementById("symbolOverrideLabel");
+const symbolOverrideInput = document.getElementById("symbolOverrideInput");
 const analysisIntervalLabel = document.getElementById("analysisIntervalLabel");
 const totalRoundsLabel = document.getElementById("totalRoundsLabel");
-const currentSharesInput = document.getElementById("currentSharesInput");
-const averageCostInput = document.getElementById("averageCostInput");
-const availableCashInput = document.getElementById("availableCashInput");
-const buyRiskStyleSelect = document.getElementById("buyRiskStyleSelect");
-const sellRiskStyleSelect = document.getElementById("sellRiskStyleSelect");
 const analysisIntervalSelect = document.getElementById("analysisIntervalSelect");
 const totalRoundsSelect = document.getElementById("totalRoundsSelect");
-const formHint = document.getElementById("formHint");
 const formError = document.getElementById("formError");
 const confirmButton = document.getElementById("confirmButton");
 const recommendationTitle = document.getElementById("recommendationTitle");
 const analysisCard = document.getElementById("analysisCard");
+const recentRoundsTitle = document.getElementById("recentRoundsTitle");
+const recentRoundsList = document.getElementById("recentRoundsList");
 
 let isStartingMonitoring = false;
 
@@ -58,46 +49,16 @@ function escapeHtml(value) {
     .replaceAll("'", "&#39;");
 }
 
-function formatPrice(value) {
-  return value && value !== "N/A" ? value : null;
-}
-
-function formatLevelClusterText(levels, fallback = null) {
-  if (!levels) {
-    return fallback;
-  }
-
-  if (typeof levels === "string") {
-    return formatPrice(levels) || fallback;
-  }
-
-  const primary = formatPrice(levels.primary);
-  const secondary = formatPrice(levels.secondary);
-
-  if (primary && secondary) {
-    return `${primary} / ${secondary}`;
-  }
-
-  return primary || secondary || fallback;
-}
-
 function formatActionLabel(language, action) {
   return action ? t(language, `action_${action}`) : t(language, "unknown");
 }
 
-function formatBooleanLabel(language, value) {
-  return value ? t(language, "yes") : t(language, "no");
+function formatConfidenceLabel(language, confidence) {
+  if (!confidence) return t(language, "unknown");
+  const key = `confidence_${confidence}`;
+  const label = t(language, key);
+  return label === key ? confidence : label;
 }
-
-function normalizeRiskStyleValue(value) {
-  if (value === "aggressive" || value === "moderate" || value === "conservative") {
-    return value;
-  }
-
-  return "conservative";
-}
-
-
 
 function normalizeAnalysisInterval(value) {
   return ANALYSIS_INTERVAL_OPTIONS.some((option) => option.value === value) ? value : "5m";
@@ -115,13 +76,12 @@ function formatTotalRoundsLabel(language, value) {
   return t(language, `totalRounds_${normalizeTotalRounds(value)}`);
 }
 
-
 function getActionTone(action) {
-  if (action === "OPEN" || action === "ADD_STRENGTH" || action === "ADD_WEAKNESS") {
+  if (action === "BUY_NOW" || action === "BUY_LIMIT") {
     return "buy";
   }
 
-  if (action === "REDUCE_PROFIT" || action === "REDUCE_RISK" || action === "EXIT") {
+  if (action === "SELL_NOW" || action === "SELL_LIMIT") {
     return "sell";
   }
 
@@ -150,10 +110,47 @@ function renderGuidanceCard(label, value) {
   `;
 }
 
+function formatRoundTime(iso, language) {
+  if (!iso) return "";
+  try {
+    const d = new Date(iso);
+    return d.toLocaleTimeString(language === "zh" ? "zh-CN" : "en-US", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false
+    });
+  } catch {
+    return "";
+  }
+}
+
+function renderRecentRounds(state, language) {
+  recentRoundsTitle.textContent = t(language, "recentRoundsTitle");
+
+  const results = Array.isArray(state.results) ? state.results : [];
+  if (results.length === 0) {
+    recentRoundsList.innerHTML = `<li class="empty-state">${escapeHtml(t(language, "noRoundsYet"))}</li>`;
+    return;
+  }
+
+  const items = results.slice(0, 10).map((r) => {
+    const round = r.round ?? "?";
+    const rawAction = r.analysis?.action || "UNKNOWN";
+    const action = formatActionLabel(language, r.analysis?.action);
+    const time = formatRoundTime(r.capturedAt, language);
+    return `<li class="round-item" data-action="${escapeHtml(rawAction)}">
+      <span class="round-round">#${escapeHtml(round)}</span>
+      <span class="round-action">${escapeHtml(action)}</span>
+      <span class="round-time">${escapeHtml(time)}</span>
+    </li>`;
+  }).join("");
+
+  recentRoundsList.innerHTML = items;
+}
+
 function renderAnalysisCard(state, language) {
   const result = state.lastResult;
   const analysis = result?.analysis;
-  const profile = result?.monitoringProfile;
 
   if (isStartingMonitoring || state.isRoundInFlight || (state.status === STATUS.RUNNING && state.roundCount === 0 && !analysis)) {
     analysisCard.className = "analysis-card";
@@ -174,8 +171,8 @@ function renderAnalysisCard(state, language) {
   }
 
   const tone = getActionTone(analysis.action);
-  const levels = analysis.levels || {};
   const action = formatActionLabel(language, analysis.action);
+  const nA = t(language, "nA");
 
   analysisCard.className = "analysis-card";
   analysisCard.innerHTML = `
@@ -187,73 +184,38 @@ function renderAnalysisCard(state, language) {
         </div>
       </div>
       <div class="guidance-grid">
-        ${renderGuidanceCard(t(language, "whatToDoNow"), analysis.whatToDoNow || t(language, "nA"))}
+        ${renderGuidanceCard(t(language, "triggerConditionLabel"), analysis.triggerCondition || nA)}
       </div>
     </section>
     <div class="analysis-grid">
-      ${renderMetricCard(language, getSafeCurrentPriceLabel(language), analysis.currentPrice || t(language, "nA"))}
-      ${renderMetricCard(language, getPlainResultLabel(language, "supportLevels"), formatLevelClusterText(analysis.supportLevels, t(language, "nA")))}
-      ${renderMetricCard(language, getPlainResultLabel(language, "resistanceLevels"), formatLevelClusterText(analysis.resistanceLevels, t(language, "nA")))}
-      ${renderMetricCard(language, getPlainResultLabel(language, "riskTrigger"), levels.invalidation || t(language, "nA"))}
-      ${renderMetricCard(language, t(language, "suggestedSize"), analysis.sizeSuggestion || t(language, "nA"))}
-      ${renderMetricCard(language, getPlainResultLabel(language, "riskNote"), analysis.riskNote || t(language, "nA"), true)}
+      ${renderMetricCard(language, t(language, "currentPrice"), analysis.currentPrice || nA)}
+      ${renderMetricCard(language, t(language, "entryPriceLabel"), analysis.entryPrice || nA)}
+      ${renderMetricCard(language, t(language, "stopLossPriceLabel"), analysis.stopLossPrice || nA)}
+      ${renderMetricCard(language, t(language, "targetPriceLabel"), analysis.targetPrice || nA)}
+      ${renderMetricCard(language, t(language, "confidenceLabel"), formatConfidenceLabel(language, analysis.confidence))}
+      ${renderMetricCard(language, t(language, "reasoningLabel"), analysis.reasoning || nA, true)}
     </div>
   `;
-}
-
-
-
-function getBuyRiskStyleLabel(language) {
-  return t(language, "buyRiskStyle");
-}
-
-function getSellRiskStyleLabel(language) {
-  return t(language, "sellRiskStyle");
 }
 
 function getMonitoringDetailCopy(language, round, interval, totalRounds) {
   return t(language, "monitoringDetail", { round, interval, totalRounds });
 }
 
-function getPlainResultLabel(language, key) {
-  const labels = {
-    supportLevels: t(language, "currentSupport"),
-    resistanceLevels: t(language, "currentResistance"),
-    riskTrigger: t(language, "riskTrigger"),
-    riskNote: t(language, "watchOut")
-  };
-
-  return labels[key] || t(language, key);
-}
-
 function getPanelSectionTitle(language, section) {
   const labels = {
-    position: t(language, "positionCapitalStatus"),
+    position: t(language, "sessionSetup"),
     rules: t(language, "executionRules")
   };
-
   return labels[section] || section;
 }
 
 function getPanelSectionCopy(language, section) {
   const labels = {
-    position: t(language, "positionCapitalStatusCopy"),
+    position: t(language, "sessionSetupCopy"),
     rules: t(language, "executionRulesCopy")
   };
-
   return labels[section] || "";
-}
-
-function getContextCardTitle(language) {
-  return t(language, "tradingSetup");
-}
-
-function getContextCardCopy(language) {
-  return t(language, "tradingSetupCopy");
-}
-
-function getSafeCurrentPriceLabel(language) {
-  return t(language, "currentPrice");
 }
 
 function updateStaticText(language, settings) {
@@ -268,18 +230,13 @@ function updateStaticText(language, settings) {
   apiSetupTitle.textContent = t(language, "openAiSetup");
   apiSetupCopy.innerHTML = `${escapeHtml(t(language, "setupCopy"))}`;
   apiKeyLabel.textContent = t(language, "openAiApiKey");
-  contextTitle.textContent = getContextCardTitle(language);
-  contextDescription.textContent = getContextCardCopy(language);
+  contextTitle.textContent = t(language, "tradingSetup");
+  contextDescription.textContent = t(language, "tradingSetupCopy");
   chartRequirementsText.textContent = t(language, "chartSetupCopy");
   positionSectionTitle.textContent = getPanelSectionTitle(language, "position");
   positionSectionCopy.textContent = getPanelSectionCopy(language, "position");
-  currentSharesLabel.textContent = t(language, "currentShares");
-  averageCostLabel.textContent = t(language, "averageCost");
-  availableCashLabel.textContent = t(language, "availableCash");
-  rulesSectionTitle.textContent = getPanelSectionTitle(language, "rules");
-  rulesSectionCopy.textContent = getPanelSectionCopy(language, "rules");
-  buyRiskStyleLabel.textContent = getBuyRiskStyleLabel(language);
-  sellRiskStyleLabel.textContent = getSellRiskStyleLabel(language);
+  symbolOverrideLabel.textContent = t(language, "symbolOverride");
+  symbolOverrideInput.placeholder = t(language, "symbolOverridePlaceholder");
   analysisIntervalLabel.textContent = t(language, "analysisInterval");
   totalRoundsLabel.textContent = t(language, "totalRounds");
   confirmButton.textContent = t(language, "start");
@@ -300,6 +257,10 @@ function getSummary(state, language) {
 
   if (state.status === STATUS.RUNNING && state.isRoundInFlight) {
     return t(language, "analyzingCopy");
+  }
+
+  if (state.status === STATUS.RUNNING && state.stopReason) {
+    return state.stopReason;
   }
 
   if (state.status === STATUS.RUNNING) {
@@ -333,15 +294,7 @@ function getStatusBadgeLabel(language, status) {
   if (!status || status === STATUS.IDLE) {
     return t(language, "idle");
   }
-
   return t(language, `status_${status}`);
-}
-
-function populateRiskStyleOptions(select, language, selectedValue = "conservative") {
-  select.innerHTML = RISK_STYLE_OPTIONS
-    .map((option) => `<option value="${option.value}">${escapeHtml(t(language, `riskStyle_${option.value}`))}</option>`)
-    .join("");
-  select.value = selectedValue;
 }
 
 function populateAnalysisIntervalOptions(language, selectedValue = "5m") {
@@ -358,27 +311,11 @@ function populateTotalRoundsOptions(language, selectedValue = `${DEFAULT_TOTAL_R
   totalRoundsSelect.value = normalizeTotalRounds(selectedValue);
 }
 
-function updateFormGuidance(language) {
-  const currentShares = Number(currentSharesInput.value || 0);
-  const hasPosition = Number.isFinite(currentShares) && currentShares > 0;
-
-  averageCostInput.required = hasPosition;
-  formHint.textContent = t(language, "constraintsHint");
-}
-
 function populateContextForm(state, language) {
   const profile = state.monitoringProfile || state.lastMonitoringProfile;
-  const buyRiskStyle = normalizeRiskStyleValue(profile?.rules?.buyRiskStyle);
-  const sellRiskStyle = normalizeRiskStyleValue(profile?.rules?.sellRiskStyle);
-
-  currentSharesInput.value = profile?.positionContext?.currentShares ?? "";
-  averageCostInput.value = profile?.positionContext?.averageCost ?? "";
-  availableCashInput.value = profile?.capitalContext?.availableCash ?? "";
-  populateRiskStyleOptions(buyRiskStyleSelect, language, buyRiskStyle);
-  populateRiskStyleOptions(sellRiskStyleSelect, language, sellRiskStyle);
+  symbolOverrideInput.value = profile?.symbolOverride ?? "";
   populateAnalysisIntervalOptions(language, normalizeAnalysisInterval(profile?.rules?.analysisInterval));
   populateTotalRoundsOptions(language, normalizeTotalRounds(profile?.rules?.totalRounds));
-  updateFormGuidance(language);
 }
 
 async function render() {
@@ -392,6 +329,7 @@ async function render() {
   summaryText.textContent = getSummary(state, language);
   apiKeyInput.value = "";
   renderAnalysisCard(state, language);
+  renderRecentRounds(state, language);
   apiSetupSection.classList.toggle("hidden", apiReady);
 
   const hasSavedSession = hasSavedMonitoringSession(state);
@@ -421,11 +359,7 @@ async function render() {
 
 stopMonitorButton.addEventListener("click", async () => {
   stopMonitorButton.disabled = true;
-
-  await chrome.runtime.sendMessage({
-    type: "stop-monitoring"
-  });
-
+  await chrome.runtime.sendMessage({ type: "stop-monitoring" });
   await render();
 });
 
@@ -438,17 +372,11 @@ continueMonitorButton.addEventListener("click", async () => {
   isStartingMonitoring = true;
 
   const state = await getState();
-  renderAnalysisCard({
-    ...state,
-    status: STATUS.RUNNING
-  }, language);
+  renderAnalysisCard({ ...state, status: STATUS.RUNNING }, language);
 
   let response;
-
   try {
-    response = await chrome.runtime.sendMessage({
-      type: "continue-monitoring"
-    });
+    response = await chrome.runtime.sendMessage({ type: "continue-monitoring" });
   } finally {
     isStartingMonitoring = false;
   }
@@ -469,19 +397,11 @@ restartMonitorButton.addEventListener("click", async () => {
   isStartingMonitoring = true;
 
   const state = await getState();
-  renderAnalysisCard({
-    ...state,
-    status: STATUS.RUNNING,
-    roundCount: 0,
-    lastResult: null
-  }, language);
+  renderAnalysisCard({ ...state, status: STATUS.RUNNING, roundCount: 0, lastResult: null }, language);
 
   let response;
-
   try {
-    response = await chrome.runtime.sendMessage({
-      type: "restart-monitoring"
-    });
+    response = await chrome.runtime.sendMessage({ type: "restart-monitoring" });
   } finally {
     isStartingMonitoring = false;
   }
@@ -495,11 +415,7 @@ restartMonitorButton.addEventListener("click", async () => {
 
 exitMonitorButton.addEventListener("click", async () => {
   exitMonitorButton.disabled = true;
-
-  await chrome.runtime.sendMessage({
-    type: "exit-monitoring"
-  });
-
+  await chrome.runtime.sendMessage({ type: "exit-monitoring" });
   window.close();
 });
 
@@ -516,10 +432,7 @@ saveApiKeyButton.addEventListener("click", async () => {
   saveApiKeyButton.disabled = true;
   clearApiKeyButton.disabled = true;
 
-  await patchSettings({
-    openaiApiKey: nextKey,
-    model: "gpt-5.4"
-  });
+  await patchSettings({ openaiApiKey: nextKey, model: "gpt-5.4" });
 
   apiKeyStatus.textContent = t(language, "apiKeyReady");
   apiKeyInput.value = "";
@@ -532,20 +445,23 @@ clearApiKeyButton.addEventListener("click", async () => {
   saveApiKeyButton.disabled = true;
   clearApiKeyButton.disabled = true;
 
-  await patchSettings({
-    openaiApiKey: "",
-    model: "gpt-5.4"
-  });
+  await patchSettings({ openaiApiKey: "", model: "gpt-5.4" });
 
   apiKeyStatus.textContent = t(language, "apiKeyCleared");
   apiKeyInput.value = "";
   await render();
 });
 
-currentSharesInput.addEventListener("input", async () => {
-  const settings = await getSettings();
-  updateFormGuidance(getLanguage(settings.language));
-});
+function debounce(fn, wait) {
+  let timer = null;
+  return (...args) => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => {
+      timer = null;
+      fn(...args);
+    }, wait);
+  };
+}
 
 contextForm.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -559,8 +475,6 @@ contextForm.addEventListener("submit", async (event) => {
     return;
   }
 
-  updateFormGuidance(language);
-
   if (!contextForm.reportValidity()) {
     return;
   }
@@ -572,40 +486,43 @@ contextForm.addEventListener("submit", async (event) => {
   isStartingMonitoring = true;
 
   const state = await getState();
-  renderAnalysisCard({
-    ...state,
-    status: STATUS.RUNNING
-  }, language);
+  renderAnalysisCard({ ...state, status: STATUS.RUNNING }, language);
 
   let response;
+  let sendError = null;
 
   try {
     response = await chrome.runtime.sendMessage({
       type: "start-monitoring",
-      currentShares: currentSharesInput.value,
-      averageCost: averageCostInput.value,
-      availableCash: availableCashInput.value,
-      buyRiskStyle: buyRiskStyleSelect.value,
-      sellRiskStyle: sellRiskStyleSelect.value,
+      symbolOverride: symbolOverrideInput.value,
       analysisInterval: analysisIntervalSelect.value,
       totalRounds: totalRoundsSelect.value
     });
+  } catch (error) {
+    sendError = error;
   } finally {
     isStartingMonitoring = false;
   }
 
-  if (!response?.ok) {
-    formError.textContent = response?.error || t(language, "couldNotStart");
+  if (sendError || !response?.ok) {
+    formError.textContent = sendError?.message || response?.error || t(language, "couldNotStart");
     formError.classList.remove("hidden");
     confirmButton.disabled = false;
+    await render();
     return;
   }
 
   await render();
 });
 
-chrome.storage.onChanged.addListener(async () => {
-  await render();
+const debouncedRender = debounce(() => {
+  void render();
+}, 100);
+
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName !== "local") return;
+  if (!changes.monitorState && !changes.appSettings) return;
+  debouncedRender();
 });
 
 void render();

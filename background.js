@@ -4,7 +4,6 @@
   DEFAULT_ANALYSIS_INTERVAL,
   DEFAULT_TOTAL_ROUNDS,
   MAX_RESULTS,
-  RISK_STYLE_OPTIONS,
   STATUS,
   TOTAL_ROUNDS_OPTIONS,
   createDefaultState
@@ -12,12 +11,16 @@
 import { validateStockChartByKeywordsWithLanguage } from "./lib/chart-validator.js";
 import { getLanguage, t } from "./lib/i18n.js";
 import { analyzeChartCapture } from "./lib/llm.js";
+import { isWithinUsMarketHours } from "./lib/market-hours.js";
+import {
+  SIDEPANEL_PATH,
+  enableSidePanelForWindow,
+  setSidePanelAvailabilityForTab
+} from "./lib/side-panel.js";
 import { getSettings, getState, patchState, saveState } from "./lib/storage.js";
 
 const ICON_PATH = "assets/icon-128.png";
-const SIDEPANEL_PATH = "sidepanel.html";
 const OFFSCREEN_DOCUMENT_PATH = "offscreen.html";
-const VALID_RISK_STYLES = new Set(RISK_STYLE_OPTIONS.map((option) => option.value));
 const ANALYSIS_INTERVAL_MINUTES = new Map(ANALYSIS_INTERVAL_OPTIONS.map((option) => [option.value, option.minutes]));
 const VALID_ANALYSIS_INTERVALS = new Set(ANALYSIS_INTERVAL_OPTIONS.map((option) => option.value));
 const TOTAL_ROUNDS_MAP = new Map(TOTAL_ROUNDS_OPTIONS.map((option) => [option.value, option.rounds]));
@@ -124,28 +127,12 @@ function getSafeDiscordActionLabel(language, action) {
   return label === key ? t(language, "unknown") : label;
 }
 
-function formatDiscordLevelCluster(levels, fallback) {
-  if (!levels) {
-    return fallback;
-  }
-
-  if (typeof levels === "string") {
-    return truncateText(levels || fallback, 250);
-  }
-
-  const primary = levels.primary && levels.primary !== "N/A" ? `${levels.primary}` : "";
-  const secondary = levels.secondary && levels.secondary !== "N/A" ? `${levels.secondary}` : "";
-  const combined = [primary, secondary].filter(Boolean).join(" / ");
-
-  return truncateText(combined || fallback, 250);
-}
-
 function getDiscordColor(action) {
-  if (action === "OPEN" || action === "ADD_STRENGTH" || action === "ADD_WEAKNESS") {
+  if (action === "BUY_NOW" || action === "BUY_LIMIT") {
     return 0x1f8f4e;
   }
 
-  if (action === "REDUCE_PROFIT" || action === "REDUCE_RISK" || action === "EXIT") {
+  if (action === "SELL_NOW" || action === "SELL_LIMIT") {
     return 0xb64a3a;
   }
 
@@ -159,11 +146,10 @@ function getDiscordColor(action) {
 
 function buildDiscordAnalysisPayloadV4(result, state, language) {
   const analysis = result?.analysis || {};
-  const levels = analysis.levels || {};
   const fallback = getSafeDiscordFallback(language);
   const symbol = analysis.symbol || result?.validation?.symbolGuess || fallback;
   const description = truncateText(
-    analysis.whatToDoNow
+    analysis.reasoning
       || (language === "zh" ? "新的图表分析结果已经生成。" : "A new chart analysis result is ready."),
     350
   );
@@ -189,28 +175,28 @@ function buildDiscordAnalysisPayloadV4(result, state, language) {
             inline: true
           },
           {
-            name: t(language, "currentSupport"),
-            value: formatDiscordLevelCluster(analysis.supportLevels, fallback),
+            name: t(language, "confidenceLabel"),
+            value: truncateText(analysis.confidence || fallback, 60),
             inline: true
           },
           {
-            name: t(language, "currentResistance"),
-            value: formatDiscordLevelCluster(analysis.resistanceLevels, fallback),
+            name: t(language, "entryPriceLabel"),
+            value: truncateText(analysis.entryPrice || fallback, 120),
             inline: true
           },
           {
-            name: t(language, "riskTrigger"),
-            value: truncateText(levels.invalidation || fallback, 250),
+            name: t(language, "stopLossPriceLabel"),
+            value: truncateText(analysis.stopLossPrice || fallback, 120),
             inline: true
           },
           {
-            name: t(language, "suggestedSize"),
-            value: truncateText(analysis.sizeSuggestion || fallback, 250),
+            name: t(language, "targetPriceLabel"),
+            value: truncateText(analysis.targetPrice || fallback, 120),
             inline: true
           },
           {
-            name: t(language, "watchOut"),
-            value: truncateText(analysis.riskNote || fallback, 300),
+            name: t(language, "triggerConditionLabel"),
+            value: truncateText(analysis.triggerCondition || fallback, 300),
             inline: false
           }
         ],
@@ -259,69 +245,6 @@ async function getUiLanguage() {
   return getLanguage(settings.language);
 }
 
-function bgText(language, key, vars = {}) {
-  const en = {
-    noActiveTab: "No active tab was found. Focus a chart tab and try again.",
-    untitledTab: "Untitled tab",
-    saveApiKeyFirst: "Save your OpenAI API key before starting monitoring.",
-    mustBeNumber: "{label} must be a number.",
-    currentSharesLabel: "Current shares",
-    averageCostLabel: "Average cost",
-    availableCashLabel: "Available cash",
-    currentSharesMin: "Current shares must be 0 or greater.",
-    averageCostMin: "Average cost must be greater than 0.",
-    availableCashMin: "Available cash must be 0 or greater.",
-    averageCostRequired: "Average cost is required when you already hold shares.",
-    chooseValidRiskStyle: "Choose a valid risk style.",
-    chooseValidAnalysisInterval: "Choose a valid analysis interval.",
-    chooseValidTotalRounds: "Choose a valid total rounds option.",
-    validationFailedChart: "Validation failed because the current tab does not look like a stock chart.",
-    notifyChartNotDetectedTitle: "Stock chart not detected",
-    notifyChartNotDetectedBody: "Monitoring stopped because the current tab is not recognized as a stock chart.",
-    validationFailedCapture: "Validation failed because the tab could not be captured.",
-    notifyCaptureFailed: "Capture failed",
-    fillFormFirst: "Fill in the trading settings form before starting monitoring.",
-    monitoringStoppedChart: "Monitoring stopped because the current tab is no longer recognized as a stock chart.",
-    notifyMonitoringStopped: "Monitoring stopped",
-    notifyMonitoringPaused: "Monitoring paused",
-    notifyCurrentTabNotChart: "The current tab is no longer recognized as a stock chart.",
-    monitoringStoppedAnalyze: "This round failed, so monitoring has been paused.",
-    stoppedByUser: "Monitoring paused by the user.",
-    noPreviousSession: "No previous monitoring session is available yet."
-  };
-  const zh = {
-    noActiveTab: "没有找到当前活动标签页。请先切到图表页再试。",
-    untitledTab: "未命名标签页",
-    saveApiKeyFirst: "开始监控前请先保存 OpenAI 密钥。",
-    mustBeNumber: "{label} 必须是数字。",
-    currentSharesLabel: "当前持股数",
-    averageCostLabel: "平均成本",
-    availableCashLabel: "可用资金",
-    currentSharesMin: "当前持股数必须大于或等于 0。",
-    averageCostMin: "平均成本必须大于 0。",
-    availableCashMin: "可用资金必须大于或等于 0。",
-    averageCostRequired: "如果你已经持有股票，就必须填写平均成本。",
-    chooseValidRiskStyle: "请选择有效的风险偏好。",
-    chooseValidAnalysisInterval: "请选择有效的分析间隔。",
-    chooseValidTotalRounds: "请选择有效的分析轮数。",
-    validationFailedChart: "校验失败，因为当前标签页看起来不像股票图。",
-    notifyChartNotDetectedTitle: "未识别到股票图表",
-    notifyChartNotDetectedBody: "监控已停止，因为当前标签页未被识别为股票图表。",
-    validationFailedCapture: "校验失败，因为当前标签页无法被截图。",
-    notifyCaptureFailed: "截图失败",
-    fillFormFirst: "开始监控前请先填写交易设置表单。",
-    monitoringStoppedChart: "监控已停止，因为当前标签页不再被识别为股票图表。",
-    notifyMonitoringStopped: "监控已停止",
-    notifyMonitoringPaused: "监控已暂停",
-    notifyCurrentTabNotChart: "当前标签页不再被识别为股票图表。",
-    monitoringStoppedAnalyze: "这一轮分析失败，监控已暂停。",
-    stoppedByUser: "监控已由用户手动暂停。",
-    noPreviousSession: "目前还没有可继续的历史监控会话。"
-  };
-
-  const locale = language === "zh" ? zh : en;  const template = locale[key] || en[key] || key;
-  return template.replace(/\{(\w+)\}/g, (_, name) => `${vars[name] ?? ""}`);
-}
 
 function scheduleMonitoringAlarm(intervalMinutes = DEFAULT_ANALYSIS_INTERVAL) {
   chrome.alarms.create(ALARM_NAME, {
@@ -343,7 +266,7 @@ async function getActiveTab(windowId = null) {
   const [tab] = await chrome.tabs.query(query);
 
   if (!tab?.windowId) {
-    throw new Error(bgText(language, "noActiveTab"));
+    throw new Error(t(language, "noActiveTab"));
   }
 
   return tab;
@@ -358,7 +281,7 @@ async function captureActiveTab(windowId = null) {
   return {
     tabId: tab.id ?? null,
     windowId: tab.windowId,
-    pageTitle: tab.title || bgText(await getUiLanguage(), "untitledTab"),
+    pageTitle: tab.title || t(await getUiLanguage(), "untitledTab"),
     pageUrl: tab.url || "",
     imageDataUrl
   };
@@ -385,35 +308,6 @@ function bindMonitoringProfileToTab(monitoringProfile, tab) {
   };
 }
 
-function getPauseReason(language) {
-  return language === "zh"
-    ? "监控已暂停，因为你离开了最初启动监控的图表标签页。回到原始图表页后即可继续。"
-    : "Monitoring paused because you left the original chart tab. Return to that tab to continue.";
-}
-
-function getClosedTabReason(language) {
-  return language === "zh"
-    ? "监控已停止，因为最初绑定的图表标签页已经被关闭。"
-    : "Monitoring stopped because the original chart tab was closed.";
-}
-
-function getUserPauseReason(language) {
-  return language === "zh"
-    ? "监控已由用户手动暂停。"
-    : "Monitoring paused by the user.";
-}
-
-function getResumeTabMismatchReason(language) {
-  return language === "zh"
-    ? "继续监控前，请先回到最初启动监控的图表标签页。"
-    : "Return to the original chart tab before continuing monitoring.";
-}
-
-function getResumeTabMissingReason(language) {
-  return language === "zh"
-    ? "最初绑定的图表标签页已不存在。请回到图表页重新开始。"
-    : "The original chart tab is no longer available. Start again from the chart tab.";
-}
 
 async function getTabById(tabId) {
   if (!tabId) {
@@ -462,98 +356,24 @@ async function ensureMonitoringTabActive(monitoringProfile, language) {
   const boundTab = await getTabById(monitoringProfile?.boundTabId);
 
   if (!boundTab) {
-    throw new Error(getResumeTabMissingReason(language));
+    throw new Error(t(language, "resumeTabMissing"));
   }
 
   const activeTab = await getActiveTab(monitoringProfile?.boundWindowId || null);
 
   if (activeTab.id !== boundTab.id) {
-    throw new Error(getResumeTabMismatchReason(language));
+    throw new Error(t(language, "resumeTabMismatch"));
   }
 
   return boundTab;
-}
-
-function shouldEnableSidePanelForTab(state, tabId, validation) {
-  if (!validation.isStockChart) {
-    return false;
-  }
-
-  if (state.status === STATUS.AWAITING_CONTEXT) {
-    return state.lastValidation?.tabId === tabId;
-  }
-
-  if (state.status === STATUS.RUNNING || state.status === STATUS.PAUSED) {
-    const monitoringProfile = state.monitoringProfile || state.lastMonitoringProfile;
-    return monitoringProfile?.boundTabId === tabId;
-  }
-
-  return false;
-}
-
-async function setSidePanelAvailabilityForTab(tabId, tab = null) {
-  if (!tabId) {
-    return false;
-  }
-
-  const language = await getUiLanguage();
-  const state = await getState();
-  const targetTab = tab || await chrome.tabs.get(tabId).catch(() => null);
-
-  if (!targetTab) {
-    return false;
-  }
-
-  const validation = validateStockChartByKeywordsWithLanguage({
-    pageTitle: targetTab.title || "",
-    pageUrl: targetTab.url || "",
-    language
-  });
-
-  if (shouldEnableSidePanelForTab(state, tabId, validation)) {
-    await chrome.sidePanel.setOptions({
-      tabId,
-      path: SIDEPANEL_PATH,
-      enabled: true
-    });
-
-    return true;
-  }
-
-  await chrome.sidePanel.setOptions({
-    tabId,
-    enabled: false
-  });
-
-  if (targetTab.windowId) {
-    await chrome.sidePanel.close({
-      windowId: targetTab.windowId
-    }).catch(() => {});
-  }
-
-  return false;
 }
 
 async function ensureApiKeyConfigured() {
   const settings = await getSettings();
 
   if (!settings.openaiApiKey) {
-    throw new Error(bgText(getLanguage(settings.language), "saveApiKeyFirst"));
+    throw new Error(t(getLanguage(settings.language), "saveApiKeyFirst"));
   }
-}
-
-function normalizeDecimal(value, label, language) {
-  const parsed = Number(value);
-
-  if (!Number.isFinite(parsed)) {
-    throw new Error(bgText(language, "mustBeNumber", { label }));
-  }
-
-  return Number(parsed.toFixed(4));
-}
-
-function normalizeRiskStyleValue(value) {
-  return VALID_RISK_STYLES.has(value) ? value : "conservative";
 }
 
 function getAnalysisIntervalMinutes(rule) {
@@ -573,24 +393,15 @@ function normalizeTotalRounds(rule) {
 }
 
 function normalizeMonitoringProfileRules(monitoringProfile) {
-  const normalizedProfile = monitoringProfile
-    ? {
-        ...monitoringProfile,
-        rules: {
-          buyRiskStyle: normalizeRiskStyleValue(`${monitoringProfile.rules?.buyRiskStyle || "conservative"}`.trim()),
-          sellRiskStyle: normalizeRiskStyleValue(`${monitoringProfile.rules?.sellRiskStyle || "conservative"}`.trim()),
-          analysisInterval: normalizeAnalysisInterval(monitoringProfile.rules?.analysisInterval),
-          totalRounds: normalizeTotalRounds(monitoringProfile.rules?.totalRounds)
-        }
-      }
-    : null;
+  if (!monitoringProfile) {
+    return null;
+  }
 
   return {
-    ...normalizedProfile,
+    ...monitoringProfile,
     rules: {
-      ...normalizedProfile?.rules,
-      analysisInterval: normalizeAnalysisInterval(normalizedProfile?.rules?.analysisInterval),
-      totalRounds: normalizeTotalRounds(normalizedProfile?.rules?.totalRounds)
+      analysisInterval: normalizeAnalysisInterval(monitoringProfile.rules?.analysisInterval),
+      totalRounds: normalizeTotalRounds(monitoringProfile.rules?.totalRounds)
     }
   };
 }
@@ -604,69 +415,32 @@ function getTotalRoundsLabel(language, rule) {
 }
 
 function getCompletedRoundsReason(language, totalRounds) {
-  const roundsLabel = getTotalRoundsLabel(language, totalRounds);
-
-  return language === "zh"
-    ? `监控已完成 ${roundsLabel}，并自动暂停。`
-    : `Monitoring completed ${roundsLabel} and has been paused automatically.`;
+  return t(language, "completedRounds", { rounds: getTotalRoundsLabel(language, totalRounds) });
 }
 
 async function buildMonitoringProfile(payload) {
   const language = await getUiLanguage();
-  const currentShares = normalizeDecimal(payload.currentShares, bgText(language, "currentSharesLabel"), language);
+  const symbolOverride = `${payload.symbolOverride || ""}`.trim().toUpperCase().slice(0, 10) || null;
 
-  if (currentShares < 0) {
-    throw new Error(bgText(language, "currentSharesMin"));
-  }
-
-  const averageCost = payload.averageCost === "" || payload.averageCost === null || payload.averageCost === undefined
-    ? null
-    : normalizeDecimal(payload.averageCost, bgText(language, "averageCostLabel"), language);
-
-  if (averageCost !== null && averageCost <= 0) {
-    throw new Error(bgText(language, "averageCostMin"));
-  }
-
-  if (currentShares > 0 && averageCost === null) {
-    throw new Error(bgText(language, "averageCostRequired"));
-  }
-
-  const availableCash = normalizeDecimal(payload.availableCash, bgText(language, "availableCashLabel"), language);
-
-  if (availableCash < 0) {
-    throw new Error(bgText(language, "availableCashMin"));
-  }
-
-  const buyRiskStyle = `${payload.buyRiskStyle || ""}`.trim();
-  const sellRiskStyle = `${payload.sellRiskStyle || ""}`.trim();
-
-  if (!VALID_RISK_STYLES.has(buyRiskStyle) || !VALID_RISK_STYLES.has(sellRiskStyle)) {
-    throw new Error(bgText(language, "chooseValidRiskStyle"));
+  if (!symbolOverride) {
+    throw new Error(t(language, "symbolRequired"));
   }
 
   const analysisInterval = `${payload.analysisInterval || "5m"}`.trim();
 
   if (!VALID_ANALYSIS_INTERVALS.has(analysisInterval)) {
-    throw new Error(bgText(language, "chooseValidAnalysisInterval"));
+    throw new Error(t(language, "chooseValidAnalysisInterval"));
   }
 
   const totalRounds = `${payload.totalRounds || `${DEFAULT_TOTAL_ROUNDS}`}`.trim();
 
   if (!VALID_TOTAL_ROUNDS.has(totalRounds)) {
-    throw new Error(bgText(language, "chooseValidTotalRounds"));
+    throw new Error(t(language, "chooseValidTotalRounds"));
   }
 
   return {
-    positionContext: {
-      currentShares,
-      averageCost: currentShares > 0 ? averageCost : null
-    },
-    capitalContext: {
-      availableCash
-    },
+    symbolOverride,
     rules: {
-      buyRiskStyle,
-      sellRiskStyle,
       analysisInterval,
       totalRounds
     }
@@ -737,7 +511,7 @@ async function runValidationPreflight() {
       const state = await saveState({
         ...createDefaultState(),
         lastValidation: validationRecord,
-        stopReason: bgText(language, "validationFailedChart")
+        stopReason: t(language, "validationFailedChart")
       });
 
       if (capture.tabId) {
@@ -749,7 +523,7 @@ async function runValidationPreflight() {
         });
       }
 
-      await notifyUser(bgText(language, "notifyChartNotDetectedTitle"), bgText(language, "notifyChartNotDetectedBody"));
+      await notifyUser(t(language, "notifyChartNotDetectedTitle"), t(language, "notifyChartNotDetectedBody"));
 
       return {
         ok: false,
@@ -780,10 +554,10 @@ async function runValidationPreflight() {
     const state = await saveState({
       ...createDefaultState(),
       lastError: error.message,
-      stopReason: bgText(language, "validationFailedCapture")
+      stopReason: t(language, "validationFailedCapture")
     });
 
-    await notifyUser(bgText(language, "notifyCaptureFailed"), error.message);
+    await notifyUser(t(language, "notifyCaptureFailed"), error.message);
 
     return {
       ok: false,
@@ -799,22 +573,36 @@ async function runMonitoringRound() {
   const monitoringProfile = currentState.monitoringProfile;
 
   if (!monitoringProfile) {
-    throw new Error(bgText(language, "fillFormFirst"));
+    throw new Error(t(language, "fillFormFirst"));
   }
 
   if (monitoringProfile.boundTabId) {
     const activeTab = await getActiveTab(monitoringProfile.boundWindowId || null).catch(() => null);
 
     if (!activeTab || activeTab.id !== monitoringProfile.boundTabId) {
-      const state = await pauseMonitoring(getPauseReason(language), currentState);
+      const state = await pauseMonitoring(t(language, "pauseLeftTab"), currentState);
       return { ok: false, state };
     }
+  }
+
+  const settings = await getSettings();
+  if (settings.marketHoursOnly && !isWithinUsMarketHours()) {
+    await patchState({
+      ...currentState,
+      status: STATUS.RUNNING,
+      isRoundInFlight: false,
+      stopReason: t(language, "marketClosedSkip"),
+      lastError: null
+    });
+
+    return { ok: true, skipped: "market-closed" };
   }
 
   await patchState({
     ...currentState,
     status: STATUS.RUNNING,
     isRoundInFlight: true,
+    roundStartedAt: new Date().toISOString(),
     stopReason: null,
     lastError: null
   });
@@ -834,12 +622,12 @@ async function runMonitoringRound() {
         monitoringProfile: null,
         lastMonitoringProfile: monitoringProfile,
         lastValidation: validationRecord,
-        stopReason: bgText(language, "monitoringStoppedChart"),
+        stopReason: t(language, "monitoringStoppedChart"),
         lastError: null
       });
 
       await clearMonitoringAlarm();
-      await notifyUser(bgText(language, "notifyMonitoringStopped"), bgText(language, "notifyCurrentTabNotChart"));
+      await notifyUser(t(language, "notifyMonitoringStopped"), t(language, "notifyCurrentTabNotChart"));
 
       return {
         ok: false,
@@ -849,9 +637,7 @@ async function runMonitoringRound() {
 
     const analysis = await analyzeChartCapture({
       ...capture,
-      positionContext: monitoringProfile.positionContext,
-      capitalContext: monitoringProfile.capitalContext,
-      rules: monitoringProfile.rules
+      symbolHint: monitoringProfile.symbolOverride || null
     });
 
     const round = currentState.roundCount + 1;
@@ -880,7 +666,12 @@ async function runMonitoringRound() {
       lastError: null
     });
 
-    await notifyDiscordAnalysisResult(result, state, language);
+    const previousAction = currentState.lastResult?.analysis?.action ?? null;
+    const actionChanged = previousAction !== analysis.action;
+
+    if (actionChanged) {
+      await notifyDiscordAnalysisResult(result, state, language);
+    }
     await playResultSound();
 
     const totalRounds = getTotalRoundsValue(monitoringProfile.rules?.totalRounds);
@@ -905,12 +696,12 @@ async function runMonitoringRound() {
     };
   } catch (error) {
     const state = await pauseMonitoring(
-      bgText(language, "monitoringStoppedAnalyze"),
+      t(language, "monitoringStoppedAnalyze"),
       currentState,
       error.message
     );
 
-    await notifyUser(bgText(language, "notifyMonitoringPaused"), error.message);
+    await notifyUser(t(language, "notifyMonitoringPaused"), error.message);
 
     return {
       ok: false,
@@ -940,13 +731,13 @@ async function startMonitoring(payload) {
     lastError: null
   });
 
-  const roundResult = await runMonitoringRound();
-
-  if (!roundResult.ok) {
-    return roundResult;
-  }
+  await enableSidePanelForWindow(monitoringProfile.boundWindowId);
 
   scheduleMonitoringAlarm(getAnalysisIntervalMinutes(monitoringProfile.rules?.analysisInterval));
+
+  // Kick off the first round without blocking the message response.
+  // runMonitoringRound is self-contained (catches errors → pauseMonitoring).
+  void runMonitoringRound();
 
   return {
     ok: true,
@@ -959,7 +750,7 @@ function getResumeSession(state) {
   const monitoringProfile = state.monitoringProfile || state.lastMonitoringProfile;
 
   if (!monitoringProfile) {
-    throw new Error(bgText(language, "noPreviousSession"));
+    throw new Error(t(language, "noPreviousSession"));
   }
 
   return { monitoringProfile };
@@ -987,13 +778,11 @@ async function continueMonitoring() {
     lastError: null
   });
 
-  const roundResult = await runMonitoringRound();
-
-  if (!roundResult.ok) {
-    return roundResult;
-  }
+  await enableSidePanelForWindow(monitoringProfile.boundWindowId);
 
   scheduleMonitoringAlarm(getAnalysisIntervalMinutes(monitoringProfile.rules?.analysisInterval));
+
+  void runMonitoringRound();
 
   return {
     ok: true,
@@ -1023,13 +812,11 @@ async function restartMonitoring() {
     lastMonitoringProfile: monitoringProfile
   });
 
-  const roundResult = await runMonitoringRound();
-
-  if (!roundResult.ok) {
-    return roundResult;
-  }
+  await enableSidePanelForWindow(monitoringProfile.boundWindowId);
 
   scheduleMonitoringAlarm(getAnalysisIntervalMinutes(monitoringProfile.rules?.analysisInterval));
+
+  void runMonitoringRound();
 
   return {
     ok: true,
@@ -1041,12 +828,38 @@ chrome.runtime.onInstalled.addListener(async () => {
   await saveState(createDefaultState());
 });
 
+async function recoverMonitoringAfterStartup() {
+  const state = await getState();
+
+  if (state.status !== STATUS.RUNNING || !state.monitoringProfile) {
+    return;
+  }
+
+  const boundTab = await getTabById(state.monitoringProfile.boundTabId);
+
+  if (!boundTab) {
+    await stopMonitoring(t(await getUiLanguage(), "closedTab"));
+    return;
+  }
+
+  // Stale in-flight flag from a service-worker eviction during the last round.
+  if (state.isRoundInFlight) {
+    await patchState({ isRoundInFlight: false });
+  }
+
+  await clearMonitoringAlarm();
+  scheduleMonitoringAlarm(getAnalysisIntervalMinutes(state.monitoringProfile.rules?.analysisInterval));
+  await enableSidePanelForWindow(state.monitoringProfile.boundWindowId);
+}
+
 chrome.runtime.onStartup.addListener(async () => {
   const state = await getState();
 
   if (!state.updatedAt) {
     await saveState(createDefaultState());
   }
+
+  await recoverMonitoringAfterStartup();
 
   const [activeTab] = await chrome.tabs.query({
     active: true,
@@ -1070,28 +883,23 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     return;
   }
 
+  // Avoid re-entering a round while the previous one is still in flight.
+  // Guard against a stale flag (e.g. service worker was evicted mid-round):
+  // treat as stale after 3 minutes and proceed with a fresh round.
+  if (state.isRoundInFlight) {
+    const startedAt = state.roundStartedAt ? Date.parse(state.roundStartedAt) : 0;
+    const ageMs = Date.now() - startedAt;
+    if (Number.isFinite(ageMs) && ageMs < 3 * 60 * 1000) {
+      return;
+    }
+    await patchState({ isRoundInFlight: false });
+  }
+
   await runMonitoringRound();
 });
 
 chrome.tabs.onActivated.addListener(async ({ tabId }) => {
   await setSidePanelAvailabilityForTab(tabId);
-
-  const state = await getState();
-  const monitoringProfile = state.monitoringProfile || state.lastMonitoringProfile;
-
-  if (state.status !== STATUS.RUNNING || !monitoringProfile?.boundTabId) {
-    return;
-  }
-
-  const activatedTab = await getTabById(tabId);
-
-  if (!activatedTab) {
-    return;
-  }
-
-  if (activatedTab.windowId === monitoringProfile.boundWindowId && tabId !== monitoringProfile.boundTabId) {
-    await pauseMonitoring(getPauseReason(await getUiLanguage()), state);
-  }
 });
 
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
@@ -1111,7 +919,7 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
   }
 
   if (state.status === STATUS.RUNNING || state.status === STATUS.PAUSED) {
-    await stopMonitoring(getClosedTabReason(await getUiLanguage()));
+    await stopMonitoring(t(await getUiLanguage(), "closedTab"));
   }
 });
 
@@ -1142,7 +950,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const language = await getUiLanguage();
       sendResponse({
         ok: true,
-        state: await pauseMonitoring(getUserPauseReason(language))
+        state: await pauseMonitoring(t(language, "stoppedByUser"))
       });
       return;
     }
