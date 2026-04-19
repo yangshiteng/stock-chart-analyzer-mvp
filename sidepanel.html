@@ -74,6 +74,35 @@
         </form>
       </section>
 
+      <section id="positionSection" class="card hidden">
+        <h2 id="positionSectionHeaderTitle">Virtual Position</h2>
+        <p id="positionSectionHeaderCopy" class="form-section-copy">Tracking your open long trade for this session.</p>
+        <div id="positionSummary" class="position-summary"></div>
+        <div id="positionActions" class="position-actions hidden">
+          <label class="field">
+            <span id="exitPriceLabel">Exit Price</span>
+            <input id="exitPriceInput" type="number" step="0.01" min="0" placeholder="182.45">
+          </label>
+          <div class="form-actions">
+            <button id="markSoldButton" class="mode-button sell-button" type="button">Mark sold at this price</button>
+          </div>
+          <p id="positionError" class="form-error hidden"></p>
+        </div>
+      </section>
+
+      <section id="markBoughtSection" class="card hidden">
+        <h2 id="markBoughtTitle">Mark Entry</h2>
+        <p id="markBoughtCopy" class="form-section-copy">You followed a BUY signal. Record the price you filled at.</p>
+        <label class="field">
+          <span id="entryPriceLabel">Entry Price</span>
+          <input id="entryPriceInput" type="number" step="0.01" min="0" placeholder="180.50">
+        </label>
+        <div class="form-actions">
+          <button id="markBoughtButton" class="mode-button buy-button" type="button">Mark bought at this price</button>
+        </div>
+        <p id="markBoughtError" class="form-error hidden"></p>
+      </section>
+
       <section class="card">
         <h2 id="recommendationTitle">Latest Recommendation</h2>
         <div id="analysisCard" class="analysis-card empty-analysis">
