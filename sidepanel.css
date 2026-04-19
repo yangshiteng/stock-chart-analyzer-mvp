@@ -643,6 +643,15 @@ h2 {
 .journal-item[data-tone="loss"] {
   border-left-color: #b64a3a;
 }
+.journal-item[data-tone="abandoned"] {
+  border-left-color: #8a8a8a;
+  opacity: 0.75;
+}
+.journal-pnl.abandoned {
+  color: #666;
+  font-size: 0.75rem;
+  letter-spacing: 0.05em;
+}
 .journal-headline {
   display: flex;
   gap: 10px;

@@ -11,7 +11,7 @@
 import { validateStockChartByKeywordsWithLanguage } from "./lib/chart-validator.js";
 import { getLanguage, t } from "./lib/i18n.js";
 import { analyzeChartCapture, generateTradeLesson } from "./lib/llm.js";
-import { isNearUsMarketClose, isWithinUsMarketHours } from "./lib/market-hours.js";
+import { getUsTradingDay, isNearUsMarketClose, isWithinUsMarketHours } from "./lib/market-hours.js";
 import {
   SIDEPANEL_PATH,
   enableSidePanelForWindow,
@@ -489,9 +489,11 @@ async function markBought(payload) {
   }
 
   const suggestion = currentState.lastResult?.analysis || {};
+  const now = new Date();
   const virtualPosition = {
     entryPrice: entryPriceRaw,
-    entryTime: new Date().toISOString(),
+    entryTime: now.toISOString(),
+    tradingDay: getUsTradingDay(now),
     stopLossPrice: suggestion.stopLossPrice || null,
     targetPrice: suggestion.targetPrice || null,
     reason: suggestion.reasoning || suggestion.triggerCondition || null,
@@ -668,6 +670,7 @@ async function runValidationPreflight() {
 
 async function runMonitoringRound() {
   const language = await getUiLanguage();
+  await abandonStaleVirtualPositionIfNeeded();
   const currentState = await getState();
   const monitoringProfile = currentState.monitoringProfile;
 
@@ -948,6 +951,42 @@ chrome.runtime.onInstalled.addListener(async () => {
   await saveState(createDefaultState());
 });
 
+// Day-trading rule: positions never carry overnight. If the service worker
+// resumes on a different US trading day than when the position was opened
+// (user lost power / closed laptop / Chrome crashed), abandon it and log a
+// placeholder trade so the user can see what happened.
+async function abandonStaleVirtualPositionIfNeeded() {
+  const state = await getState();
+  const position = state.virtualPosition;
+  if (!position) return;
+
+  const today = getUsTradingDay();
+  const positionDay = position.tradingDay
+    || (position.entryTime ? getUsTradingDay(new Date(position.entryTime)) : null);
+  if (!positionDay || positionDay === today) return;
+
+  const language = await getUiLanguage();
+  const trade = {
+    id: createId(),
+    symbol: position.symbol || null,
+    entryPrice: position.entryPrice,
+    entryTime: position.entryTime,
+    exitPrice: null,
+    exitTime: new Date().toISOString(),
+    pnlPercent: null,
+    reason: position.reason || null,
+    plannedStopLoss: position.stopLossPrice || null,
+    plannedTarget: position.targetPrice || null,
+    heldMinutes: null,
+    lesson: null,
+    status: "abandoned",
+    abandonReason: "overnight_gap"
+  };
+  const tradeHistory = [trade, ...(state.tradeHistory || [])].slice(0, MAX_RESULTS);
+  await patchState({ virtualPosition: null, tradeHistory });
+  await pauseMonitoring(t(language, "sessionAbandonedOvernight"));
+}
+
 async function recoverMonitoringAfterStartup() {
   const state = await getState();
 
@@ -979,6 +1018,7 @@ chrome.runtime.onStartup.addListener(async () => {
     await saveState(createDefaultState());
   }
 
+  await abandonStaleVirtualPositionIfNeeded();
   await recoverMonitoringAfterStartup();
 
   const [activeTab] = await chrome.tabs.query({

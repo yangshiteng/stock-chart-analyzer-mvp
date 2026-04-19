@@ -254,14 +254,21 @@ function renderTradeJournal(state, language) {
   }
 
   const items = history.slice(0, 10).map((trade) => {
-    const tone = Number.isFinite(trade.pnlPercent) && trade.pnlPercent >= 0 ? "win" : "loss";
-    const pnl = formatPnlLabel(trade.pnlPercent);
+    const isAbandoned = trade.status === "abandoned";
+    const tone = isAbandoned
+      ? "abandoned"
+      : (Number.isFinite(trade.pnlPercent) && trade.pnlPercent >= 0 ? "win" : "loss");
+    const pnl = isAbandoned
+      ? t(language, "tradeAbandonedBadge")
+      : formatPnlLabel(trade.pnlPercent);
     const symbol = trade.symbol || "?";
     const entry = trade.entryPrice || "?";
     const exit = trade.exitPrice || "?";
-    const lesson = trade.lesson && trade.lesson.trim()
-      ? escapeHtml(trade.lesson)
-      : `<em>${escapeHtml(t(language, "lessonPending"))}</em>`;
+    const lesson = isAbandoned
+      ? `<em>${escapeHtml(t(language, "tradeAbandonedLesson"))}</em>`
+      : (trade.lesson && trade.lesson.trim()
+          ? escapeHtml(trade.lesson)
+          : `<em>${escapeHtml(t(language, "lessonPending"))}</em>`);
     const held = Number.isFinite(trade.heldMinutes) ? `${trade.heldMinutes}m` : "—";
     return `<li class="journal-item" data-tone="${tone}">
       <div class="journal-headline">
