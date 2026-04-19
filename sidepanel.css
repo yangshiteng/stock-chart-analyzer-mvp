@@ -620,6 +620,57 @@ h2 {
   color: #e37867;
 }
 
+.trade-journal-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 10px;
+}
+.journal-item {
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-left: 3px solid #4f718c;
+  border-radius: 6px;
+  font-size: 13px;
+  display: grid;
+  gap: 4px;
+}
+.journal-item[data-tone="win"] {
+  border-left-color: #1f8f4e;
+}
+.journal-item[data-tone="loss"] {
+  border-left-color: #b64a3a;
+}
+.journal-headline {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  font-weight: 600;
+}
+.journal-symbol {
+  font-variant-numeric: tabular-nums;
+}
+.journal-pnl.win { color: #4ecb82; }
+.journal-pnl.loss { color: #e37867; }
+.journal-held {
+  color: var(--muted);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  margin-left: auto;
+}
+.journal-prices {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+}
+.journal-lesson {
+  margin: 2px 0 0;
+  color: inherit;
+  line-height: 1.4;
+}
+
 .position-summary {
   display: grid;
   gap: 6px;

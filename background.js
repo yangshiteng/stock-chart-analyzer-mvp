@@ -10,7 +10,7 @@
 } from "./lib/constants.js";
 import { validateStockChartByKeywordsWithLanguage } from "./lib/chart-validator.js";
 import { getLanguage, t } from "./lib/i18n.js";
-import { analyzeChartCapture } from "./lib/llm.js";
+import { analyzeChartCapture, generateTradeLesson } from "./lib/llm.js";
 import { isNearUsMarketClose, isWithinUsMarketHours } from "./lib/market-hours.js";
 import {
   SIDEPANEL_PATH,
@@ -522,14 +522,26 @@ async function markSold(payload) {
     ? ((exitPrice - entryPriceNum) / entryPriceNum) * 100
     : null;
 
+  const exitTime = new Date();
+  const entryTimeMs = position.entryTime ? Date.parse(position.entryTime) : NaN;
+  const heldMinutes = Number.isFinite(entryTimeMs)
+    ? Math.max(0, Math.round((exitTime.getTime() - entryTimeMs) / 60000))
+    : null;
+
+  const tradeId = createId();
   const trade = {
+    id: tradeId,
     symbol: position.symbol || null,
     entryPrice: position.entryPrice,
     entryTime: position.entryTime,
     exitPrice: exitPriceRaw,
-    exitTime: new Date().toISOString(),
+    exitTime: exitTime.toISOString(),
     pnlPercent: pnlPercent === null ? null : Number(pnlPercent.toFixed(4)),
-    reason: position.reason || null
+    reason: position.reason || null,
+    plannedStopLoss: position.stopLossPrice || null,
+    plannedTarget: position.targetPrice || null,
+    heldMinutes,
+    lesson: null
   };
 
   const tradeHistory = [trade, ...(currentState.tradeHistory || [])].slice(0, MAX_RESULTS);
@@ -540,6 +552,22 @@ async function markSold(payload) {
   });
 
   const state = await pauseMonitoring(t(language, "sessionClosedAfterSell"));
+
+  // Fire-and-forget lesson generation. A failure here must NOT break the flow.
+  void (async () => {
+    try {
+      const lesson = await generateTradeLesson(trade);
+      if (!lesson) return;
+      const latest = await getState();
+      const updatedHistory = (latest.tradeHistory || []).map((t) =>
+        t.id === tradeId ? { ...t, lesson } : t
+      );
+      await patchState({ tradeHistory: updatedHistory });
+    } catch (error) {
+      console.warn("Trade lesson generation failed:", error);
+    }
+  })();
+
   return { ok: true, state };
 }
 
@@ -712,11 +740,24 @@ async function runMonitoringRound() {
       ? (nearClose ? "force_exit" : "exit")
       : "entry";
 
+    const recentLessons = mode === "entry"
+      ? (currentState.tradeHistory || [])
+          .filter((t) => t && typeof t.lesson === "string" && t.lesson.trim())
+          .slice(0, 10)
+          .map((t) => ({
+            symbol: t.symbol,
+            pnlPercent: t.pnlPercent,
+            exitTime: t.exitTime,
+            lesson: t.lesson
+          }))
+      : null;
+
     const analysis = await analyzeChartCapture({
       ...capture,
       symbolHint: monitoringProfile.symbolOverride || null,
       mode,
-      virtualPosition
+      virtualPosition,
+      recentLessons
     });
 
     const round = currentState.roundCount + 1;
