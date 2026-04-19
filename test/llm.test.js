@@ -116,6 +116,64 @@ test("buildAnalysisPromptFromConfig: Chinese LANGUAGE_OUTPUT section", () => {
   assert.match(prompt, /Simplified Chinese/);
 });
 
+test("buildAnalysisPromptFromConfig: entry mode injects RECENT_LESSONS when provided", () => {
+  const prompt = buildAnalysisPromptFromConfig(
+    getAnalysisPromptConfig(),
+    {
+      ...samplePayload,
+      mode: "entry",
+      recentLessons: [
+        { symbol: "AAPL", pnlPercent: -0.75, exitTime: "2026-04-18T20:00:00Z", lesson: "Did not wait for volume confirmation on breakout." },
+        { symbol: "TSLA", pnlPercent: 1.2, exitTime: "2026-04-17T20:30:00Z", lesson: "EMA20 bounce with clean stop worked." }
+      ]
+    },
+    "en"
+  );
+  assert.match(prompt, /\[RECENT_LESSONS\]/);
+  assert.match(prompt, /AAPL -0\.75%/);
+  assert.match(prompt, /TSLA \+1\.20%/);
+  assert.match(prompt, /volume confirmation/);
+});
+
+test("buildAnalysisPromptFromConfig: RECENT_LESSONS omitted in exit mode", () => {
+  const prompt = buildAnalysisPromptFromConfig(
+    getAnalysisPromptConfig(),
+    {
+      ...samplePayload,
+      mode: "exit",
+      virtualPosition: { entryPrice: "180" },
+      recentLessons: [{ symbol: "AAPL", pnlPercent: 1, exitTime: "2026-04-18T20:00:00Z", lesson: "x" }]
+    },
+    "en"
+  );
+  assert.ok(!/\[RECENT_LESSONS\]/.test(prompt));
+});
+
+test("buildAnalysisPromptFromConfig: RECENT_LESSONS omitted when list is empty", () => {
+  const prompt = buildAnalysisPromptFromConfig(
+    getAnalysisPromptConfig(),
+    { ...samplePayload, mode: "entry", recentLessons: [] },
+    "en"
+  );
+  assert.ok(!/\[RECENT_LESSONS\]/.test(prompt));
+});
+
+test("buildAnalysisPromptFromConfig: RECENT_LESSONS skips entries with empty lesson", () => {
+  const prompt = buildAnalysisPromptFromConfig(
+    getAnalysisPromptConfig(),
+    {
+      ...samplePayload,
+      mode: "entry",
+      recentLessons: [
+        { symbol: "AAPL", pnlPercent: 0.5, lesson: "" },
+        { symbol: "TSLA", pnlPercent: 1, lesson: "   " }
+      ]
+    },
+    "en"
+  );
+  assert.ok(!/\[RECENT_LESSONS\]/.test(prompt));
+});
+
 test("buildAnalysisPromptFromConfig: sanitizes URL (strips query)", () => {
   const prompt = buildAnalysisPromptFromConfig(getAnalysisPromptConfig(), samplePayload, "en");
   assert.ok(!prompt.includes("key=secret"));

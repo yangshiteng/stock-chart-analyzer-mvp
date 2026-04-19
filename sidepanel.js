@@ -37,6 +37,9 @@ const recommendationTitle = document.getElementById("recommendationTitle");
 const analysisCard = document.getElementById("analysisCard");
 const recentRoundsTitle = document.getElementById("recentRoundsTitle");
 const recentRoundsList = document.getElementById("recentRoundsList");
+const tradeJournalTitle = document.getElementById("tradeJournalTitle");
+const tradeJournalCopy = document.getElementById("tradeJournalCopy");
+const tradeJournalList = document.getElementById("tradeJournalList");
 const positionSection = document.getElementById("positionSection");
 const positionSectionHeaderTitle = document.getElementById("positionSectionHeaderTitle");
 const positionSectionHeaderCopy = document.getElementById("positionSectionHeaderCopy");
@@ -234,6 +237,53 @@ function getPanelSectionCopy(language, section) {
   return labels[section] || "";
 }
 
+function formatPnlLabel(pct) {
+  if (!Number.isFinite(pct)) return "—";
+  const sign = pct >= 0 ? "+" : "";
+  return `${sign}${pct.toFixed(2)}%`;
+}
+
+function renderTradeJournal(state, language) {
+  tradeJournalTitle.textContent = t(language, "tradeJournalTitle");
+  tradeJournalCopy.textContent = t(language, "tradeJournalCopy");
+
+  const history = Array.isArray(state.tradeHistory) ? state.tradeHistory : [];
+  if (history.length === 0) {
+    tradeJournalList.innerHTML = `<li class="empty-state">${escapeHtml(t(language, "noClosedTrades"))}</li>`;
+    return;
+  }
+
+  const items = history.slice(0, 10).map((trade) => {
+    const isAbandoned = trade.status === "abandoned";
+    const tone = isAbandoned
+      ? "abandoned"
+      : (Number.isFinite(trade.pnlPercent) && trade.pnlPercent >= 0 ? "win" : "loss");
+    const pnl = isAbandoned
+      ? t(language, "tradeAbandonedBadge")
+      : formatPnlLabel(trade.pnlPercent);
+    const symbol = trade.symbol || "?";
+    const entry = trade.entryPrice || "?";
+    const exit = trade.exitPrice || "?";
+    const lesson = isAbandoned
+      ? `<em>${escapeHtml(t(language, "tradeAbandonedLesson"))}</em>`
+      : (trade.lesson && trade.lesson.trim()
+          ? escapeHtml(trade.lesson)
+          : `<em>${escapeHtml(t(language, "lessonPending"))}</em>`);
+    const held = Number.isFinite(trade.heldMinutes) ? `${trade.heldMinutes}m` : "—";
+    return `<li class="journal-item" data-tone="${tone}">
+      <div class="journal-headline">
+        <span class="journal-symbol">${escapeHtml(symbol)}</span>
+        <span class="journal-pnl ${tone}">${escapeHtml(pnl)}</span>
+        <span class="journal-held">${escapeHtml(held)}</span>
+      </div>
+      <div class="journal-prices">${escapeHtml(entry)} → ${escapeHtml(exit)}</div>
+      <p class="journal-lesson">${lesson}</p>
+    </li>`;
+  }).join("");
+
+  tradeJournalList.innerHTML = items;
+}
+
 function renderPositionPanels(state, language) {
   const position = state.virtualPosition;
   const lastAction = state.lastResult?.analysis?.action;
@@ -388,6 +438,7 @@ async function render() {
   renderAnalysisCard(state, language);
   renderPositionPanels(state, language);
   renderRecentRounds(state, language);
+  renderTradeJournal(state, language);
   apiSetupSection.classList.toggle("hidden", apiReady);
 
   const hasSavedSession = hasSavedMonitoringSession(state);
