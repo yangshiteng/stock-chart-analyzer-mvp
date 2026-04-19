@@ -37,6 +37,22 @@ const recommendationTitle = document.getElementById("recommendationTitle");
 const analysisCard = document.getElementById("analysisCard");
 const recentRoundsTitle = document.getElementById("recentRoundsTitle");
 const recentRoundsList = document.getElementById("recentRoundsList");
+const positionSection = document.getElementById("positionSection");
+const positionSectionHeaderTitle = document.getElementById("positionSectionHeaderTitle");
+const positionSectionHeaderCopy = document.getElementById("positionSectionHeaderCopy");
+const positionSummary = document.getElementById("positionSummary");
+const positionActions = document.getElementById("positionActions");
+const exitPriceLabelSpan = document.getElementById("exitPriceLabel");
+const exitPriceInput = document.getElementById("exitPriceInput");
+const markSoldButton = document.getElementById("markSoldButton");
+const positionError = document.getElementById("positionError");
+const markBoughtSection = document.getElementById("markBoughtSection");
+const markBoughtTitle = document.getElementById("markBoughtTitle");
+const markBoughtCopy = document.getElementById("markBoughtCopy");
+const entryPriceLabelSpan = document.getElementById("entryPriceLabel");
+const entryPriceInput = document.getElementById("entryPriceInput");
+const markBoughtButton = document.getElementById("markBoughtButton");
+const markBoughtError = document.getElementById("markBoughtError");
 
 let isStartingMonitoring = false;
 
@@ -218,6 +234,47 @@ function getPanelSectionCopy(language, section) {
   return labels[section] || "";
 }
 
+function renderPositionPanels(state, language) {
+  const position = state.virtualPosition;
+  const lastAction = state.lastResult?.analysis?.action;
+  const isRunning = state.status === STATUS.RUNNING;
+
+  positionSectionHeaderTitle.textContent = t(language, "virtualPositionTitle");
+  positionSectionHeaderCopy.textContent = t(language, "virtualPositionCopy");
+  exitPriceLabelSpan.textContent = t(language, "exitPriceLabel");
+  markSoldButton.textContent = t(language, "markSoldButton");
+  markBoughtTitle.textContent = t(language, "markBoughtTitle");
+  markBoughtCopy.textContent = t(language, "markBoughtCopy");
+  entryPriceLabelSpan.textContent = t(language, "entryPriceLabel");
+  markBoughtButton.textContent = t(language, "markBoughtButton");
+
+  if (position) {
+    positionSection.classList.remove("hidden");
+    positionActions.classList.remove("hidden");
+    const nA = t(language, "nA");
+    positionSummary.innerHTML = `
+      <p class="position-line"><strong>${escapeHtml(t(language, "symbolOverride"))}:</strong> ${escapeHtml(position.symbol || nA)}</p>
+      <p class="position-line"><strong>${escapeHtml(t(language, "entryPriceLabel"))}:</strong> ${escapeHtml(position.entryPrice || nA)}</p>
+      <p class="position-line"><strong>${escapeHtml(t(language, "stopLossPriceLabel"))}:</strong> ${escapeHtml(position.stopLossPrice || nA)}</p>
+      <p class="position-line"><strong>${escapeHtml(t(language, "targetPriceLabel"))}:</strong> ${escapeHtml(position.targetPrice || nA)}</p>
+    `;
+    markBoughtSection.classList.add("hidden");
+    return;
+  }
+
+  positionSection.classList.add("hidden");
+
+  const canMarkBought = isRunning && (lastAction === "BUY_NOW" || lastAction === "BUY_LIMIT");
+  markBoughtSection.classList.toggle("hidden", !canMarkBought);
+
+  if (canMarkBought) {
+    const suggested = state.lastResult?.analysis?.entryPrice || "";
+    if (suggested && !entryPriceInput.value) {
+      entryPriceInput.value = suggested;
+    }
+  }
+}
+
 function updateStaticText(language, settings) {
   heroEyebrow.textContent = t(language, "liveAnalysis");
   heroTitle.textContent = t(language, "appTitle");
@@ -329,6 +386,7 @@ async function render() {
   summaryText.textContent = getSummary(state, language);
   apiKeyInput.value = "";
   renderAnalysisCard(state, language);
+  renderPositionPanels(state, language);
   renderRecentRounds(state, language);
   apiSetupSection.classList.toggle("hidden", apiReady);
 
@@ -410,6 +468,58 @@ restartMonitorButton.addEventListener("click", async () => {
     summaryText.textContent = response?.error || t(language, "couldNotRestart");
   }
 
+  await render();
+});
+
+markBoughtButton.addEventListener("click", async () => {
+  const settings = await getSettings();
+  const language = getLanguage(settings.language);
+  markBoughtError.classList.add("hidden");
+  markBoughtError.textContent = "";
+  const entryPrice = entryPriceInput.value.trim();
+  if (!entryPrice || Number(entryPrice) <= 0) {
+    markBoughtError.textContent = t(language, "entryPriceInvalid");
+    markBoughtError.classList.remove("hidden");
+    return;
+  }
+  markBoughtButton.disabled = true;
+  try {
+    const response = await chrome.runtime.sendMessage({ type: "mark-bought", entryPrice });
+    if (!response?.ok) {
+      markBoughtError.textContent = response?.error || t(language, "couldNotMarkBought");
+      markBoughtError.classList.remove("hidden");
+    } else {
+      entryPriceInput.value = "";
+    }
+  } finally {
+    markBoughtButton.disabled = false;
+  }
+  await render();
+});
+
+markSoldButton.addEventListener("click", async () => {
+  const settings = await getSettings();
+  const language = getLanguage(settings.language);
+  positionError.classList.add("hidden");
+  positionError.textContent = "";
+  const exitPrice = exitPriceInput.value.trim();
+  if (!exitPrice || Number(exitPrice) <= 0) {
+    positionError.textContent = t(language, "exitPriceInvalid");
+    positionError.classList.remove("hidden");
+    return;
+  }
+  markSoldButton.disabled = true;
+  try {
+    const response = await chrome.runtime.sendMessage({ type: "mark-sold", exitPrice });
+    if (!response?.ok) {
+      positionError.textContent = response?.error || t(language, "couldNotMarkSold");
+      positionError.classList.remove("hidden");
+    } else {
+      exitPriceInput.value = "";
+    }
+  } finally {
+    markSoldButton.disabled = false;
+  }
   await render();
 });
 

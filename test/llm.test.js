@@ -1,20 +1,41 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ALLOWED_ACTIONS, buildAnalysisPromptFromConfig, getAllowedActions } from "../lib/llm.js";
+import {
+  ALLOWED_ACTIONS,
+  ENTRY_MODE_ACTIONS,
+  EXIT_MODE_ACTIONS,
+  FORCE_EXIT_ACTIONS,
+  buildAnalysisPromptFromConfig,
+  getAllowedActions
+} from "../lib/llm.js";
 import { getAnalysisPromptConfig } from "../lib/prompt-config.js";
 
-test("getAllowedActions: fixed semi-auto enum", () => {
+test("ALLOWED_ACTIONS exported with six entries", () => {
   assert.deepEqual(
-    getAllowedActions().sort(),
-    ["BUY_LIMIT", "BUY_NOW", "SELL_LIMIT", "SELL_NOW", "WAIT"]
+    [...ALLOWED_ACTIONS].sort(),
+    ["BUY_LIMIT", "BUY_NOW", "HOLD", "SELL_LIMIT", "SELL_NOW", "WAIT"]
   );
 });
 
-test("ALLOWED_ACTIONS exported with five entries", () => {
-  assert.deepEqual(
-    [...ALLOWED_ACTIONS].sort(),
-    ["BUY_LIMIT", "BUY_NOW", "SELL_LIMIT", "SELL_NOW", "WAIT"]
-  );
+test("getAllowedActions: entry mode allows only buy + wait", () => {
+  assert.deepEqual(getAllowedActions("entry").sort(), ["BUY_LIMIT", "BUY_NOW", "WAIT"]);
+});
+
+test("getAllowedActions: default is entry", () => {
+  assert.deepEqual(getAllowedActions().sort(), [...ENTRY_MODE_ACTIONS].sort());
+});
+
+test("getAllowedActions: exit mode allows sell + hold, never buy/wait", () => {
+  const actions = getAllowedActions("exit");
+  assert.deepEqual(actions.sort(), ["HOLD", "SELL_LIMIT", "SELL_NOW"]);
+  assert.deepEqual(actions.sort(), [...EXIT_MODE_ACTIONS].sort());
+  assert.ok(!actions.includes("BUY_NOW"));
+  assert.ok(!actions.includes("WAIT"));
+});
+
+test("getAllowedActions: force_exit locks to SELL_NOW only", () => {
+  assert.deepEqual(getAllowedActions("force_exit"), ["SELL_NOW"]);
+  assert.deepEqual(FORCE_EXIT_ACTIONS, ["SELL_NOW"]);
 });
 
 const samplePayload = {
@@ -23,6 +44,52 @@ const samplePayload = {
   symbolHint: "TSLA"
 };
 
+test("buildAnalysisPromptFromConfig: entry mode injects ENTRY_MODE_RULES and SESSION_MODE", () => {
+  const prompt = buildAnalysisPromptFromConfig(getAnalysisPromptConfig(), { ...samplePayload, mode: "entry" }, "en");
+  assert.match(prompt, /\[SESSION_MODE\][\s\S]*ENTRY/);
+  assert.match(prompt, /\[ENTRY_MODE_RULES\]/);
+  assert.ok(!/\[EXIT_MODE_RULES\]/.test(prompt));
+  assert.ok(!/\[FORCE_EXIT_RULES\]/.test(prompt));
+});
+
+test("buildAnalysisPromptFromConfig: exit mode includes virtual position context + EXIT_MODE_RULES", () => {
+  const prompt = buildAnalysisPromptFromConfig(
+    getAnalysisPromptConfig(),
+    {
+      ...samplePayload,
+      mode: "exit",
+      virtualPosition: {
+        entryPrice: "180.50",
+        entryTime: "2026-04-20T13:30:00Z",
+        stopLossPrice: "179.20",
+        targetPrice: "183.00",
+        reason: "breakout continuation"
+      }
+    },
+    "en"
+  );
+  assert.match(prompt, /\[SESSION_MODE\][\s\S]*EXIT/);
+  assert.match(prompt, /\[POSITION_CONTEXT\]/);
+  assert.match(prompt, /180\.50/);
+  assert.match(prompt, /breakout continuation/);
+  assert.match(prompt, /\[EXIT_MODE_RULES\]/);
+  assert.ok(!/\[ENTRY_MODE_RULES\]/.test(prompt));
+});
+
+test("buildAnalysisPromptFromConfig: force_exit includes FORCE_EXIT_RULES", () => {
+  const prompt = buildAnalysisPromptFromConfig(
+    getAnalysisPromptConfig(),
+    {
+      ...samplePayload,
+      mode: "force_exit",
+      virtualPosition: { entryPrice: "180.50" }
+    },
+    "en"
+  );
+  assert.match(prompt, /\[FORCE_EXIT_RULES\]/);
+  assert.match(prompt, /FORCE_EXIT/);
+});
+
 test("buildAnalysisPromptFromConfig: required schema fields present", () => {
   const prompt = buildAnalysisPromptFromConfig(getAnalysisPromptConfig(), samplePayload, "en");
   for (const key of ["entryPrice", "stopLossPrice", "targetPrice", "triggerCondition", "confidence"]) {
@@ -30,14 +97,8 @@ test("buildAnalysisPromptFromConfig: required schema fields present", () => {
   }
 });
 
-test("buildAnalysisPromptFromConfig: includes EXECUTION_RULES section", () => {
+test("buildAnalysisPromptFromConfig: no capital/position-size leakage", () => {
   const prompt = buildAnalysisPromptFromConfig(getAnalysisPromptConfig(), samplePayload, "en");
-  assert.match(prompt, /\[EXECUTION_RULES\]/);
-});
-
-test("buildAnalysisPromptFromConfig: no capital/position context leaked", () => {
-  const prompt = buildAnalysisPromptFromConfig(getAnalysisPromptConfig(), samplePayload, "en");
-  assert.ok(!/USER_CONTEXT/.test(prompt));
   assert.ok(!/availableCash/i.test(prompt));
   assert.ok(!/currentShares/i.test(prompt));
   assert.ok(!/riskStyle/i.test(prompt));

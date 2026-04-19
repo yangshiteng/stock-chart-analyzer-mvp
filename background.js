@@ -11,7 +11,7 @@
 import { validateStockChartByKeywordsWithLanguage } from "./lib/chart-validator.js";
 import { getLanguage, t } from "./lib/i18n.js";
 import { analyzeChartCapture } from "./lib/llm.js";
-import { isWithinUsMarketHours } from "./lib/market-hours.js";
+import { isNearUsMarketClose, isWithinUsMarketHours } from "./lib/market-hours.js";
 import {
   SIDEPANEL_PATH,
   enableSidePanelForWindow,
@@ -472,6 +472,77 @@ async function stopMonitoring(reason = null) {
   return nextState;
 }
 
+async function markBought(payload) {
+  const language = await getUiLanguage();
+  const currentState = await getState();
+  if (currentState.status !== STATUS.RUNNING) {
+    throw new Error(t(language, "markBoughtNotRunning"));
+  }
+  if (currentState.virtualPosition) {
+    throw new Error(t(language, "markBoughtAlreadyHolding"));
+  }
+
+  const entryPriceRaw = `${payload?.entryPrice ?? ""}`.trim();
+  const entryPrice = Number(entryPriceRaw);
+  if (!Number.isFinite(entryPrice) || entryPrice <= 0) {
+    throw new Error(t(language, "entryPriceInvalid"));
+  }
+
+  const suggestion = currentState.lastResult?.analysis || {};
+  const virtualPosition = {
+    entryPrice: entryPriceRaw,
+    entryTime: new Date().toISOString(),
+    stopLossPrice: suggestion.stopLossPrice || null,
+    targetPrice: suggestion.targetPrice || null,
+    reason: suggestion.reasoning || suggestion.triggerCondition || null,
+    symbol: currentState.monitoringProfile?.symbolOverride || suggestion.symbol || null,
+    sourceRound: currentState.roundCount || 0
+  };
+
+  const state = await patchState({ virtualPosition, lastError: null });
+  return { ok: true, state };
+}
+
+async function markSold(payload) {
+  const language = await getUiLanguage();
+  const currentState = await getState();
+  if (!currentState.virtualPosition) {
+    throw new Error(t(language, "markSoldNotHolding"));
+  }
+
+  const exitPriceRaw = `${payload?.exitPrice ?? ""}`.trim();
+  const exitPrice = Number(exitPriceRaw);
+  if (!Number.isFinite(exitPrice) || exitPrice <= 0) {
+    throw new Error(t(language, "exitPriceInvalid"));
+  }
+
+  const position = currentState.virtualPosition;
+  const entryPriceNum = Number(position.entryPrice);
+  const pnlPercent = Number.isFinite(entryPriceNum) && entryPriceNum > 0
+    ? ((exitPrice - entryPriceNum) / entryPriceNum) * 100
+    : null;
+
+  const trade = {
+    symbol: position.symbol || null,
+    entryPrice: position.entryPrice,
+    entryTime: position.entryTime,
+    exitPrice: exitPriceRaw,
+    exitTime: new Date().toISOString(),
+    pnlPercent: pnlPercent === null ? null : Number(pnlPercent.toFixed(4)),
+    reason: position.reason || null
+  };
+
+  const tradeHistory = [trade, ...(currentState.tradeHistory || [])].slice(0, MAX_RESULTS);
+
+  await patchState({
+    virtualPosition: null,
+    tradeHistory
+  });
+
+  const state = await pauseMonitoring(t(language, "sessionClosedAfterSell"));
+  return { ok: true, state };
+}
+
 async function exitMonitoring() {
   await clearMonitoringAlarm();
 
@@ -635,9 +706,17 @@ async function runMonitoringRound() {
       };
     }
 
+    const virtualPosition = currentState.virtualPosition || null;
+    const nearClose = isNearUsMarketClose();
+    const mode = virtualPosition
+      ? (nearClose ? "force_exit" : "exit")
+      : "entry";
+
     const analysis = await analyzeChartCapture({
       ...capture,
-      symbolHint: monitoringProfile.symbolOverride || null
+      symbolHint: monitoringProfile.symbolOverride || null,
+      mode,
+      virtualPosition
     });
 
     const round = currentState.roundCount + 1;
@@ -970,6 +1049,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     if (message?.type === "restart-monitoring") {
       sendResponse(await restartMonitoring());
+      return;
+    }
+
+    if (message?.type === "mark-bought") {
+      sendResponse(await markBought(message));
+      return;
+    }
+
+    if (message?.type === "mark-sold") {
+      sendResponse(await markSold(message));
       return;
     }
 

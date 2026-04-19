@@ -63,6 +63,14 @@ Completed (Batch 5.5 — tracked-but-already-done):
 - C3 Timeline rows in sidepanel are colored by `data-action` (green BUY_*, red SELL_*, amber WAIT) — implemented in `sidepanel.css`, logged for audit trail.
 - C7 `popup.html` API key input is already `type="password"` — no plaintext exposure. Logged for audit trail.
 
+Completed (Stage B — virtual-position state machine + semi-auto flow):
+- `state.virtualPosition` is the single signal for entry vs exit mode (null = scanning entry; object = holding, scanning exit). STATUS enum untouched per the "no ad-hoc flags" rule.
+- `lib/llm.js` builds the JSON schema dynamically: entry allows `BUY_NOW/BUY_LIMIT/WAIT`; exit allows `SELL_NOW/SELL_LIMIT/HOLD`; force_exit locks to `SELL_NOW` only.
+- Prompt adds `SESSION_MODE` + `POSITION_CONTEXT` sections and mode-specific rule blocks (`ENTRY_MODE_RULES` / `EXIT_MODE_RULES` / `FORCE_EXIT_RULES`).
+- `lib/market-hours.js` exports `isNearUsMarketClose` (10-min lead before 16:00 ET, DST-safe). `runMonitoringRound` flips mode to `force_exit` when holding near close.
+- New background handlers: `mark-bought` sets `virtualPosition`; `mark-sold` appends to `state.tradeHistory` and calls `pauseMonitoring` (session ends when flat).
+- Sidepanel: position-summary card + mark-bought/mark-sold input forms appear based on `virtualPosition` + last action.
+
 Completed (Batch 5 — structural cleanup + tests):
 - B1 Extracted `guessSymbol` + `sanitizeUrl` into `lib/symbol.js` (imported by `lib/llm.js` and `lib/chart-validator.js`)
 - Extracted `isWithinUsMarketHours` into `lib/market-hours.js`

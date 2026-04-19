@@ -620,6 +620,40 @@ h2 {
   color: #e37867;
 }
 
+.position-summary {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.position-summary .position-line {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+.position-summary .position-line strong {
+  color: inherit;
+  margin-right: 6px;
+}
+.position-actions {
+  display: grid;
+  gap: 10px;
+}
+.sell-button {
+  background: #b64a3a;
+  color: #fff;
+}
+.sell-button:hover:not(:disabled) {
+  background: #c85a48;
+}
+
+.recent-rounds-list .round-item[data-action="HOLD"] {
+  border-left: 3px solid #4f718c;
+  background: rgba(79, 113, 140, 0.08);
+}
+.recent-rounds-list .round-item[data-action="HOLD"] .round-action {
+  color: #8bb0cc;
+}
+
 .recent-rounds-list .round-item[data-action="WAIT"] {
   border-left: 3px solid #a57008;
   background: rgba(165, 112, 8, 0.06);
