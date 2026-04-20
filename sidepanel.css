@@ -702,6 +702,121 @@ h2 {
   background: #b64a3a;
   color: #fff;
 }
+
+.stats-content {
+  display: grid;
+  gap: 14px;
+  margin-top: 8px;
+}
+.stats-heading {
+  margin: 4px 0 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.stats-overall-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+.stats-metric-block {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(20, 37, 58, 0.04);
+  border: 1px solid var(--line);
+}
+.stats-metric-block[data-tone="win"] {
+  background: rgba(12, 122, 67, 0.08);
+  border-color: rgba(12, 122, 67, 0.24);
+}
+.stats-metric-block[data-tone="loss"] {
+  background: rgba(163, 63, 47, 0.08);
+  border-color: rgba(163, 63, 47, 0.24);
+}
+.stats-metric-k {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.stats-metric-v-big {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.stats-metric-v-big small {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--muted);
+}
+.stats-table {
+  display: grid;
+  gap: 6px;
+}
+.stats-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(20, 37, 58, 0.03);
+  border: 1px solid var(--line);
+}
+.stats-row-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink);
+}
+.stats-row-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.stats-metric {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+}
+.stats-metric .stats-metric-v {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.stats-metric-pnl[data-tone="win"] .stats-metric-v {
+  color: var(--buy);
+}
+.stats-metric-pnl[data-tone="loss"] .stats-metric-v {
+  color: var(--sell);
+}
+.stats-row-empty {
+  font-size: 12px;
+  color: var(--muted);
+  font-style: italic;
+}
+.stats-row-small {
+  opacity: 0.88;
+}
+.stats-small-sample {
+  grid-column: 1 / -1;
+  font-size: 11px;
+  color: var(--wait);
+  margin-top: 2px;
+}
+
+@media (max-width: 640px) {
+  .stats-overall-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .stats-row {
+    grid-template-columns: 1fr;
+  }
+}
 .sell-button:hover:not(:disabled) {
   background: #c85a48;
 }

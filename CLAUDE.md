@@ -79,6 +79,15 @@ Completed (Stage C — trade journal + self-learning):
 - i18n keys added (en + zh): `tradeJournalTitle`, `tradeJournalCopy`, `noClosedTrades`, `lessonPending`.
 - Tests: 4 new cases in `test/llm.test.js` cover RECENT_LESSONS injection, exit-mode omission, empty-list omission, and blank-lesson filtering. Suite: 45/45 green.
 
+Completed (real-trade stats card — Stage D prerequisite):
+- `MAX_TRADE_HISTORY = 500` decouples `tradeHistory` retention from `MAX_RESULTS` (20, which is still used for the per-round `results` timeline). See Known risks below.
+- `virtualPosition` now captures `entryAction` + `entryConfidence` at `markBought` time; `markSold` copies them into the trade record. Legacy trades stay at `null` and fall into an "unknown" bucket that only renders when non-empty.
+- `lib/trade-stats.js` is a pure aggregator: `computeTradeStats(tradeHistory)` → `{ overall, byAction, byConfidence }`. Filters `status:"abandoned"` and non-finite `pnlPercent`. Known buckets (`BUY_NOW`/`BUY_LIMIT`, `high`/`medium`/`low`) are always present with `n:0` for stable UI rendering.
+- Sidepanel Performance Stats card hides entirely when `overall.n === 0`. Buckets with `n < 5` render with a visible "small sample" warning — explicit choice to show-with-caveat rather than hide, since a 3-month run will still produce sparse confidence buckets and hiding them is worse than flagging them.
+- i18n keys: `statsTitle`, `statsCopy`, `statsSmallSampleWarning`, `statsOverallHeading`, `statsByActionHeading`, `statsByConfidenceHeading`, `statsSampleSize`, `statsWinRate`, `statsAvgPnl`, `statsTotalPnl`, `statsAvgHeld`, `statsBestTrade`, `statsWorstTrade`, `statsBucketEmpty`.
+- Tests: 10 new cases in `test/trade-stats.test.js`. Suite: 58/58 green.
+- Intentionally scoped down from Stage D: this is **read-only aggregation of real-trade journal data**, not paper-trading simulation. Stage D adds auto-execution on top; this card is the measurement layer that tells us whether Stage D is even worth building.
+
 Completed (Stage B follow-up — overnight-gap auto-abandon):
 - `virtualPosition` now carries `tradingDay` (US/Eastern YYYY-MM-DD) at `markBought` time.
 - `lib/market-hours.js` exports `getUsTradingDay(now)`; DST-safe via `Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" })`.
@@ -110,7 +119,7 @@ Scope:
 Rationale: Stage D is the **verification layer** for Stages A/B/C — it answers "does this signal pipeline actually have positive expectancy?" Without it, every subsequent prompt tweak is subjective.
 
 ### Known risks / follow-ups (small)
-- `state.tradeHistory` is capped at `MAX_RESULTS` (50) via `slice` — older trades silently drop off. Long-term this loses journal history for the RECENT_LESSONS feedback loop. Consider: export-to-CSV button, or split `tradeHistory` into a separate unbounded `journalArchive`.
+- `state.tradeHistory` now uses its own `MAX_TRADE_HISTORY = 500` (previously reused `MAX_RESULTS = 20`, which silently dropped journal entries after ~20 trades). Decoupled so months of history survive for the RECENT_LESSONS loop + the upcoming real-trade stats card. 500 is not unbounded — if a user ever runs for multiple years, consider export-to-CSV + purge, or a separate `journalArchive`.
 - `generateTradeLesson` is fire-and-forget with a swallowed catch. If the call fails (network / rate limit), the trade's `lesson` stays `null` forever — no retry, no backfill. Fine for now; revisit if many lessons end up stuck at null.
 - `chrome.runtime.onInstalled` resets the full monitorState (including `tradeHistory`) on every extension reload. For a user who actively uses the journal, losing history on each version bump is annoying. Consider preserving `tradeHistory` + `virtualPosition` across reinstalls once Stage D lands and the data becomes valuable.
 - No tab-activity freshness check: if user leaves the tab backgrounded for 30+ min, the screenshot still fires on schedule but the chart data may be stale. Currently ignored because users actively watching wouldn't hit this; worth revisiting if false signals correlate with tab-switch patterns.
