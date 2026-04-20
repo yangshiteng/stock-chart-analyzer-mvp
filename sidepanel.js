@@ -1,6 +1,9 @@
 import { ANALYSIS_INTERVAL_OPTIONS, DEFAULT_TOTAL_ROUNDS, STATUS, TOTAL_ROUNDS_OPTIONS } from "./lib/constants.js";
 import { getLanguage, t } from "./lib/i18n.js";
 import { getSettings, getState, patchSettings } from "./lib/storage.js";
+import { ACTION_BUCKETS, CONFIDENCE_BUCKETS, computeTradeStats } from "./lib/trade-stats.js";
+
+const SMALL_SAMPLE_THRESHOLD = 5;
 
 const heroEyebrow = document.getElementById("heroEyebrow");
 const heroTitle = document.getElementById("heroTitle");
@@ -37,6 +40,10 @@ const recommendationTitle = document.getElementById("recommendationTitle");
 const analysisCard = document.getElementById("analysisCard");
 const recentRoundsTitle = document.getElementById("recentRoundsTitle");
 const recentRoundsList = document.getElementById("recentRoundsList");
+const statsSection = document.getElementById("statsSection");
+const statsTitle = document.getElementById("statsTitle");
+const statsCopy = document.getElementById("statsCopy");
+const statsContent = document.getElementById("statsContent");
 const tradeJournalTitle = document.getElementById("tradeJournalTitle");
 const tradeJournalCopy = document.getElementById("tradeJournalCopy");
 const tradeJournalList = document.getElementById("tradeJournalList");
@@ -243,6 +250,110 @@ function formatPnlLabel(pct) {
   return `${sign}${pct.toFixed(2)}%`;
 }
 
+function formatPctSigned(value) {
+  if (!Number.isFinite(value)) return "—";
+  const sign = value >= 0 ? "+" : "";
+  return `${sign}${value.toFixed(2)}%`;
+}
+
+function formatWinRate(value) {
+  if (!Number.isFinite(value)) return "—";
+  return `${(value * 100).toFixed(0)}%`;
+}
+
+function formatHeldMinutes(value) {
+  if (!Number.isFinite(value)) return "—";
+  return `${Math.round(value)}m`;
+}
+
+function getPnlTone(value) {
+  if (!Number.isFinite(value)) return "neutral";
+  if (value > 0) return "win";
+  if (value < 0) return "loss";
+  return "neutral";
+}
+
+function renderStatBucket(language, label, bucket, isHeader = false) {
+  if (bucket.n === 0) {
+    return `
+      <div class="stats-row${isHeader ? " stats-row-header" : ""}" data-tone="empty">
+        <div class="stats-row-label">${escapeHtml(label)}</div>
+        <div class="stats-row-empty">${escapeHtml(t(language, "statsBucketEmpty"))}</div>
+      </div>
+    `;
+  }
+
+  const small = bucket.n < SMALL_SAMPLE_THRESHOLD;
+  const warning = small
+    ? `<div class="stats-small-sample">⚠ ${escapeHtml(t(language, "statsSmallSampleWarning", { n: bucket.n }))}</div>`
+    : "";
+  const pnlTone = getPnlTone(bucket.avgPnlPercent);
+
+  return `
+    <div class="stats-row${isHeader ? " stats-row-header" : ""}${small ? " stats-row-small" : ""}">
+      <div class="stats-row-label">${escapeHtml(label)}</div>
+      <div class="stats-row-metrics">
+        <span class="stats-metric"><span class="stats-metric-k">${escapeHtml(t(language, "statsSampleSize"))}</span><span class="stats-metric-v">${bucket.n}</span></span>
+        <span class="stats-metric"><span class="stats-metric-k">${escapeHtml(t(language, "statsWinRate"))}</span><span class="stats-metric-v">${escapeHtml(formatWinRate(bucket.winRate))}</span></span>
+        <span class="stats-metric stats-metric-pnl" data-tone="${pnlTone}"><span class="stats-metric-k">${escapeHtml(t(language, "statsAvgPnl"))}</span><span class="stats-metric-v">${escapeHtml(formatPctSigned(bucket.avgPnlPercent))}</span></span>
+      </div>
+      ${warning}
+    </div>
+  `;
+}
+
+function renderStatsOverall(language, overall) {
+  const pnlTone = getPnlTone(overall.avgPnlPercent);
+  const totalTone = getPnlTone(overall.totalPnlPercent);
+  return `
+    <div class="stats-overall">
+      <div class="stats-overall-grid">
+        <div class="stats-metric-block"><span class="stats-metric-k">${escapeHtml(t(language, "statsSampleSize"))}</span><span class="stats-metric-v-big">${overall.n}</span></div>
+        <div class="stats-metric-block"><span class="stats-metric-k">${escapeHtml(t(language, "statsWinRate"))}</span><span class="stats-metric-v-big">${escapeHtml(formatWinRate(overall.winRate))} <small>(${overall.wins}/${overall.n})</small></span></div>
+        <div class="stats-metric-block" data-tone="${pnlTone}"><span class="stats-metric-k">${escapeHtml(t(language, "statsAvgPnl"))}</span><span class="stats-metric-v-big">${escapeHtml(formatPctSigned(overall.avgPnlPercent))}</span></div>
+        <div class="stats-metric-block" data-tone="${totalTone}"><span class="stats-metric-k">${escapeHtml(t(language, "statsTotalPnl"))}</span><span class="stats-metric-v-big">${escapeHtml(formatPctSigned(overall.totalPnlPercent))}</span></div>
+        <div class="stats-metric-block"><span class="stats-metric-k">${escapeHtml(t(language, "statsAvgHeld"))}</span><span class="stats-metric-v-big">${escapeHtml(formatHeldMinutes(overall.avgHeldMinutes))}</span></div>
+        <div class="stats-metric-block"><span class="stats-metric-k">${escapeHtml(t(language, "statsBestTrade"))} / ${escapeHtml(t(language, "statsWorstTrade"))}</span><span class="stats-metric-v-big">${escapeHtml(formatPctSigned(overall.bestPnlPercent))} / ${escapeHtml(formatPctSigned(overall.worstPnlPercent))}</span></div>
+      </div>
+    </div>
+  `;
+}
+
+function renderStatsCard(state, language) {
+  statsTitle.textContent = t(language, "statsTitle");
+  statsCopy.textContent = t(language, "statsCopy");
+
+  const stats = computeTradeStats(state.tradeHistory);
+  if (stats.overall.n === 0) {
+    statsSection.classList.add("hidden");
+    return;
+  }
+  statsSection.classList.remove("hidden");
+
+  const actionRows = ACTION_BUCKETS
+    .map((key) => renderStatBucket(language, formatActionLabel(language, key), stats.byAction[key]))
+    .join("");
+  const actionUnknown = stats.byAction.unknown && stats.byAction.unknown.n > 0
+    ? renderStatBucket(language, t(language, "unknown"), stats.byAction.unknown)
+    : "";
+
+  const confidenceRows = CONFIDENCE_BUCKETS
+    .map((key) => renderStatBucket(language, formatConfidenceLabel(language, key), stats.byConfidence[key]))
+    .join("");
+  const confidenceUnknown = stats.byConfidence.unknown && stats.byConfidence.unknown.n > 0
+    ? renderStatBucket(language, t(language, "unknown"), stats.byConfidence.unknown)
+    : "";
+
+  statsContent.innerHTML = `
+    <h3 class="stats-heading">${escapeHtml(t(language, "statsOverallHeading"))}</h3>
+    ${renderStatsOverall(language, stats.overall)}
+    <h3 class="stats-heading">${escapeHtml(t(language, "statsByActionHeading"))}</h3>
+    <div class="stats-table">${actionRows}${actionUnknown}</div>
+    <h3 class="stats-heading">${escapeHtml(t(language, "statsByConfidenceHeading"))}</h3>
+    <div class="stats-table">${confidenceRows}${confidenceUnknown}</div>
+  `;
+}
+
 function renderTradeJournal(state, language) {
   tradeJournalTitle.textContent = t(language, "tradeJournalTitle");
   tradeJournalCopy.textContent = t(language, "tradeJournalCopy");
@@ -426,6 +537,15 @@ function populateContextForm(state, language) {
 }
 
 async function render() {
+  // Ask background to sweep stale (cross-trading-day) virtual positions before we read state.
+  // Background handler is a cheap no-op when no position exists or position is same-day.
+  // Covers the edge case where Chrome stays open across days with no new monitoring round firing.
+  try {
+    await chrome.runtime.sendMessage({ type: "check-stale-position" });
+  } catch {
+    // Service worker may be asleep; the onStartup/runMonitoringRound hooks will still catch it.
+  }
+
   const state = await getState();
   const settings = await getSettings();
   const language = getLanguage(settings.language);
@@ -438,6 +558,7 @@ async function render() {
   renderAnalysisCard(state, language);
   renderPositionPanels(state, language);
   renderRecentRounds(state, language);
+  renderStatsCard(state, language);
   renderTradeJournal(state, language);
   apiSetupSection.classList.toggle("hidden", apiReady);
 

@@ -4,6 +4,7 @@
   DEFAULT_ANALYSIS_INTERVAL,
   DEFAULT_TOTAL_ROUNDS,
   MAX_RESULTS,
+  MAX_TRADE_HISTORY,
   STATUS,
   TOTAL_ROUNDS_OPTIONS,
   createDefaultState
@@ -498,7 +499,9 @@ async function markBought(payload) {
     targetPrice: suggestion.targetPrice || null,
     reason: suggestion.reasoning || suggestion.triggerCondition || null,
     symbol: currentState.monitoringProfile?.symbolOverride || suggestion.symbol || null,
-    sourceRound: currentState.roundCount || 0
+    sourceRound: currentState.roundCount || 0,
+    entryAction: suggestion.action || null,
+    entryConfidence: suggestion.confidence || null
   };
 
   const state = await patchState({ virtualPosition, lastError: null });
@@ -543,10 +546,12 @@ async function markSold(payload) {
     plannedStopLoss: position.stopLossPrice || null,
     plannedTarget: position.targetPrice || null,
     heldMinutes,
+    entryAction: position.entryAction || null,
+    entryConfidence: position.entryConfidence || null,
     lesson: null
   };
 
-  const tradeHistory = [trade, ...(currentState.tradeHistory || [])].slice(0, MAX_RESULTS);
+  const tradeHistory = [trade, ...(currentState.tradeHistory || [])].slice(0, MAX_TRADE_HISTORY);
 
   await patchState({
     virtualPosition: null,
@@ -751,6 +756,8 @@ async function runMonitoringRound() {
             symbol: t.symbol,
             pnlPercent: t.pnlPercent,
             exitTime: t.exitTime,
+            entryAction: t.entryAction || null,
+            entryConfidence: t.entryConfidence || null,
             lesson: t.lesson
           }))
       : null;
@@ -982,7 +989,7 @@ async function abandonStaleVirtualPositionIfNeeded() {
     status: "abandoned",
     abandonReason: "overnight_gap"
   };
-  const tradeHistory = [trade, ...(state.tradeHistory || [])].slice(0, MAX_RESULTS);
+  const tradeHistory = [trade, ...(state.tradeHistory || [])].slice(0, MAX_TRADE_HISTORY);
   await patchState({ virtualPosition: null, tradeHistory });
   await pauseMonitoring(t(language, "sessionAbandonedOvernight"));
 }
@@ -1092,6 +1099,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 
     if (message?.type === "get-state") {
+      sendResponse({ ok: true, state: await getState() });
+      return;
+    }
+
+    if (message?.type === "check-stale-position") {
+      // Tertiary safety net for the abandon check, in addition to onStartup + runMonitoringRound.
+      // Covers the edge case where Chrome stays open across trading days with no new monitoring round.
+      await abandonStaleVirtualPositionIfNeeded();
       sendResponse({ ok: true, state: await getState() });
       return;
     }

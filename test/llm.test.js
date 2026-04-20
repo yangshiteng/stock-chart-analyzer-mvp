@@ -174,6 +174,37 @@ test("buildAnalysisPromptFromConfig: RECENT_LESSONS skips entries with empty les
   assert.ok(!/\[RECENT_LESSONS\]/.test(prompt));
 });
 
+test("buildAnalysisPromptFromConfig: RECENT_LESSONS includes entryAction + entryConfidence when provided", () => {
+  const prompt = buildAnalysisPromptFromConfig(
+    getAnalysisPromptConfig(),
+    {
+      ...samplePayload,
+      mode: "entry",
+      recentLessons: [
+        { symbol: "AAPL", pnlPercent: -0.5, exitTime: "2026-04-18T20:00:00Z", entryAction: "BUY_NOW", entryConfidence: "high", lesson: "x" }
+      ]
+    },
+    "en"
+  );
+  assert.match(prompt, /AAPL -0\.50% 2026-04-18 BUY_NOW\/high\]/);
+});
+
+test("buildAnalysisPromptFromConfig: RECENT_LESSONS omits action/confidence when both null (legacy trades)", () => {
+  const prompt = buildAnalysisPromptFromConfig(
+    getAnalysisPromptConfig(),
+    {
+      ...samplePayload,
+      mode: "entry",
+      recentLessons: [
+        { symbol: "AAPL", pnlPercent: 1, exitTime: "2026-04-18T20:00:00Z", entryAction: null, entryConfidence: null, lesson: "y" }
+      ]
+    },
+    "en"
+  );
+  // Legacy trade should render cleanly without trailing whitespace or stray slashes.
+  assert.match(prompt, /\[AAPL \+1\.00% 2026-04-18\] y/);
+});
+
 test("buildAnalysisPromptFromConfig: sanitizes URL (strips query)", () => {
   const prompt = buildAnalysisPromptFromConfig(getAnalysisPromptConfig(), samplePayload, "en");
   assert.ok(!prompt.includes("key=secret"));
