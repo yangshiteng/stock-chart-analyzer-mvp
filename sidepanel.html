@@ -64,6 +64,27 @@
               <span id="totalRoundsLabel">Total Rounds</span>
               <select id="totalRoundsSelect"></select>
             </label>
+
+            <label class="field">
+              <span id="userContextFormLabel">Background Notes (optional)</span>
+              <textarea id="userContextFormInput" rows="4" maxlength="500" placeholder="e.g. Stock at ATH. Earnings Tue. Macro risk-off today."></textarea>
+              <small id="userContextFormCharCount" class="form-hint">0/500</small>
+              <small id="userContextFormHint" class="form-hint"></small>
+            </label>
+
+            <div class="field" id="longTermFormSection">
+              <span id="longTermFormLabel">Long-term Context (optional)</span>
+              <small id="longTermFormCopy" class="form-hint"></small>
+              <div class="long-term-controls">
+                <label class="field inline">
+                  <span id="longTermFormTimeframeLabel">Timeframe</span>
+                  <select id="longTermFormTimeframeSelect"></select>
+                </label>
+                <button id="longTermFormGenerateButton" class="ghost-button" type="button">Generate from current chart</button>
+              </div>
+              <div id="longTermFormSummary" class="long-term-summary hidden"></div>
+              <p id="longTermFormError" class="form-error hidden"></p>
+            </div>
           </section>
 
           <p id="formError" class="form-error hidden"></p>
@@ -75,7 +96,7 @@
       </section>
 
       <section id="positionSection" class="card hidden">
-        <h2 id="positionSectionHeaderTitle">Virtual Position</h2>
+        <h2 id="positionSectionHeaderTitle">Current Position</h2>
         <p id="positionSectionHeaderCopy" class="form-section-copy">Tracking your open long trade for this session.</p>
         <div id="positionSummary" class="position-summary"></div>
         <div id="positionActions" class="position-actions hidden">
@@ -102,6 +123,55 @@
         </div>
         <p id="markBoughtError" class="form-error hidden"></p>
       </section>
+
+      <section id="markLimitPlacedSection" class="card hidden">
+        <h2 id="markLimitPlacedTitle">Place Limit</h2>
+        <p id="markLimitPlacedCopy" class="form-section-copy">AI suggested a limit order. Enter the price you placed at the broker and confirm.</p>
+        <label class="field">
+          <span id="limitPlacedPriceLabel">Limit Price</span>
+          <input id="limitPlacedPriceInput" type="number" step="0.01" min="0" placeholder="180.50">
+        </label>
+        <div class="form-actions">
+          <button id="markLimitPlacedButton" class="mode-button buy-button" type="button">Mark limit placed</button>
+        </div>
+        <p id="markLimitPlacedError" class="form-error hidden"></p>
+      </section>
+
+      <section id="pendingLimitSection" class="card hidden">
+        <h2 id="pendingLimitTitle">Pending Limit Order</h2>
+        <p id="pendingLimitCopy" class="form-section-copy"></p>
+        <div id="pendingLimitSummary" class="position-summary"></div>
+        <p id="pendingLimitStaleWarning" class="form-hint hidden"></p>
+        <p id="pendingLimitSignalChanged" class="form-hint hidden"></p>
+        <div class="form-actions">
+          <button id="pendingLimitFilledButton" class="mode-button buy-button" type="button">Limit filled</button>
+          <button id="pendingLimitCancelButton" class="ghost-button" type="button">Cancel limit</button>
+        </div>
+        <p id="pendingLimitError" class="form-error hidden"></p>
+      </section>
+
+      <section id="backgroundNotesSection" class="card hidden">
+        <h2 id="backgroundNotesTitle">Background Notes</h2>
+        <p id="backgroundNotesCopy" class="form-section-copy"></p>
+        <div id="backgroundNotesView" class="background-notes-view">
+          <p id="backgroundNotesText" class="background-notes-text"></p>
+          <div class="form-actions">
+            <button id="editNotesButton" class="ghost-button" type="button">Edit</button>
+          </div>
+        </div>
+        <div id="backgroundNotesEdit" class="background-notes-edit hidden">
+          <label class="field">
+            <textarea id="backgroundNotesInput" rows="4" maxlength="500"></textarea>
+            <small id="backgroundNotesCharCount" class="form-hint">0/500</small>
+          </label>
+          <div class="form-actions">
+            <button id="saveNotesButton" class="mode-button buy-button" type="button">Save</button>
+            <button id="cancelNotesButton" class="ghost-button" type="button">Cancel</button>
+          </div>
+          <p id="backgroundNotesError" class="form-error hidden"></p>
+        </div>
+      </section>
+
 
       <section class="card">
         <h2 id="recommendationTitle">Latest Recommendation</h2>

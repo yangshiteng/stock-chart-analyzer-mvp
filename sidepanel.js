@@ -63,6 +63,53 @@ const entryPriceLabelSpan = document.getElementById("entryPriceLabel");
 const entryPriceInput = document.getElementById("entryPriceInput");
 const markBoughtButton = document.getElementById("markBoughtButton");
 const markBoughtError = document.getElementById("markBoughtError");
+const markLimitPlacedSection = document.getElementById("markLimitPlacedSection");
+const markLimitPlacedTitle = document.getElementById("markLimitPlacedTitle");
+const markLimitPlacedCopy = document.getElementById("markLimitPlacedCopy");
+const limitPlacedPriceLabel = document.getElementById("limitPlacedPriceLabel");
+const limitPlacedPriceInput = document.getElementById("limitPlacedPriceInput");
+const markLimitPlacedButton = document.getElementById("markLimitPlacedButton");
+const markLimitPlacedError = document.getElementById("markLimitPlacedError");
+const pendingLimitSection = document.getElementById("pendingLimitSection");
+const pendingLimitTitle = document.getElementById("pendingLimitTitle");
+const pendingLimitCopy = document.getElementById("pendingLimitCopy");
+const pendingLimitSummary = document.getElementById("pendingLimitSummary");
+const pendingLimitStaleWarning = document.getElementById("pendingLimitStaleWarning");
+const pendingLimitSignalChanged = document.getElementById("pendingLimitSignalChanged");
+const pendingLimitFilledButton = document.getElementById("pendingLimitFilledButton");
+const pendingLimitCancelButton = document.getElementById("pendingLimitCancelButton");
+const pendingLimitError = document.getElementById("pendingLimitError");
+const userContextFormLabel = document.getElementById("userContextFormLabel");
+const userContextFormInput = document.getElementById("userContextFormInput");
+const userContextFormCharCount = document.getElementById("userContextFormCharCount");
+const userContextFormHint = document.getElementById("userContextFormHint");
+const backgroundNotesSection = document.getElementById("backgroundNotesSection");
+const backgroundNotesTitle = document.getElementById("backgroundNotesTitle");
+const backgroundNotesCopy = document.getElementById("backgroundNotesCopy");
+const backgroundNotesView = document.getElementById("backgroundNotesView");
+const backgroundNotesText = document.getElementById("backgroundNotesText");
+const backgroundNotesEdit = document.getElementById("backgroundNotesEdit");
+const backgroundNotesInput = document.getElementById("backgroundNotesInput");
+const backgroundNotesCharCount = document.getElementById("backgroundNotesCharCount");
+const backgroundNotesError = document.getElementById("backgroundNotesError");
+const editNotesButton = document.getElementById("editNotesButton");
+const saveNotesButton = document.getElementById("saveNotesButton");
+const cancelNotesButton = document.getElementById("cancelNotesButton");
+// Long-term context form widget (visible inside the start form)
+const longTermFormSection = document.getElementById("longTermFormSection");
+const longTermFormLabel = document.getElementById("longTermFormLabel");
+const longTermFormCopy = document.getElementById("longTermFormCopy");
+const longTermFormTimeframeLabel = document.getElementById("longTermFormTimeframeLabel");
+const longTermFormTimeframeSelect = document.getElementById("longTermFormTimeframeSelect");
+const longTermFormGenerateButton = document.getElementById("longTermFormGenerateButton");
+const longTermFormSummary = document.getElementById("longTermFormSummary");
+const longTermFormError = document.getElementById("longTermFormError");
+const LONG_TERM_TIMEFRAME_OPTIONS = ["daily", "weekly"];
+let isGeneratingLongTerm = false;
+
+const STALE_LIMIT_THRESHOLD_MINUTES = 10;
+const USER_CONTEXT_MAX = 500;
+let isEditingNotes = false;
 
 let isStartingMonitoring = false;
 
@@ -395,8 +442,107 @@ function renderTradeJournal(state, language) {
   tradeJournalList.innerHTML = items;
 }
 
+function minutesSinceIso(iso) {
+  if (!iso) return null;
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return null;
+  return Math.max(0, Math.round((Date.now() - t) / 60000));
+}
+
+function renderPendingLimitCard(state, language, pending) {
+  pendingLimitSection.classList.remove("hidden");
+  pendingLimitTitle.textContent = t(language, "limitOrderTitle");
+  pendingLimitCopy.textContent = t(language, "limitOrderCopy");
+
+  const isBuy = pending.action === "BUY_LIMIT";
+  pendingLimitFilledButton.textContent = t(language, isBuy ? "limitFilledButton_buy" : "limitFilledButton_sell");
+  pendingLimitFilledButton.className = `mode-button ${isBuy ? "buy-button" : "sell-button"}`;
+  pendingLimitCancelButton.textContent = t(language, "limitCancelButton");
+
+  const nA = t(language, "nA");
+  const actionLabel = formatActionLabel(language, pending.action);
+  const held = minutesSinceIso(pending.placedAt);
+  const heldText = Number.isFinite(held) ? `${held}m` : nA;
+  pendingLimitSummary.innerHTML = `
+    <p class="position-line"><strong>${escapeHtml(t(language, "actionNow"))}:</strong> ${escapeHtml(actionLabel)}</p>
+    <p class="position-line"><strong>${escapeHtml(t(language, "symbolOverride"))}:</strong> ${escapeHtml(pending.symbol || nA)}</p>
+    <p class="position-line"><strong>${escapeHtml(t(language, "limitPriceLabel"))}:</strong> ${escapeHtml(pending.limitPrice || nA)}</p>
+    <p class="position-line"><strong>${escapeHtml(t(language, "stopLossPriceLabel"))}:</strong> ${escapeHtml(pending.stopLossPrice || nA)}</p>
+    <p class="position-line"><strong>${escapeHtml(t(language, "targetPriceLabel"))}:</strong> ${escapeHtml(pending.targetPrice || nA)}</p>
+    <p class="position-line"><strong>${escapeHtml(t(language, "statsAvgHeld"))}:</strong> ${escapeHtml(heldText)}</p>
+  `;
+
+  if (Number.isFinite(held) && held >= STALE_LIMIT_THRESHOLD_MINUTES) {
+    pendingLimitStaleWarning.textContent = t(language, "limitStaleWarning", { minutes: held });
+    pendingLimitStaleWarning.classList.remove("hidden");
+  } else {
+    pendingLimitStaleWarning.textContent = "";
+    pendingLimitStaleWarning.classList.add("hidden");
+  }
+
+  // Three distinct warning flavors for a resting limit whose context has shifted:
+  //   - action reversed  (BUY_LIMIT → SELL_* / HOLD, etc.): strongest signal, definitely cancel
+  //   - action stepped down (BUY_LIMIT → WAIT, SELL_LIMIT → HOLD): AI retreated, likely invalidated
+  //   - same action, price drifted > PRICE_DRIFT_THRESHOLD: order parked at now-wrong level
+  // Banner is suppressed only when action matches AND price is still close.
+  const PRICE_DRIFT_THRESHOLD = 0.003; // 0.3% — ignores sub-tick noise, catches real re-leveling
+  const currentAction = state.lastResult?.analysis?.action;
+  const currentEntry = Number(state.lastResult?.analysis?.entryPrice);
+  const pendingPriceNum = Number(pending.limitPrice);
+  const priceDrift =
+    Number.isFinite(pendingPriceNum) && pendingPriceNum > 0 && Number.isFinite(currentEntry)
+      ? Math.abs(currentEntry - pendingPriceNum) / pendingPriceNum
+      : 0;
+
+  let warningKey = null;
+  if (currentAction && currentAction !== pending.action) {
+    // Action changed. WAIT/HOLD = AI retreated; other direction = reversal.
+    warningKey = currentAction === "WAIT" || currentAction === "HOLD"
+      ? "limitSignalRetreatedWarning"
+      : "limitSignalChangedWarning";
+  } else if (currentAction === pending.action && priceDrift > PRICE_DRIFT_THRESHOLD) {
+    warningKey = "limitPriceDriftedWarning";
+  }
+
+  if (warningKey) {
+    pendingLimitSignalChanged.textContent = t(language, warningKey, {
+      prevAction: pending.action,
+      prevPrice: pending.limitPrice || nA,
+      currAction: currentAction || nA,
+      currPrice: Number.isFinite(currentEntry) ? currentEntry.toFixed(2) : nA,
+      driftPct: (priceDrift * 100).toFixed(2)
+    });
+    pendingLimitSignalChanged.classList.remove("hidden");
+  } else {
+    pendingLimitSignalChanged.textContent = "";
+    pendingLimitSignalChanged.classList.add("hidden");
+  }
+
+  pendingLimitError.textContent = "";
+  pendingLimitError.classList.add("hidden");
+}
+
+function renderMarkLimitPlacedCard(state, language, action) {
+  markLimitPlacedSection.classList.remove("hidden");
+  const isBuy = action === "BUY_LIMIT";
+  markLimitPlacedTitle.textContent = t(language, isBuy ? "markLimitPlacedTitle_buy" : "markLimitPlacedTitle_sell");
+  markLimitPlacedCopy.textContent = t(language, "markLimitPlacedCopy");
+  limitPlacedPriceLabel.textContent = t(language, "limitPriceLabel");
+  markLimitPlacedButton.textContent = t(language, isBuy ? "markLimitPlacedButton_buy" : "markLimitPlacedButton_sell");
+  markLimitPlacedButton.className = `mode-button ${isBuy ? "buy-button" : "sell-button"}`;
+
+  const suggested = state.lastResult?.analysis?.entryPrice || "";
+  if (suggested && !limitPlacedPriceInput.value) {
+    limitPlacedPriceInput.value = suggested;
+  }
+
+  markLimitPlacedError.textContent = "";
+  markLimitPlacedError.classList.add("hidden");
+}
+
 function renderPositionPanels(state, language) {
   const position = state.virtualPosition;
+  const pending = state.pendingLimitOrder;
   const lastAction = state.lastResult?.analysis?.action;
   const isRunning = state.status === STATUS.RUNNING;
 
@@ -409,6 +555,11 @@ function renderPositionPanels(state, language) {
   entryPriceLabelSpan.textContent = t(language, "entryPriceLabel");
   markBoughtButton.textContent = t(language, "markBoughtButton");
 
+  // Hide all optional cards by default; each branch below re-enables what applies.
+  markBoughtSection.classList.add("hidden");
+  markLimitPlacedSection.classList.add("hidden");
+  pendingLimitSection.classList.add("hidden");
+
   if (position) {
     positionSection.classList.remove("hidden");
     positionActions.classList.remove("hidden");
@@ -419,13 +570,31 @@ function renderPositionPanels(state, language) {
       <p class="position-line"><strong>${escapeHtml(t(language, "stopLossPriceLabel"))}:</strong> ${escapeHtml(position.stopLossPrice || nA)}</p>
       <p class="position-line"><strong>${escapeHtml(t(language, "targetPriceLabel"))}:</strong> ${escapeHtml(position.targetPrice || nA)}</p>
     `;
-    markBoughtSection.classList.add("hidden");
+
+    // Holding → pending SELL_LIMIT (exit-mode limit order); or show markLimitPlaced when AI says SELL_LIMIT.
+    if (pending && pending.action === "SELL_LIMIT") {
+      renderPendingLimitCard(state, language, pending);
+    } else if (isRunning && lastAction === "SELL_LIMIT") {
+      renderMarkLimitPlacedCard(state, language, "SELL_LIMIT");
+    }
     return;
   }
 
   positionSection.classList.add("hidden");
 
-  const canMarkBought = isRunning && (lastAction === "BUY_NOW" || lastAction === "BUY_LIMIT");
+  // Flat → pending BUY_LIMIT (entry-mode limit order); or show markLimitPlaced when AI says BUY_LIMIT;
+  // or direct markBought when AI says BUY_NOW.
+  if (pending && pending.action === "BUY_LIMIT") {
+    renderPendingLimitCard(state, language, pending);
+    return;
+  }
+
+  if (isRunning && lastAction === "BUY_LIMIT") {
+    renderMarkLimitPlacedCard(state, language, "BUY_LIMIT");
+    return;
+  }
+
+  const canMarkBought = isRunning && lastAction === "BUY_NOW";
   markBoughtSection.classList.toggle("hidden", !canMarkBought);
 
   if (canMarkBought) {
@@ -433,6 +602,143 @@ function renderPositionPanels(state, language) {
     if (suggested && !entryPriceInput.value) {
       entryPriceInput.value = suggested;
     }
+  }
+}
+
+function renderUserContextFormHint(language) {
+  const used = (userContextFormInput.value || "").length;
+  userContextFormCharCount.textContent = t(language, "backgroundNotesCharLimit", {
+    used,
+    max: USER_CONTEXT_MAX
+  });
+}
+
+function renderBackgroundNotesCard(state, language) {
+  const profile = state.monitoringProfile || state.lastMonitoringProfile;
+  const isSessionLive = state.status === STATUS.RUNNING || state.status === STATUS.PAUSED;
+
+  if (!isSessionLive || !profile) {
+    backgroundNotesSection.classList.add("hidden");
+    isEditingNotes = false;
+    return;
+  }
+
+  backgroundNotesSection.classList.remove("hidden");
+  backgroundNotesTitle.textContent = t(language, "backgroundNotesTitle");
+  backgroundNotesCopy.textContent = t(language, "backgroundNotesCopy");
+  editNotesButton.textContent = t(language, "editNotesButton");
+  saveNotesButton.textContent = t(language, "saveNotesButton");
+  cancelNotesButton.textContent = t(language, "cancelNotesButton");
+  backgroundNotesInput.placeholder = t(language, "backgroundNotesPlaceholder");
+
+  // Editing is only allowed while RUNNING — PAUSED sessions are read-only
+  // (consistent with other mid-session controls like mark-bought).
+  const canEdit = state.status === STATUS.RUNNING;
+  editNotesButton.disabled = !canEdit;
+
+  const notes = (profile.userContext || "").trim();
+
+  if (isEditingNotes && canEdit) {
+    backgroundNotesView.classList.add("hidden");
+    backgroundNotesEdit.classList.remove("hidden");
+    const used = (backgroundNotesInput.value || "").length;
+    backgroundNotesCharCount.textContent = t(language, "backgroundNotesCharLimit", {
+      used,
+      max: USER_CONTEXT_MAX
+    });
+    return;
+  }
+
+  backgroundNotesView.classList.remove("hidden");
+  backgroundNotesEdit.classList.add("hidden");
+  backgroundNotesError.classList.add("hidden");
+  backgroundNotesError.textContent = "";
+
+  if (notes) {
+    backgroundNotesText.textContent = notes;
+    backgroundNotesText.classList.remove("empty-state");
+  } else {
+    backgroundNotesText.textContent = t(language, "backgroundNotesEmpty");
+    backgroundNotesText.classList.add("empty-state");
+  }
+}
+
+function populateLongTermTimeframeOptions(selectEl, language, selectedValue = "daily") {
+  selectEl.innerHTML = LONG_TERM_TIMEFRAME_OPTIONS
+    .map((tf) => `<option value="${tf}">${escapeHtml(t(language, `longTermTimeframe_${tf}`))}</option>`)
+    .join("");
+  selectEl.value = LONG_TERM_TIMEFRAME_OPTIONS.includes(selectedValue) ? selectedValue : "daily";
+}
+
+function formatLongTermTimestamp(iso, language) {
+  if (!iso) return t(language, "nA");
+  try {
+    return new Date(iso).toLocaleString(language === "zh" ? "zh-CN" : "en-US", {
+      month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false
+    });
+  } catch {
+    return iso;
+  }
+}
+
+function renderLongTermSummaryInto(containerEl, ctx, language, { isLoading = false } = {}) {
+  if (isLoading) {
+    containerEl.classList.remove("hidden");
+    containerEl.classList.add("is-loading");
+    containerEl.textContent = t(language, "longTermGenerating");
+    return;
+  }
+  containerEl.classList.remove("is-loading");
+  if (!ctx) {
+    containerEl.classList.add("hidden");
+    containerEl.innerHTML = "";
+    return;
+  }
+  containerEl.classList.remove("hidden");
+  const trendKey = `longTermTrend_${ctx.trend || "unclear"}`;
+  const stageKey = `longTermStage_${ctx.stage || "unclear"}`;
+  const trendLabel = t(language, trendKey);
+  const stageLabel = t(language, stageKey);
+  const support = (ctx.keySupport || "").trim() || t(language, "nA");
+  const resistance = (ctx.keyResistance || "").trim() || t(language, "nA");
+  const summary = (ctx.summary || "").trim() || t(language, "nA");
+  const tfLabel = t(language, `longTermTimeframe_${ctx.timeframe || "daily"}`);
+  const generated = t(language, "longTermGeneratedAt", { when: formatLongTermTimestamp(ctx.generatedAt, language) });
+
+  containerEl.innerHTML = `
+    <div class="meta">${escapeHtml(tfLabel)} · ${escapeHtml(generated)}</div>
+    <div class="row"><span class="label">${escapeHtml(t(language, "longTermFieldTrend"))}</span><span class="value">${escapeHtml(trendLabel)}</span></div>
+    <div class="row"><span class="label">${escapeHtml(t(language, "longTermFieldStage"))}</span><span class="value">${escapeHtml(stageLabel)}</span></div>
+    <div class="row"><span class="label">${escapeHtml(t(language, "longTermFieldSupport"))}</span><span class="value">${escapeHtml(support)}</span></div>
+    <div class="row"><span class="label">${escapeHtml(t(language, "longTermFieldResistance"))}</span><span class="value">${escapeHtml(resistance)}</span></div>
+    <div class="row"><span class="label">${escapeHtml(t(language, "longTermFieldSummary"))}</span><span class="value">${escapeHtml(summary)}</span></div>
+  `;
+}
+
+function renderLongTermFormWidget(state, language) {
+  // Visible only during the AWAITING_CONTEXT phase (the start form).
+  if (state.status !== STATUS.AWAITING_CONTEXT) {
+    longTermFormSection.classList.add("hidden");
+    return;
+  }
+  longTermFormSection.classList.remove("hidden");
+  longTermFormLabel.textContent = t(language, "longTermTitle");
+  longTermFormCopy.textContent = t(language, "longTermFormCopy");
+  longTermFormTimeframeLabel.textContent = t(language, "longTermTimeframeLabel");
+  longTermFormGenerateButton.textContent = isGeneratingLongTerm
+    ? t(language, "longTermGenerating")
+    : t(language, "longTermGenerateButton");
+  longTermFormGenerateButton.disabled = isGeneratingLongTerm;
+
+  if (!longTermFormTimeframeSelect.options.length) {
+    populateLongTermTimeframeOptions(longTermFormTimeframeSelect, language, "daily");
+  }
+
+  const draft = state.longTermContextDraft || null;
+  renderLongTermSummaryInto(longTermFormSummary, draft, language, { isLoading: isGeneratingLongTerm });
+  // If there's a draft, sync the timeframe selector to it so a Regenerate keeps it aligned.
+  if (draft?.timeframe) {
+    longTermFormTimeframeSelect.value = draft.timeframe;
   }
 }
 
@@ -459,6 +765,9 @@ function updateStaticText(language, settings) {
   totalRoundsLabel.textContent = t(language, "totalRounds");
   confirmButton.textContent = t(language, "start");
   recommendationTitle.textContent = t(language, "latestRecommendation");
+  userContextFormLabel.textContent = t(language, "backgroundNotesTitle");
+  userContextFormInput.placeholder = t(language, "backgroundNotesPlaceholder");
+  userContextFormHint.textContent = t(language, "backgroundNotesCopy");
   apiKeyStatus.textContent = settings.openaiApiKey
     ? t(language, "apiKeySaved", { model: settings.model })
     : t(language, "noApiKeySaved");
@@ -534,6 +843,11 @@ function populateContextForm(state, language) {
   symbolOverrideInput.value = profile?.symbolOverride ?? "";
   populateAnalysisIntervalOptions(language, normalizeAnalysisInterval(profile?.rules?.analysisInterval));
   populateTotalRoundsOptions(language, normalizeTotalRounds(profile?.rules?.totalRounds));
+  // Prefill notes from last profile so the user doesn't have to retype them when restarting.
+  if (!userContextFormInput.value) {
+    userContextFormInput.value = profile?.userContext ?? "";
+  }
+  renderUserContextFormHint(language);
 }
 
 async function render() {
@@ -557,6 +871,8 @@ async function render() {
   apiKeyInput.value = "";
   renderAnalysisCard(state, language);
   renderPositionPanels(state, language);
+  renderBackgroundNotesCard(state, language);
+  renderLongTermFormWidget(state, language);
   renderRecentRounds(state, language);
   renderStatsCard(state, language);
   renderTradeJournal(state, language);
@@ -669,6 +985,84 @@ markBoughtButton.addEventListener("click", async () => {
   await render();
 });
 
+markLimitPlacedButton.addEventListener("click", async () => {
+  const settings = await getSettings();
+  const language = getLanguage(settings.language);
+  markLimitPlacedError.classList.add("hidden");
+  markLimitPlacedError.textContent = "";
+  const limitPrice = limitPlacedPriceInput.value.trim();
+  if (!limitPrice || Number(limitPrice) <= 0) {
+    markLimitPlacedError.textContent = t(language, "limitPriceInvalid");
+    markLimitPlacedError.classList.remove("hidden");
+    return;
+  }
+  markLimitPlacedButton.disabled = true;
+  try {
+    const response = await chrome.runtime.sendMessage({ type: "mark-limit-placed", limitPrice });
+    if (!response?.ok) {
+      markLimitPlacedError.textContent = response?.error || t(language, "couldNotStart");
+      markLimitPlacedError.classList.remove("hidden");
+    } else {
+      limitPlacedPriceInput.value = "";
+    }
+  } finally {
+    markLimitPlacedButton.disabled = false;
+  }
+  await render();
+});
+
+pendingLimitCancelButton.addEventListener("click", async () => {
+  pendingLimitError.classList.add("hidden");
+  pendingLimitError.textContent = "";
+  pendingLimitCancelButton.disabled = true;
+  try {
+    const response = await chrome.runtime.sendMessage({ type: "mark-limit-cancelled" });
+    if (!response?.ok) {
+      pendingLimitError.textContent = response?.error || "";
+      pendingLimitError.classList.remove("hidden");
+    }
+  } finally {
+    pendingLimitCancelButton.disabled = false;
+  }
+  await render();
+});
+
+pendingLimitFilledButton.addEventListener("click", async () => {
+  const settings = await getSettings();
+  const language = getLanguage(settings.language);
+  pendingLimitError.classList.add("hidden");
+  pendingLimitError.textContent = "";
+
+  const state = await getState();
+  const pending = state.pendingLimitOrder;
+  if (!pending) {
+    await render();
+    return;
+  }
+
+  const price = pending.limitPrice;
+  if (!price || Number(price) <= 0) {
+    pendingLimitError.textContent = t(language, "limitPriceInvalid");
+    pendingLimitError.classList.remove("hidden");
+    return;
+  }
+
+  pendingLimitFilledButton.disabled = true;
+  try {
+    const type = pending.action === "BUY_LIMIT" ? "mark-bought" : "mark-sold";
+    const payload = type === "mark-bought" ? { entryPrice: price } : { exitPrice: price };
+    const response = await chrome.runtime.sendMessage({ type, ...payload });
+    if (!response?.ok) {
+      pendingLimitError.textContent =
+        response?.error || t(language, type === "mark-bought" ? "couldNotMarkBought" : "couldNotMarkSold");
+      pendingLimitError.classList.remove("hidden");
+    }
+  } finally {
+    pendingLimitFilledButton.disabled = false;
+  }
+  await render();
+});
+
 markSoldButton.addEventListener("click", async () => {
   const settings = await getSettings();
   const language = getLanguage(settings.language);
@@ -734,6 +1128,103 @@ clearApiKeyButton.addEventListener("click", async () => {
   await render();
 });
 
+userContextFormInput.addEventListener("input", async () => {
+  const settings = await getSettings();
+  renderUserContextFormHint(getLanguage(settings.language));
+});
+
+editNotesButton.addEventListener("click", async () => {
+  const state = await getState();
+  const profile = state.monitoringProfile || state.lastMonitoringProfile;
+  backgroundNotesInput.value = profile?.userContext ?? "";
+  isEditingNotes = true;
+  await render();
+  backgroundNotesInput.focus();
+});
+
+cancelNotesButton.addEventListener("click", async () => {
+  isEditingNotes = false;
+  backgroundNotesError.classList.add("hidden");
+  backgroundNotesError.textContent = "";
+  await render();
+});
+
+backgroundNotesInput.addEventListener("input", async () => {
+  const settings = await getSettings();
+  const language = getLanguage(settings.language);
+  const used = (backgroundNotesInput.value || "").length;
+  backgroundNotesCharCount.textContent = t(language, "backgroundNotesCharLimit", {
+    used,
+    max: USER_CONTEXT_MAX
+  });
+});
+
+saveNotesButton.addEventListener("click", async () => {
+  const settings = await getSettings();
+  const language = getLanguage(settings.language);
+  backgroundNotesError.classList.add("hidden");
+  backgroundNotesError.textContent = "";
+
+  const value = backgroundNotesInput.value || "";
+  if (value.length > USER_CONTEXT_MAX) {
+    backgroundNotesError.textContent = t(language, "backgroundNotesTooLong", { max: USER_CONTEXT_MAX });
+    backgroundNotesError.classList.remove("hidden");
+    return;
+  }
+
+  saveNotesButton.disabled = true;
+  cancelNotesButton.disabled = true;
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: "update-user-context",
+      userContext: value
+    });
+    if (!response?.ok) {
+      backgroundNotesError.textContent = response?.error || t(language, "couldNotSaveNotes");
+      backgroundNotesError.classList.remove("hidden");
+      return;
+    }
+    isEditingNotes = false;
+  } finally {
+    saveNotesButton.disabled = false;
+    cancelNotesButton.disabled = false;
+  }
+  await render();
+});
+
+async function runLongTermGenerate({ timeframe, errorEl }) {
+  const settings = await getSettings();
+  const language = getLanguage(settings.language);
+  errorEl.textContent = "";
+  errorEl.classList.add("hidden");
+
+  isGeneratingLongTerm = true;
+  await render();
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: "generate-long-term-context",
+      timeframe
+    });
+    if (!response?.ok) {
+      errorEl.textContent = response?.error || t(language, "longTermGenerateFailed");
+      errorEl.classList.remove("hidden");
+    }
+  } catch (error) {
+    errorEl.textContent = error?.message || t(language, "longTermGenerateFailed");
+    errorEl.classList.remove("hidden");
+  } finally {
+    isGeneratingLongTerm = false;
+    await render();
+  }
+}
+
+longTermFormGenerateButton.addEventListener("click", () => {
+  void runLongTermGenerate({
+    timeframe: longTermFormTimeframeSelect.value || "daily",
+    errorEl: longTermFormError
+  });
+});
+
 function debounce(fn, wait) {
   let timer = null;
   return (...args) => {
@@ -778,7 +1269,8 @@ contextForm.addEventListener("submit", async (event) => {
       type: "start-monitoring",
       symbolOverride: symbolOverrideInput.value,
       analysisInterval: analysisIntervalSelect.value,
-      totalRounds: totalRoundsSelect.value
+      totalRounds: totalRoundsSelect.value,
+      userContext: userContextFormInput.value
     });
   } catch (error) {
     sendError = error;
