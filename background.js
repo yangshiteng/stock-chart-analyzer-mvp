@@ -11,7 +11,7 @@
 } from "./lib/constants.js";
 import { validateStockChartByKeywordsWithLanguage } from "./lib/chart-validator.js";
 import { getLanguage, t } from "./lib/i18n.js";
-import { analyzeChartCapture, generateTradeLesson } from "./lib/llm.js";
+import { analyzeChartCapture, generateLongTermContext, generateTradeLesson, LONG_TERM_TIMEFRAMES, USER_CONTEXT_MAX_LENGTH } from "./lib/llm.js";
 import { getUsTradingDay, isNearUsMarketClose, isWithinUsMarketHours } from "./lib/market-hours.js";
 import {
   SIDEPANEL_PATH,
@@ -439,8 +439,14 @@ async function buildMonitoringProfile(payload) {
     throw new Error(t(language, "chooseValidTotalRounds"));
   }
 
+  // Optional user-supplied background notes (fundamentals, ATH, earnings, macro…).
+  // Capped at USER_CONTEXT_MAX_LENGTH so the prompt stays bounded; extra chars are dropped.
+  const rawUserContext = typeof payload.userContext === "string" ? payload.userContext : "";
+  const userContext = rawUserContext.trim().slice(0, USER_CONTEXT_MAX_LENGTH);
+
   return {
     symbolOverride,
+    userContext,
     rules: {
       analysisInterval,
       totalRounds
@@ -489,22 +495,137 @@ async function markBought(payload) {
     throw new Error(t(language, "entryPriceInvalid"));
   }
 
+  // Prefer the pending limit order's captured snapshot over lastResult — lastResult may have
+  // moved on to a different signal by the time the limit fills several rounds later.
+  const pending = currentState.pendingLimitOrder;
   const suggestion = currentState.lastResult?.analysis || {};
+  const source = pending || suggestion;
   const now = new Date();
   const virtualPosition = {
     entryPrice: entryPriceRaw,
     entryTime: now.toISOString(),
     tradingDay: getUsTradingDay(now),
-    stopLossPrice: suggestion.stopLossPrice || null,
-    targetPrice: suggestion.targetPrice || null,
-    reason: suggestion.reasoning || suggestion.triggerCondition || null,
-    symbol: currentState.monitoringProfile?.symbolOverride || suggestion.symbol || null,
-    sourceRound: currentState.roundCount || 0,
-    entryAction: suggestion.action || null,
-    entryConfidence: suggestion.confidence || null
+    stopLossPrice: source.stopLossPrice || suggestion.stopLossPrice || null,
+    targetPrice: source.targetPrice || suggestion.targetPrice || null,
+    reason: source.reasoning || source.reason || suggestion.reasoning || suggestion.triggerCondition || null,
+    symbol: currentState.monitoringProfile?.symbolOverride || source.symbol || suggestion.symbol || null,
+    sourceRound: pending?.sourceRound ?? currentState.roundCount ?? 0,
+    entryAction: pending?.action || suggestion.action || null,
+    entryConfidence: pending?.confidence || suggestion.confidence || null
   };
 
-  const state = await patchState({ virtualPosition, lastError: null });
+  const state = await patchState({
+    virtualPosition,
+    pendingLimitOrder: null,
+    lastError: null
+  });
+  return { ok: true, state };
+}
+
+async function markLimitPlaced(payload) {
+  const language = await getUiLanguage();
+  const currentState = await getState();
+  if (currentState.status !== STATUS.RUNNING) {
+    throw new Error(t(language, "markBoughtNotRunning"));
+  }
+
+  const suggestion = currentState.lastResult?.analysis || {};
+  const action = suggestion.action;
+  if (action !== "BUY_LIMIT" && action !== "SELL_LIMIT") {
+    throw new Error(t(language, "limitNotLimitSignal"));
+  }
+  // Symmetry checks: BUY_LIMIT requires flat, SELL_LIMIT requires an open position.
+  if (action === "BUY_LIMIT" && currentState.virtualPosition) {
+    throw new Error(t(language, "limitBuyWhileHolding"));
+  }
+  if (action === "SELL_LIMIT" && !currentState.virtualPosition) {
+    throw new Error(t(language, "limitSellWithoutPosition"));
+  }
+  if (currentState.pendingLimitOrder) {
+    throw new Error(t(language, "limitAlreadyPending"));
+  }
+
+  const limitPriceRaw = `${payload?.limitPrice ?? suggestion.entryPrice ?? ""}`.trim();
+  const limitPrice = Number(limitPriceRaw);
+  if (!Number.isFinite(limitPrice) || limitPrice <= 0) {
+    throw new Error(t(language, "limitPriceInvalid"));
+  }
+
+  const pendingLimitOrder = {
+    action,
+    limitPrice: limitPriceRaw,
+    stopLossPrice: suggestion.stopLossPrice || null,
+    targetPrice: suggestion.targetPrice || null,
+    reasoning: suggestion.reasoning || suggestion.triggerCondition || null,
+    confidence: suggestion.confidence || null,
+    symbol: currentState.monitoringProfile?.symbolOverride || suggestion.symbol || null,
+    placedAt: new Date().toISOString(),
+    sourceRound: currentState.roundCount || 0
+  };
+
+  const state = await patchState({ pendingLimitOrder, lastError: null });
+  return { ok: true, state };
+}
+
+async function updateUserContext(payload) {
+  const language = await getUiLanguage();
+  const currentState = await getState();
+  // Only allow edits while a session is live — avoids editing stale profiles.
+  if (currentState.status !== STATUS.RUNNING) {
+    throw new Error(t(language, "backgroundNotesNotRunning"));
+  }
+  if (!currentState.monitoringProfile) {
+    throw new Error(t(language, "backgroundNotesNotRunning"));
+  }
+
+  const raw = typeof payload?.userContext === "string" ? payload.userContext : "";
+  if (raw.length > USER_CONTEXT_MAX_LENGTH) {
+    throw new Error(t(language, "backgroundNotesTooLong", { max: USER_CONTEXT_MAX_LENGTH }));
+  }
+  const trimmed = raw.trim().slice(0, USER_CONTEXT_MAX_LENGTH);
+
+  const monitoringProfile = { ...currentState.monitoringProfile, userContext: trimmed };
+  const state = await patchState({
+    monitoringProfile,
+    lastMonitoringProfile: monitoringProfile
+  });
+  return { ok: true, state };
+}
+
+// Pre-session entry point: capture the active tab, ask the LLM for a higher-timeframe
+// structural read, and stash the result in `state.longTermContextDraft`. The draft is
+// copied into the new monitoringProfile on Start, then cleared. Live-session regeneration
+// is intentionally NOT supported — once a session starts, the long-term anchor is frozen
+// for that session. To refresh, exit and start a new session.
+async function generateLongTermContextHandler(payload) {
+  await ensureApiKeyConfigured();
+
+  const timeframe = LONG_TERM_TIMEFRAMES.includes(payload?.timeframe) ? payload.timeframe : "daily";
+  const currentState = await getState();
+  const capture = await captureActiveTab();
+
+  const longTermContext = await generateLongTermContext({
+    ...capture,
+    timeframe,
+    symbolHint: currentState.monitoringProfile?.symbolOverride
+      || currentState.lastMonitoringProfile?.symbolOverride
+      || null
+  });
+
+  const state = await patchState({
+    longTermContextDraft: longTermContext,
+    lastError: null
+  });
+  return { ok: true, state, longTermContext };
+}
+
+async function markLimitCancelled() {
+  const currentState = await getState();
+  if (!currentState.pendingLimitOrder) {
+    // Idempotent — already no pending. Not an error.
+    return { ok: true, state: currentState };
+  }
+  const state = await patchState({ pendingLimitOrder: null });
   return { ok: true, state };
 }
 
@@ -555,6 +676,7 @@ async function markSold(payload) {
 
   await patchState({
     virtualPosition: null,
+    pendingLimitOrder: null,
     tradeHistory
   });
 
@@ -578,13 +700,28 @@ async function markSold(payload) {
   return { ok: true, state };
 }
 
+// Build a fresh default state that PRESERVES the user's trade journal across a reset.
+// Used anywhere we'd otherwise call saveState(createDefaultState()) — which silently
+// wiped months of trade history. tradeHistory is the only field worth preserving:
+// virtualPosition / pendingLimitOrder are live-trade state (not meaningful after a reset),
+// monitoringProfile / results are session scoped. Callers that genuinely want a clean
+// wipe (e.g. emergency reset) can still use createDefaultState() directly.
+async function buildResetStatePreservingHistory(overrides = {}) {
+  const prior = await getState();
+  return {
+    ...createDefaultState(),
+    tradeHistory: Array.isArray(prior?.tradeHistory) ? prior.tradeHistory : [],
+    ...overrides
+  };
+}
+
 async function exitMonitoring() {
   await clearMonitoringAlarm();
 
   const currentState = await getState();
   const tabIds = getSessionTabIds(currentState);
 
-  await saveState(createDefaultState());
+  await saveState(await buildResetStatePreservingHistory());
 
   for (const tabId of tabIds) {
     await chrome.sidePanel.setOptions({
@@ -600,10 +737,7 @@ async function runValidationPreflight() {
   const language = await getUiLanguage();
   await clearMonitoringAlarm();
 
-  await saveState({
-    ...createDefaultState(),
-    status: STATUS.VALIDATING
-  });
+  await saveState(await buildResetStatePreservingHistory({ status: STATUS.VALIDATING }));
 
   try {
     const capture = await captureActiveTab();
@@ -614,11 +748,10 @@ async function runValidationPreflight() {
     const validationRecord = buildValidationRecord(validation, capture);
 
     if (!validation.isStockChart) {
-      const state = await saveState({
-        ...createDefaultState(),
+      const state = await saveState(await buildResetStatePreservingHistory({
         lastValidation: validationRecord,
         stopReason: t(language, "validationFailedChart")
-      });
+      }));
 
       if (capture.tabId) {
         await setSidePanelAvailabilityForTab(capture.tabId, {
@@ -637,11 +770,10 @@ async function runValidationPreflight() {
       };
     }
 
-    const state = await saveState({
-      ...createDefaultState(),
+    const state = await saveState(await buildResetStatePreservingHistory({
       status: STATUS.AWAITING_CONTEXT,
       lastValidation: validationRecord
-    });
+    }));
 
     if (capture.tabId) {
       await setSidePanelAvailabilityForTab(capture.tabId, {
@@ -657,11 +789,10 @@ async function runValidationPreflight() {
       state
     };
   } catch (error) {
-    const state = await saveState({
-      ...createDefaultState(),
+    const state = await saveState(await buildResetStatePreservingHistory({
       lastError: error.message,
       stopReason: t(language, "validationFailedCapture")
-    });
+    }));
 
     await notifyUser(t(language, "notifyCaptureFailed"), error.message);
 
@@ -762,12 +893,19 @@ async function runMonitoringRound() {
           }))
       : null;
 
+    const lastSignal = currentState.lastResult?.analysis || null;
+    const pendingLimitOrder = currentState.pendingLimitOrder || null;
+
     const analysis = await analyzeChartCapture({
       ...capture,
       symbolHint: monitoringProfile.symbolOverride || null,
       mode,
       virtualPosition,
-      recentLessons
+      recentLessons,
+      lastSignal,
+      pendingLimitOrder,
+      userContext: monitoringProfile.userContext || "",
+      longTermContext: monitoringProfile.longTermContext || null
     });
 
     const round = currentState.roundCount + 1;
@@ -845,18 +983,26 @@ async function startMonitoring(payload) {
   await ensureApiKeyConfigured();
 
   const activeTab = await getActiveTab();
-  const monitoringProfile = normalizeMonitoringProfileRules(
+  const baseProfile = normalizeMonitoringProfileRules(
     bindMonitoringProfileToTab(
       await buildMonitoringProfile(payload),
       activeTab
     )
   );
 
+  // Pull the optional pre-session long-term draft into the live profile, then clear it
+  // so a stale draft from a previous attempt can never leak into a future session.
+  const priorState = await getState();
+  const monitoringProfile = priorState.longTermContextDraft
+    ? { ...baseProfile, longTermContext: priorState.longTermContextDraft }
+    : baseProfile;
+
   await patchState({
     status: STATUS.RUNNING,
     isRoundInFlight: false,
     monitoringProfile,
     lastMonitoringProfile: monitoringProfile,
+    longTermContextDraft: null,
     stopReason: null,
     lastError: null
   });
@@ -934,13 +1080,12 @@ async function restartMonitoring() {
   await ensureMonitoringTabActive(savedMonitoringProfile, language);
   const monitoringProfile = normalizeMonitoringProfileRules(savedMonitoringProfile);
 
-  await saveState({
-    ...createDefaultState(),
+  await saveState(await buildResetStatePreservingHistory({
     status: STATUS.RUNNING,
     isRoundInFlight: false,
     monitoringProfile,
     lastMonitoringProfile: monitoringProfile
-  });
+  }));
 
   await enableSidePanelForWindow(monitoringProfile.boundWindowId);
 
@@ -954,8 +1099,13 @@ async function restartMonitoring() {
   };
 }
 
+// onInstalled fires on first install, version update, AND every chrome://extensions reload.
+// Wiping the entire state on every reload used to nuke the trade journal — unacceptable now
+// that it feeds RECENT_LESSONS and the stats card. Preserve tradeHistory only; other fields
+// (virtualPosition, pendingLimitOrder, monitoringProfile, results, …) reset to defaults because
+// their shape may have changed across versions and a manual reload is an explicit intervention.
 chrome.runtime.onInstalled.addListener(async () => {
-  await saveState(createDefaultState());
+  await saveState(await buildResetStatePreservingHistory());
 });
 
 // Day-trading rule: positions never carry overnight. If the service worker
@@ -990,7 +1140,7 @@ async function abandonStaleVirtualPositionIfNeeded() {
     abandonReason: "overnight_gap"
   };
   const tradeHistory = [trade, ...(state.tradeHistory || [])].slice(0, MAX_TRADE_HISTORY);
-  await patchState({ virtualPosition: null, tradeHistory });
+  await patchState({ virtualPosition: null, pendingLimitOrder: null, tradeHistory });
   await pauseMonitoring(t(language, "sessionAbandonedOvernight"));
 }
 
@@ -1155,6 +1305,26 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     if (message?.type === "mark-sold") {
       sendResponse(await markSold(message));
+      return;
+    }
+
+    if (message?.type === "mark-limit-placed") {
+      sendResponse(await markLimitPlaced(message));
+      return;
+    }
+
+    if (message?.type === "mark-limit-cancelled") {
+      sendResponse(await markLimitCancelled());
+      return;
+    }
+
+    if (message?.type === "update-user-context") {
+      sendResponse(await updateUserContext(message));
+      return;
+    }
+
+    if (message?.type === "generate-long-term-context") {
+      sendResponse(await generateLongTermContextHandler(message));
       return;
     }
 

@@ -1,284 +1,167 @@
-# Stock Chart Analyzer MVP
+# Stock Chart Analyzer
 
-A Chrome Extension (Manifest V3) MVP that validates stock-chart pages, captures visible chart screenshots, sends them to OpenAI `gpt-5.4`, and returns execution-oriented recommendations in a side panel.
+A Chrome Extension (Manifest V3) that screenshots a stock chart every N seconds, sends it to OpenAI (vision + Structured Outputs, model `gpt-5.4`), and returns an executable day-trading recommendation in a side panel. Single-user local tool.
 
-## What It Does Now
+This is an execution assistant, not a fundamental screener. It assumes the user has already decided **which** stock to trade and only needs help with **when** to enter, hold, or exit during the session.
 
-Current implemented behavior:
+## What it does
 
-- popup UI with:
-  - language selector
-  - OpenAI API key save / clear controls
-  - Discord webhook URL save / clear controls
-  - a single primary `Start` button
-  - a chart setup reminder: use a `5-minute candlestick chart` with `EMA 20 / 50 / 100 / 200`
-- side panel workflow with:
-  - validation status
-  - trading settings form
-  - chart setup reminder
-  - per-round loading state while a new screenshot analysis is in flight
-  - compact recommendation card focused on execution guidance
-  - `Stop`, `Continue`, `Restart`, and `Exit` controls
-- screenshot capture of the active chart tab in the bound monitoring window
-- keyword-based stock-chart validation from page title and URL
-- OpenAI Responses API integration with `gpt-5.4`
-- recurring monitoring using a user-selected analysis interval and total rounds
-- Discord notifications for each successful recommendation round when a webhook is configured
-- a short audio cue when a fresh recommendation result arrives
-- automatic pause if the user leaves the original bound chart tab inside the monitored window
-- automatic pause instead of full session loss when a single screenshot-analysis round fails
-- bilingual UI strings for English and Simplified Chinese
+- Captures the visible chart of the bound tab on a fixed interval (`chrome.alarms`).
+- Sends each screenshot to OpenAI Responses API with a strict JSON schema and gets back one execution signal per round.
+- Tracks a virtual position lifecycle (entry → hold → exit) inside the extension so the AI prompt is mode-aware.
+- Logs each closed trade to a journal, generates an AI-written lesson, and feeds the last 10 lessons back into future prompts.
+- Surfaces a real-trade performance stats card (win rate, avg PnL, breakdown by action and confidence) once trade history is non-empty.
+- Optionally posts a Discord webhook notification when the action changes between rounds.
+- Bilingual UI (English + Simplified Chinese), single source of truth in `lib/i18n.js`.
 
-## Recommended Chart Setup
+## Recommended chart setup
 
-For best results, users should prepare the chart like this:
+For best results prepare the chart like this before clicking Start:
 
-- `5-minute candlestick chart`
-- `EMA 20`
-- `EMA 50`
-- `EMA 100`
-- `EMA 200`
+- 5-minute candlestick chart
+- EMA 20 / 50 / 100 / 200
+- VWAP (session)
+- Volume pane visible
 
-The current prompt assumes those elements may be visible and avoids inferring EMA relationships that are not actually shown in the screenshot.
+The prompt instructs the model to use these only if visible and to never invent levels or relationships that are not on the screenshot.
 
-## Current User Flow
+## User flow
 
-1. Open a stock-chart page.
-2. Open the popup.
-3. Choose a language if needed.
-4. Save an OpenAI API key in the popup if one is not already stored.
-5. Optionally save a Discord webhook URL in the popup if you want Discord alerts.
-6. Click `Start`.
-7. The extension validates the current tab.
-8. If validation passes, the side panel opens and shows the trading settings form.
-9. The user fills in:
-   - `Current Shares`
-   - `Average Cost`
-   - `Available Cash`
-   - `Buy Risk Style`
-   - `Sell Risk Style`
-   - `Analysis Interval`
-   - `Total Rounds`
-10. The extension starts monitoring and immediately runs the first round.
-11. Later rounds run with `chrome.alarms` using the selected interval.
-12. While a new round is running, the side panel shows a loading state instead of silently jumping to the next result.
-13. Monitoring remains bound to the original chart tab.
-14. If the user leaves that tab inside the monitored Chrome window, monitoring pauses instead of silently switching to another page.
-15. Each successful round can also send a Discord notification if a webhook URL is configured.
-16. Each successful round also plays a short result sound inside Chrome.
-17. If one round fails because of an OpenAI or capture issue, the session pauses and keeps the current setup instead of clearing everything.
-18. The user can resume from that paused state after checking the chart tab.
-19. The user can:
-   - `Stop`: pause the session and keep the current setup
-   - `Continue`: resume a paused session on the original chart tab
-   - `Restart`: restart monitoring from round 1 using the saved setup
-   - `Exit`: fully clear the current monitoring session and close the side panel
+1. Open a stock-chart page (TradingView, Yahoo Finance, 雪球, 东方财富, 富途, 老虎, 新浪财经, etc.).
+2. Open the popup. Save your OpenAI API key. Optionally save a Discord webhook URL. Optionally toggle "market hours only" (9:30–16:00 ET, Mon–Fri).
+3. Click `Start` in the popup. The extension validates the tab.
+4. The side panel opens with the session form. Fill in:
+   - **Ticker symbol** (auto-guessed from title/URL when possible, but user input wins)
+   - **Analysis interval** (e.g. every 60 / 90 / 120 seconds)
+   - **Total rounds**
+   - **Background notes** (optional, ≤ 500 chars — e.g. "stock at ATH, earnings tomorrow, sector risk-off")
+   - **Long-term context** (optional — generate once from a Daily or Weekly chart, see below)
+5. Click `Start Monitoring`. The first round fires immediately; subsequent rounds run on the alarm.
+6. The recommendation card shows the latest signal. The session enters entry mode (looking for BUY) or exit mode (managing an open position) depending on whether you have marked a trade as filled.
 
-## Recommendation Logic
+### Trade lifecycle
 
-The extension no longer asks the user to choose `Buy`, `Sell`, or a manual intent.
+Action vocabulary the AI is allowed to return:
 
-Instead, the user provides current trading context, and the model decides the best action right now from:
+| Mode | Allowed actions |
+| --- | --- |
+| Entry (no position) | `BUY_NOW`, `BUY_LIMIT`, `WAIT` |
+| Exit (holding) | `SELL_NOW`, `SELL_LIMIT`, `HOLD` |
+| Force-exit (10 min before close, holding) | `SELL_NOW` only |
 
-- `OPEN`
-- `ADD_STRENGTH`
-- `ADD_WEAKNESS`
-- `HOLD`
-- `REDUCE_PROFIT`
-- `REDUCE_RISK`
-- `EXIT`
-- `WAIT`
+Side panel buttons follow the signal:
 
-The goal is to make the extension behave like an execution assistant rather than a manual intent picker.
+- `BUY_NOW` / `BUY_LIMIT` → user marks the entry price after filling at the broker.
+- `BUY_LIMIT` / `SELL_LIMIT` → user records the broker-placed limit price; the next round's prompt is told a resting order exists so the AI can stay consistent or explicitly invalidate it.
+- `SELL_NOW` / `SELL_LIMIT` → user marks the exit price; the trade is closed, written to the journal, and the session pauses (one trade per day; manual Continue starts the next).
+- Overnight gap → if a position is somehow still open when the trading day rolls over, it is auto-abandoned with `status: "abandoned"` in the journal.
 
-## Prompt and Language Architecture
+## Recommendation schema
 
-The prompt system is split into two stages:
+The model returns strict JSON with these fields:
 
-1. English analysis
-2. Optional Chinese translation
-
-Current behavior:
-
-- the main analysis prompt is always English
-- the JSON schema and enum values remain English
-- English mode returns the analysis directly
-- Chinese mode performs a second LLM call that translates only user-facing fields into Simplified Chinese
-
-The main analysis prompt is now structured into sections:
-
-- `[ROLE]`
-- `[OBJECTIVE]`
-- `[USER_CONTEXT]`
-- `[CHART_CONTEXT]`
-- `[CHART_FOCUS]`
-- `[CHART_GUARDRAILS]`
-- `[RISK_STYLE_RULE]`
-- `[ACTION_RULES]`
-- `[OUTPUT_RULES]`
-- `[LANGUAGE_RULES]`
-- `[OUTPUT_FORMAT]`
-
-The translation prompt is also section-based and keeps:
-
-- schema keys unchanged
-- `action` unchanged
-- raw prices and raw price zones unchanged
-
-## Current Analysis Schema
-
-The model is required to return strict JSON with these fields:
-
-- `action`
-- `sizeSuggestion`
-- `whatToDoNow`
-- `levels.invalidation`
-- `supportLevels.primary`
-- `supportLevels.secondary`
-- `resistanceLevels.primary`
-- `resistanceLevels.secondary`
-- `riskNote`
+- `action` — see vocabulary above
+- `entryPrice` — for BUY_LIMIT, otherwise the reference price
+- `stopLossPrice` — invalidation level
+- `targetPrice` — profit target
+- `triggerCondition` — short string describing the price/structure trigger ("close above $182.40 on 5m")
+- `confidence` — `high` | `medium` | `low`
+- `reasoning` — short rationale, must name specific structure / EMAs / VWAP / volume seen on the chart
 - `symbol`
 - `currentPrice`
 
-Notes:
+## Prompt architecture (`lib/llm.js` + `lib/prompt-config.js`)
 
-- `whatToDoNow` is the main natural-language instruction shown in the recommendation card
-- `sizeSuggestion` is a user-facing sizing recommendation, not broker-connected execution
-- `supportLevels` and `resistanceLevels` are short visible price references extracted from the current chart
-- `levels.invalidation` is the downside risk trigger / caution price
+Single OpenAI call per round, language-aware (Chinese-mode output is generated in one shot — no separate translation step). Prompt is assembled from these sections, in order:
 
-## OpenAI Setup
+`[ROLE]` → `[OBJECTIVE]` → `[SESSION_MODE]` → `[POSITION_CONTEXT]` → `[CHART_CONTEXT]` → `[CHART_FOCUS]` → `[CHART_GUARDRAILS]` → `[ENTRY_MODE_RULES] | [EXIT_MODE_RULES] | [FORCE_EXIT_RULES]` → `[EXECUTION_RULES]` → `[OUTPUT_RULES]` → `[LANGUAGE_OUTPUT]` → `[RECENT_LESSONS]` → `[USER_CONTEXT]` → `[LONG_TERM_CONTEXT]` → `[LAST_SIGNAL_AND_ORDER]` → `[OUTPUT_FORMAT]`
 
-The extension currently uses the OpenAI Responses API with:
+Mode is derived (no ad-hoc flags): `virtualPosition === null && !nearClose` → entry; `virtualPosition !== null && !nearClose` → exit; `virtualPosition !== null && nearClose` → force-exit.
 
-- model: `gpt-5.4`
-- image input: high detail
-- strict JSON schema output
+Notable injected sections:
 
-The OpenAI API key is stored in `chrome.storage.local` inside the extension.
+- `RECENT_LESSONS` — last 10 closed trades with non-empty AI-generated lessons, formatted as `- [SYMBOL ±pnl% date] lesson`. Entry mode only.
+- `USER_CONTEXT` — the per-session background notes the user typed, wrapped in `--- BEGIN NOTES --- / --- END NOTES ---` with an explicit anti-bias meta-rule: treat verifiable facts as true, treat user predictions / sentiment as USER BIAS, never let opinion override what the chart shows.
+- `LONG_TERM_CONTEXT` — a structural read of the user's Daily or Weekly chart (trend, stage, key support/resistance, ≤300-char summary) generated once via a separate one-shot LLM call before the session starts. Anti-bias rules tell the AI: structural bias only, the 5-min chart is the trigger, on conflict lower confidence by one tier rather than letting the higher timeframe steamroll the intraday signal. A 24h staleness warning is included if the long-term snapshot is older than a day.
+- `LAST_SIGNAL_AND_ORDER` — the prior round's action plus any resting limit order (action, price, age in minutes, full snapshot) so the next round either reuses the same numbers or explicitly flags invalidation in `reasoning`. Omitted in force-exit mode.
 
-Current UX:
+## State model
 
-- API key management lives in the popup
-- the side panel hides the setup card when a key is already stored
+Single source of truth: `STATUS` enum (`IDLE` / `VALIDATING` / `AWAITING_CONTEXT` / `RUNNING` / `PAUSED`) plus four orthogonal data fields:
 
-## Discord Notifications
+- `virtualPosition` — `null` when scanning for entry, `{ entryPrice, stopLossPrice, targetPrice, entryAction, entryConfidence, tradingDay, ... }` when holding.
+- `pendingLimitOrder` — `null` or a snapshot of a resting BUY_LIMIT / SELL_LIMIT the user has placed at the broker.
+- `monitoringProfile` — per-session config: `symbolOverride`, `analysisInterval`, `totalRounds`, `userContext`, `longTermContext`, …
+- `tradeHistory` — closed (and abandoned) trades, capped at 500. Preserved across every reset path via `buildResetStatePreservingHistory()`.
 
-The extension can optionally send Discord notifications through a user-provided webhook URL.
+Buttons:
 
-Current behavior:
+- `Stop` — pauses; keeps profile, virtualPosition, pendingLimitOrder, tradeHistory.
+- `Continue` — resumes a paused session on the original bound tab.
+- `Restart` — round 1 with the same profile.
+- `Exit` — clears the session (but `tradeHistory` is always preserved).
 
-- the webhook URL is stored in `chrome.storage.local`
-- the popup lets the user save or clear the webhook URL
-- each successful recommendation round posts a Discord embed with:
-  - action
-  - current price
-  - current support
-  - current resistance
-  - risk trigger
-  - suggested size
-  - risk note
+## Performance stats
 
-The Discord payload is intentionally aligned with the compact side-panel result model.
+Once any closed trade exists, a Performance Stats card renders in the side panel with overall win rate, avg PnL %, total PnL %, avg held minutes, best/worst trade, plus breakdowns by action (BUY_NOW vs BUY_LIMIT) and confidence (high / medium / low — calibration check). Buckets with `n < 5` show a "small sample" warning rather than being hidden — sparse buckets are still informative if flagged.
 
-Notes:
+Pure aggregation lives in `lib/trade-stats.js` and is unit-tested.
 
-- Discord notifications are optional
-- if no webhook is configured, the extension skips Discord delivery
-- webhook URLs are secrets and should never be committed into the repository
+## File layout
 
-## File Structure
+- `manifest.json`
+- `background.js` — service worker; alarm-driven monitoring loop; tab binding; message routing; handlers for mark-bought / mark-sold / mark-limit-placed / mark-limit-cancelled / update-user-context / generate-long-term-context.
+- `popup.html` / `popup.js` / `popup.css` — language, API key, Discord webhook, market-hours toggle, Start.
+- `sidepanel.html` / `sidepanel.js` / `sidepanel.css` — session form, recommendation card, position card, limit-order card, background-notes editor, long-term context widget, trade journal, performance stats, recent rounds timeline.
+- `offscreen.html` / `offscreen.js` — short audio cue when a fresh round lands.
+- `lib/llm.js` — OpenAI calls (`callOpenAi` + `callOpenAiOnce` + retry wrapper with exponential backoff), prompt assembly, `generateTradeLesson`, `generateLongTermContext`.
+- `lib/prompt-config.js` — execution prompt config + JSON schema + long-term prompt config.
+- `lib/chart-validator.js` — keyword check that a tab is a stock chart page.
+- `lib/symbol.js` — `guessSymbol` + `sanitizeUrl` (pure, unit-tested).
+- `lib/market-hours.js` — `isWithinUsMarketHours`, `isNearUsMarketClose`, `getUsTradingDay` (pure, DST-correct via `Intl.DateTimeFormat`, unit-tested).
+- `lib/side-panel.js` — side-panel availability helpers.
+- `lib/storage.js`, `lib/constants.js` — state/settings helpers, `STATUS` enum, `createDefaultState()`, `buildResetStatePreservingHistory()`.
+- `lib/trade-stats.js` — pure aggregator.
+- `lib/i18n.js` — single dictionary for all user-facing + log strings (en + zh).
+- `test/*.test.js` — 79 `node:test` cases (`npm test`).
 
-- `manifest.json`: extension manifest and permissions
-- `background.js`: service worker, scheduling, capture, state transitions, pause / resume logic, side panel enablement, Discord delivery
-- `offscreen.html`, `offscreen.js`: offscreen audio document used to play a short result cue
-- `popup.html`, `popup.js`, `popup.css`: popup UI for language, OpenAI API key setup, Discord webhook setup, chart guidance, and `Start`
-- `sidepanel.html`, `sidepanel.js`, `sidepanel.css`: side panel UI, trading settings form, chart guidance, recommendation display, and monitoring controls
-- `lib/constants.js`: shared constants and state enums
-- `lib/storage.js`: local storage helpers for monitor state and app settings
-- `lib/chart-validator.js`: keyword-based stock chart validation
-- `lib/prompt-config.js`: structured English analysis prompt config
-- `lib/llm.js`: OpenAI request logic, JSON parsing, English analysis, and Chinese translation step
-- `lib/i18n.js`: UI translation dictionary and helpers
-- `assets/icon-128.png`: extension icon
-- `AGENTS.md`: project guidance for coding agents
+## OpenAI setup
 
-## State Model
+- Model: `gpt-5.4` (verified — do not "fix" it).
+- Image input: high detail (no compression — full-resolution screenshots).
+- Strict JSON schema output.
+- Retry: 3 attempts, 1s/2s exponential backoff, retries network errors + HTTP 429/5xx + `incomplete: max_output_tokens`.
+- Key stored in `chrome.storage.local` (single-user local tool — see Security below).
 
-Primary states:
+## Discord notifications
 
-- `idle`
-- `validating`
-- `awaiting_context`
-- `running`
-- `paused`
+Optional. When a webhook URL is configured, the extension posts an embed **only when `action` differs from the previous round's action** — no per-round spam. Payload includes action, current price, entry/stop/target, confidence, reasoning, symbol.
 
-Important behavior:
+## Market hours gate
 
-- `Start` in the popup triggers validation
-- `Stop` in the side panel pauses, it does not fully exit
-- `Exit` fully clears the current session
-- `Continue` only resumes when the user is back on the original bound chart tab
-- if a single monitoring round fails, the extension pauses and preserves the current session instead of resetting to `idle`
+Optional toggle in the popup. When on, scheduled rounds are skipped outside 9:30–16:00 ET, Mon–Fri. The skip reason is surfaced in the side panel summary while RUNNING so it is clear why no new card landed.
 
-## Side Panel Availability
+## Load locally in Chrome
 
-The side panel is not meant to be generally available on any stock-looking page.
+1. Open `chrome://extensions`.
+2. Enable Developer mode.
+3. `Load unpacked` → select this folder.
+4. Open a stock-chart page (5-min candles, EMA 20/50/100/200, VWAP, volume pane).
+5. Click the extension icon. Save API key. Optionally save Discord webhook + flip market-hours toggle.
+6. Click Start. Fill the session form in the side panel. Click Start Monitoring.
 
-Current rule:
+> If you are working in a git worktree under `.claude/worktrees/<branch>/`, point `Load unpacked` at the worktree path, not the main repo root. Re-point after switching branches.
 
-- before `Start` is used, the extension should not expose the side panel workflow for that tab
-- after validation passes, the validated tab can open the side panel
-- while monitoring is `running` or `paused`, the side panel stays associated with the original bound chart tab
+## Tests
 
-## Load Locally In Chrome
+```
+npm test
+```
 
-1. Open `chrome://extensions`
-2. Enable `Developer mode`
-3. Click `Load unpacked`
-4. Select this project folder
-5. Open a stock-chart page
-6. Click the extension icon
-7. Save your OpenAI API key if needed
-8. Save a Discord webhook URL if you want Discord alerts
-9. Confirm the chart is a `5-minute candlestick chart` with `EMA 20 / 50 / 100 / 200`
-10. Click `Start`
-11. Fill in the trading settings in the side panel and start monitoring
+`node:test` covers symbol parsing, chart validator, market hours / DST, trade-stats aggregation, and prompt assembly (mode awareness, RECENT_LESSONS, USER_CONTEXT, LONG_TERM_CONTEXT, LAST_SIGNAL_AND_ORDER, ordering invariants, anti-bias meta-rules).
 
-## Current Prompt Design
+## Security & limitations
 
-The prompt is configured in `lib/prompt-config.js`.
-
-Current prompt behavior:
-
-- assumes the stock has already passed the user's separate fundamental screening
-- focuses on a 5-minute chart
-- uses EMA 20 / 50 / 100 / 200 only if they are visible in the screenshot
-- takes the user's position, available cash, and buy/sell risk preferences into account
-- returns a single best execution action right now
-- returns a dedicated `whatToDoNow` field so the UI does not have to stitch together the main action copy
-- returns visible `supportLevels` and `resistanceLevels`
-- uses `Buy Risk Style` and `Sell Risk Style` to shape how patient or aggressive the execution recommendation should be
-- allows both pullback entries and reclaim / breakout-hold entries when the chart clearly supports them
-- keeps the response:
-  - concise
-  - direct
-  - JSON-only
-  - focused on beginner-friendly execution guidance
-
-## Limitations
-
-- The extension does not do image-native chart validation yet.
-- It uses visible-tab screenshots, so it cannot keep analyzing a background tab that is no longer active.
-- Discord notifications currently send on every successful round, not only on action changes.
-- It is not financial advice.
-- It is not suitable for unattended live trading or production brokerage automation.
-
-## Security
-
-- The current MVP stores the OpenAI API key in `chrome.storage.local`.
-- Optional Discord webhook URLs are also stored in `chrome.storage.local`.
-- That is acceptable for local testing, but not a production-grade secret-management model.
-- Do not commit API keys, webhook URLs, tokens, or personal credentials into this repository.
-- A stronger production design would route model access through a backend you control.
+- API key + Discord webhook live in `chrome.storage.local`. Acceptable for a single-user local tool; not a production secret-management model.
+- Screenshot is `captureVisibleTab` — the chart tab must be in the foreground of the bound window when the alarm fires. If the user switches away, the round is captured of whatever is foregrounded, which is why the validator + tab binding exist.
+- Not financial advice. Not for unattended live trading.
