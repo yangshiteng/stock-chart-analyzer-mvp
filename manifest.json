@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Stock Chart Analyzer MVP",
-  "description": "Chrome extension MVP that validates stock charts, runs OpenAI buy/sell analysis, and shows results in a side panel.",
+  "description": "Chrome extension that screenshots a TradingView chart on a fixed cadence, sends it to OpenAI for an executable day-trading signal, and shows the result in the side panel.",
   "version": "0.1.0",
   "minimum_chrome_version": "114",
   "icons": {
