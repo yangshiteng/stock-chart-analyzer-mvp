@@ -9,7 +9,7 @@
   TOTAL_ROUNDS_OPTIONS,
   createDefaultState
 } from "./lib/constants.js";
-import { validateStockChartByKeywordsWithLanguage } from "./lib/chart-validator.js";
+import { validateChartTab } from "./lib/chart-validator.js";
 import { getLanguage, t } from "./lib/i18n.js";
 import { analyzeChartCapture, generateLongTermContext, generateTradeLesson, LONG_TERM_TIMEFRAMES, USER_CONTEXT_MAX_LENGTH } from "./lib/llm.js";
 import { getUsTradingDay, isNearUsMarketClose, isWithinUsMarketHours } from "./lib/market-hours.js";
@@ -741,13 +741,13 @@ async function runValidationPreflight() {
 
   try {
     const capture = await captureActiveTab();
-    const validation = validateStockChartByKeywordsWithLanguage({
+    const validation = validateChartTab({
       ...capture,
       language
     });
     const validationRecord = buildValidationRecord(validation, capture);
 
-    if (!validation.isStockChart) {
+    if (!validation.isTradingView) {
       const state = await saveState(await buildResetStatePreservingHistory({
         lastValidation: validationRecord,
         stopReason: t(language, "validationFailedChart")
@@ -847,13 +847,13 @@ async function runMonitoringRound() {
 
   try {
     const capture = await captureActiveTab(monitoringProfile.boundWindowId || null);
-    const validation = validateStockChartByKeywordsWithLanguage({
+    const validation = validateChartTab({
       ...capture,
       language
     });
     const validationRecord = buildValidationRecord(validation, capture);
 
-    if (!validation.isStockChart) {
+    if (!validation.isTradingView) {
       const state = await patchState({
         status: STATUS.IDLE,
         isRoundInFlight: false,

@@ -1,6 +1,6 @@
 # Stock Chart Analyzer
 
-A Chrome Extension (Manifest V3) that screenshots a stock chart every N seconds, sends it to OpenAI (vision + Structured Outputs, model `gpt-5.4`), and returns an executable day-trading recommendation in a side panel. Single-user local tool.
+A Chrome Extension (Manifest V3) that screenshots a TradingView chart every N seconds, sends it to OpenAI (vision + Structured Outputs, model `gpt-5.4`), and returns an executable day-trading recommendation in a side panel. Single-user local tool, locked to TradingView so the prompt can rely on a consistent chart layout across users.
 
 This is an execution assistant, not a fundamental screener. It assumes the user has already decided **which** stock to trade and only needs help with **when** to enter, hold, or exit during the session.
 
@@ -14,20 +14,38 @@ This is an execution assistant, not a fundamental screener. It assumes the user 
 - Optionally posts a Discord webhook notification when the action changes between rounds.
 - Bilingual UI (English + Simplified Chinese), single source of truth in `lib/i18n.js`.
 
-## Recommended chart setup
+## Chart setup
 
-For best results prepare the chart like this before clicking Start:
+**One-click setup**: [import the recommended TradingView layout](https://cn.tradingview.com/chart/sfPJCGOU/?symbol=USAR). Sign in to TradingView (a free account works), clone the layout into your own account, then switch tickers freely — every chart you open will already have the right indicators, timezone, and color theme.
 
-- 5-minute candlestick chart
-- EMA 20 / 50 / 100 / 200
-- VWAP (session)
-- Volume pane visible
+The layout includes:
 
-The prompt instructs the model to use these only if visible and to never invent levels or relationships that are not on the screenshot.
+- 5-minute candlesticks + a multi-period EMA indicator (20 / 50 / 100 / 200) + VWAP (session) + Volume pane
+- US/New York timezone, regular trading hours only, 24-hour time format, standard close-vs-open candle coloring
+- No grid, no watermark, no community Ideas overlays
+
+That is the minimum the AI needs and the maximum it can use. Adding RSI / MACD / drawn levels does not improve signal quality and only shrinks each candle.
+
+### Manual setup (if you do not want to import)
+
+The two indicators below fit even the TradingView free tier:
+
+1. A single multi-period EMA indicator covering **20 / 50 / 100 / 200**.
+2. **VWAP (session)**.
+
+Then in chart Settings:
+
+- **Uncheck** `K线颜色基于前一收盘价` / `Color bars based on previous close` so candles use the standard close-vs-open coloring (the AI assumes this convention).
+- Under Events, **disable** `观点` / `Ideas`. Community-published BUY/SELL markers overlay the chart and the AI will read them as part of the screenshot — this is the single biggest source of prompt pollution.
+- Session = `常规交易时间` / `Regular Trading Hours`. Timezone = `(UTC-4) New York`. Time format = 24-hour.
+
+### Zoom level
+
+Show roughly **1.5–2 trading sessions** of 5-min bars. Each candle should be at least ~8 pixels wide — compressed week-views and hyper-zoomed 30-minute slices both lose information the AI needs.
 
 ## User flow
 
-1. Open a stock-chart page (TradingView, Yahoo Finance, 雪球, 东方财富, 富途, 老虎, 新浪财经, etc.).
+1. Open a TradingView chart for the ticker you want to trade. The extension only supports TradingView — see Chart setup above for the recommended layout.
 2. Open the popup. Save your OpenAI API key. Optionally save a Discord webhook URL. Optionally toggle "market hours only" (9:30–16:00 ET, Mon–Fri).
 3. Click `Start` in the popup. The extension validates the tab.
 4. The side panel opens with the session form. Fill in:
@@ -116,7 +134,7 @@ Pure aggregation lives in `lib/trade-stats.js` and is unit-tested.
 - `offscreen.html` / `offscreen.js` — short audio cue when a fresh round lands.
 - `lib/llm.js` — OpenAI calls (`callOpenAi` + `callOpenAiOnce` + retry wrapper with exponential backoff), prompt assembly, `generateTradeLesson`, `generateLongTermContext`.
 - `lib/prompt-config.js` — execution prompt config + JSON schema + long-term prompt config.
-- `lib/chart-validator.js` — keyword check that a tab is a stock chart page.
+- `lib/chart-validator.js` — TradingView hostname check (the extension only supports TradingView).
 - `lib/symbol.js` — `guessSymbol` + `sanitizeUrl` (pure, unit-tested).
 - `lib/market-hours.js` — `isWithinUsMarketHours`, `isNearUsMarketClose`, `getUsTradingDay` (pure, DST-correct via `Intl.DateTimeFormat`, unit-tested).
 - `lib/side-panel.js` — side-panel availability helpers.
@@ -146,7 +164,7 @@ Optional toggle in the popup. When on, scheduled rounds are skipped outside 9:30
 1. Open `chrome://extensions`.
 2. Enable Developer mode.
 3. `Load unpacked` → select this folder.
-4. Open a stock-chart page (5-min candles, EMA 20/50/100/200, VWAP, volume pane).
+4. Open a TradingView chart (import the [recommended layout](https://cn.tradingview.com/chart/sfPJCGOU/?symbol=USAR) for one-click setup).
 5. Click the extension icon. Save API key. Optionally save Discord webhook + flip market-hours toggle.
 6. Click Start. Fill the session form in the side panel. Click Start Monitoring.
 

@@ -1,6 +1,6 @@
 # auto-stock
 
-Chrome Extension (Manifest V3) that screenshots a stock chart every N seconds, sends it to OpenAI (vision + Structured Outputs) for an execution recommendation, and shows the result in a side panel. Single-user tool (not multi-tenant).
+Chrome Extension (Manifest V3) that screenshots a TradingView chart every N seconds, sends it to OpenAI (vision + Structured Outputs) for an execution recommendation, and shows the result in a side panel. Locked to TradingView so the prompt can rely on a consistent chart layout. Single-user tool (not multi-tenant).
 
 ## Tech stack
 - MV3 service worker (`background.js`) + offscreen document (`offscreen.js`) for audio
@@ -14,7 +14,7 @@ Chrome Extension (Manifest V3) that screenshots a stock chart every N seconds, s
 - `background.js` — service worker, monitoring loop, tab binding
 - `lib/llm.js` — OpenAI calls (`callOpenAi` + `callOpenAiOnce` + retry wrapper)
 - `lib/prompt-config.js` — execution prompt config + JSON schema
-- `lib/chart-validator.js` — heuristic check that a tab is a stock chart
+- `lib/chart-validator.js` — TradingView hostname check (extension is hard-locked to TradingView)
 - `lib/symbol.js` — `guessSymbol` + `sanitizeUrl` (pure, unit-tested)
 - `lib/market-hours.js` — `isWithinUsMarketHours` (pure, unit-tested, DST-correct)
 - `lib/side-panel.js` — side-panel availability helpers (`shouldEnableSidePanelForTab`, `enableSidePanelForWindow`, `setSidePanelAvailabilityForTab`)
@@ -166,6 +166,14 @@ Rationale: Stage D is the **verification layer** for Stages A/B/C — it answers
 - `generateTradeLesson` is fire-and-forget with a swallowed catch. If the call fails (network / rate limit), the trade's `lesson` stays `null` forever — no retry, no backfill. Fine for now; revisit if many lessons end up stuck at null.
 - `tradeHistory` is now preserved across every state reset via `buildResetStatePreservingHistory()` helper. Previously 6 code paths silently wiped the journal: `onInstalled` (reload/update), `exitMonitoring` (Exit button), `restartMonitoring` (Restart button), and 3 branches inside `runValidationPreflight` (fires on every Start click). That's why a fresh Start cleared months of journal. Other state fields (virtualPosition, pendingLimitOrder, monitoringProfile, results, …) still reset to defaults in all those paths — only tradeHistory is protected. If the shape of `tradeHistory` entries ever changes, add a one-off migration inside the helper — it's the single chokepoint for cross-version journal preservation. The only remaining raw `createDefaultState()` use is `onStartup`, guarded by `!state.updatedAt` (fires only on empty storage, nothing to preserve).
 - No tab-activity freshness check: if user leaves the tab backgrounded for 30+ min, the screenshot still fires on schedule but the chart data may be stale. Currently ignored because users actively watching wouldn't hit this; worth revisiting if false signals correlate with tab-switch patterns.
+
+### Hard-locked to TradingView (do not relax)
+- `lib/chart-validator.js` is a **hostname check** against `tradingview.com` / `cn.tradingview.com` (and their subdomains). Multi-platform keyword matching (Yahoo, 雪球, 东方财富, 富途, 老虎, 长桥, 同花顺, 新浪, seeking alpha, investing.com, barchart, stockcharts, finviz, robinhood, webull, etrade, marketwatch) was deleted in this iteration — do **not** add platforms back without first re-discussing the prompt design.
+- **Why**: predictable chart layout = stable screenshot grammar = consistent prompt input. The execution prompt and the recommended TradingView shared layout (linked from README) work together as one product surface.
+- **One-click setup**: README's `Chart setup` section leads with a TradingView "Share layout" link (`https://cn.tradingview.com/chart/sfPJCGOU/?symbol=USAR`). New users import once; everyone sees identical indicators (EMA 20/50/100/200 multi-period as 1 indicator + VWAP session = 2 indicators total → fits even TradingView Basic free tier), identical timezone (NY), identical candle coloring (close-vs-open standard), no community Ideas overlays.
+- **If the layout is ever changed**: re-share from TradingView, update the URL in README. No code change needed.
+- **i18n**: validation messages in both `en` and `zh` now name TradingView explicitly (`validatingDetail`, `validationFailedChart`, `notifyChartNotDetectedTitle/Body`, `monitoringStoppedChart`, `notifyCurrentTabNotChart`).
+- **Tests**: `test/chart-validator.test.js` covers `tradingview.com`, `cn.tradingview.com`, subdomain matching, rejection of non-TV platforms (Yahoo / 雪球 / 富途 / generic blogs), and bilingual rejection reasons. 7 cases.
 
 ### Design decisions worth preserving
 - **One trade per day, manual Continue to start a second**: chosen over auto-resume because the manual click is a natural cool-off period. Do not add an "allow multi-trade per day" toggle without first getting Stage D win-rate data; if multi-trading dilutes edge, the toggle will become a foot-gun.
