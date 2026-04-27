@@ -83,18 +83,6 @@ const userContextFormLabel = document.getElementById("userContextFormLabel");
 const userContextFormInput = document.getElementById("userContextFormInput");
 const userContextFormCharCount = document.getElementById("userContextFormCharCount");
 const userContextFormHint = document.getElementById("userContextFormHint");
-const backgroundNotesSection = document.getElementById("backgroundNotesSection");
-const backgroundNotesTitle = document.getElementById("backgroundNotesTitle");
-const backgroundNotesCopy = document.getElementById("backgroundNotesCopy");
-const backgroundNotesView = document.getElementById("backgroundNotesView");
-const backgroundNotesText = document.getElementById("backgroundNotesText");
-const backgroundNotesEdit = document.getElementById("backgroundNotesEdit");
-const backgroundNotesInput = document.getElementById("backgroundNotesInput");
-const backgroundNotesCharCount = document.getElementById("backgroundNotesCharCount");
-const backgroundNotesError = document.getElementById("backgroundNotesError");
-const editNotesButton = document.getElementById("editNotesButton");
-const saveNotesButton = document.getElementById("saveNotesButton");
-const cancelNotesButton = document.getElementById("cancelNotesButton");
 // Long-term context form widget (visible inside the start form)
 const longTermFormSection = document.getElementById("longTermFormSection");
 const longTermFormLabel = document.getElementById("longTermFormLabel");
@@ -109,7 +97,6 @@ let isGeneratingLongTerm = false;
 
 const STALE_LIMIT_THRESHOLD_MINUTES = 10;
 const USER_CONTEXT_MAX = 500;
-let isEditingNotes = false;
 
 let isStartingMonitoring = false;
 
@@ -613,56 +600,6 @@ function renderUserContextFormHint(language) {
   });
 }
 
-function renderBackgroundNotesCard(state, language) {
-  const profile = state.monitoringProfile || state.lastMonitoringProfile;
-  const isSessionLive = state.status === STATUS.RUNNING || state.status === STATUS.PAUSED;
-
-  if (!isSessionLive || !profile) {
-    backgroundNotesSection.classList.add("hidden");
-    isEditingNotes = false;
-    return;
-  }
-
-  backgroundNotesSection.classList.remove("hidden");
-  backgroundNotesTitle.textContent = t(language, "backgroundNotesTitle");
-  backgroundNotesCopy.textContent = t(language, "backgroundNotesCopy");
-  editNotesButton.textContent = t(language, "editNotesButton");
-  saveNotesButton.textContent = t(language, "saveNotesButton");
-  cancelNotesButton.textContent = t(language, "cancelNotesButton");
-  backgroundNotesInput.placeholder = t(language, "backgroundNotesPlaceholder");
-
-  // Editing is only allowed while RUNNING — PAUSED sessions are read-only
-  // (consistent with other mid-session controls like mark-bought).
-  const canEdit = state.status === STATUS.RUNNING;
-  editNotesButton.disabled = !canEdit;
-
-  const notes = (profile.userContext || "").trim();
-
-  if (isEditingNotes && canEdit) {
-    backgroundNotesView.classList.add("hidden");
-    backgroundNotesEdit.classList.remove("hidden");
-    const used = (backgroundNotesInput.value || "").length;
-    backgroundNotesCharCount.textContent = t(language, "backgroundNotesCharLimit", {
-      used,
-      max: USER_CONTEXT_MAX
-    });
-    return;
-  }
-
-  backgroundNotesView.classList.remove("hidden");
-  backgroundNotesEdit.classList.add("hidden");
-  backgroundNotesError.classList.add("hidden");
-  backgroundNotesError.textContent = "";
-
-  if (notes) {
-    backgroundNotesText.textContent = notes;
-    backgroundNotesText.classList.remove("empty-state");
-  } else {
-    backgroundNotesText.textContent = t(language, "backgroundNotesEmpty");
-    backgroundNotesText.classList.add("empty-state");
-  }
-}
-
 function populateLongTermTimeframeOptions(selectEl, language, selectedValue = "daily") {
   selectEl.innerHTML = LONG_TERM_TIMEFRAME_OPTIONS
     .map((tf) => `<option value="${tf}">${escapeHtml(t(language, `longTermTimeframe_${tf}`))}</option>`)
@@ -871,7 +808,6 @@ async function render() {
   apiKeyInput.value = "";
   renderAnalysisCard(state, language);
   renderPositionPanels(state, language);
-  renderBackgroundNotesCard(state, language);
   renderLongTermFormWidget(state, language);
   renderRecentRounds(state, language);
   renderStatsCard(state, language);
@@ -1131,65 +1067,6 @@ clearApiKeyButton.addEventListener("click", async () => {
 userContextFormInput.addEventListener("input", async () => {
   const settings = await getSettings();
   renderUserContextFormHint(getLanguage(settings.language));
-});
-
-editNotesButton.addEventListener("click", async () => {
-  const state = await getState();
-  const profile = state.monitoringProfile || state.lastMonitoringProfile;
-  backgroundNotesInput.value = profile?.userContext ?? "";
-  isEditingNotes = true;
-  await render();
-  backgroundNotesInput.focus();
-});
-
-cancelNotesButton.addEventListener("click", async () => {
-  isEditingNotes = false;
-  backgroundNotesError.classList.add("hidden");
-  backgroundNotesError.textContent = "";
-  await render();
-});
-
-backgroundNotesInput.addEventListener("input", async () => {
-  const settings = await getSettings();
-  const language = getLanguage(settings.language);
-  const used = (backgroundNotesInput.value || "").length;
-  backgroundNotesCharCount.textContent = t(language, "backgroundNotesCharLimit", {
-    used,
-    max: USER_CONTEXT_MAX
-  });
-});
-
-saveNotesButton.addEventListener("click", async () => {
-  const settings = await getSettings();
-  const language = getLanguage(settings.language);
-  backgroundNotesError.classList.add("hidden");
-  backgroundNotesError.textContent = "";
-
-  const value = backgroundNotesInput.value || "";
-  if (value.length > USER_CONTEXT_MAX) {
-    backgroundNotesError.textContent = t(language, "backgroundNotesTooLong", { max: USER_CONTEXT_MAX });
-    backgroundNotesError.classList.remove("hidden");
-    return;
-  }
-
-  saveNotesButton.disabled = true;
-  cancelNotesButton.disabled = true;
-  try {
-    const response = await chrome.runtime.sendMessage({
-      type: "update-user-context",
-      userContext: value
-    });
-    if (!response?.ok) {
-      backgroundNotesError.textContent = response?.error || t(language, "couldNotSaveNotes");
-      backgroundNotesError.classList.remove("hidden");
-      return;
-    }
-    isEditingNotes = false;
-  } finally {
-    saveNotesButton.disabled = false;
-    cancelNotesButton.disabled = false;
-  }
-  await render();
 });
 
 async function runLongTermGenerate({ timeframe, errorEl }) {

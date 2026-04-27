@@ -699,34 +699,6 @@ h2 {
   gap: 10px;
 }
 
-.background-notes-view {
-  display: grid;
-  gap: 10px;
-}
-.background-notes-text {
-  margin: 0;
-  padding: 10px 12px;
-  background: rgba(255, 255, 255, 0.04);
-  border-radius: 8px;
-  font-size: 13px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  color: var(--text);
-}
-.background-notes-text.empty-state {
-  color: var(--muted);
-  font-style: italic;
-}
-.background-notes-edit {
-  display: grid;
-  gap: 10px;
-}
-.background-notes-edit textarea {
-  font-family: inherit;
-  font-size: 13px;
-  line-height: 1.5;
-  resize: vertical;
-}
 .long-term-controls {
   display: flex;
   flex-wrap: wrap;

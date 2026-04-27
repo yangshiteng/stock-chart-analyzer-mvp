@@ -567,31 +567,6 @@ async function markLimitPlaced(payload) {
   return { ok: true, state };
 }
 
-async function updateUserContext(payload) {
-  const language = await getUiLanguage();
-  const currentState = await getState();
-  // Only allow edits while a session is live — avoids editing stale profiles.
-  if (currentState.status !== STATUS.RUNNING) {
-    throw new Error(t(language, "backgroundNotesNotRunning"));
-  }
-  if (!currentState.monitoringProfile) {
-    throw new Error(t(language, "backgroundNotesNotRunning"));
-  }
-
-  const raw = typeof payload?.userContext === "string" ? payload.userContext : "";
-  if (raw.length > USER_CONTEXT_MAX_LENGTH) {
-    throw new Error(t(language, "backgroundNotesTooLong", { max: USER_CONTEXT_MAX_LENGTH }));
-  }
-  const trimmed = raw.trim().slice(0, USER_CONTEXT_MAX_LENGTH);
-
-  const monitoringProfile = { ...currentState.monitoringProfile, userContext: trimmed };
-  const state = await patchState({
-    monitoringProfile,
-    lastMonitoringProfile: monitoringProfile
-  });
-  return { ok: true, state };
-}
-
 // Pre-session entry point: capture the active tab, ask the LLM for a higher-timeframe
 // structural read, and stash the result in `state.longTermContextDraft`. The draft is
 // copied into the new monitoringProfile on Start, then cleared. Live-session regeneration
@@ -1315,11 +1290,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     if (message?.type === "mark-limit-cancelled") {
       sendResponse(await markLimitCancelled());
-      return;
-    }
-
-    if (message?.type === "update-user-context") {
-      sendResponse(await updateUserContext(message));
       return;
     }
 
