@@ -117,6 +117,25 @@ test("buildAnalysisPromptFromConfig: Chinese LANGUAGE_OUTPUT section", () => {
   assert.match(prompt, /Simplified Chinese/);
 });
 
+test("buildAnalysisPromptFromConfig: Chinese mode requires triggerCondition in Chinese (regression: was leaking English)", () => {
+  // Without an explicit rule, the model writes reasoning in Chinese but triggerCondition
+  // in English by default — visible inconsistency in the user's recommendation card.
+  const prompt = buildAnalysisPromptFromConfig(getAnalysisPromptConfig(), samplePayload, "zh");
+  assert.match(prompt, /triggerCondition in natural Simplified Chinese/);
+  // Must also instruct the model to keep raw prices and English technical abbreviations
+  // inside the Chinese sentence — otherwise we lose precision (e.g. AI translates 21.93
+  // into something looser, or drops the VWAP keyword).
+  assert.match(prompt, /raw decimal prices/i);
+  assert.match(prompt, /VWAP \/ EMA \/ RSI in English/);
+});
+
+test("buildAnalysisPromptFromConfig: English mode also pins triggerCondition language explicitly", () => {
+  // Symmetry: model defaults to English already, but being explicit is cheap and prevents
+  // future drift if the prompt ever picks up multilingual influence from other sections.
+  const prompt = buildAnalysisPromptFromConfig(getAnalysisPromptConfig(), samplePayload, "en");
+  assert.match(prompt, /triggerCondition in English/);
+});
+
 test("buildAnalysisPromptFromConfig: entry mode injects RECENT_LESSONS when provided", () => {
   const prompt = buildAnalysisPromptFromConfig(
     getAnalysisPromptConfig(),
