@@ -46,26 +46,43 @@ test("side-panel: AWAITING_CONTEXT — full UI on validated TradingView tab", ()
   );
 });
 
-test("side-panel: AWAITING_CONTEXT rejects when tab is not TradingView", () => {
+test("side-panel: AWAITING_CONTEXT — non-validated tab serves placeholder, NOT disabled", () => {
+  // Same Chrome MV3 limitation as RUNNING/PAUSED: setting `enabled: false`
+  // does NOT close an open panel, so we keep the panel enabled and switch
+  // its content to the "switch back" placeholder. Without this, the form
+  // would persist visibly on every tab the user clicks into while still on
+  // the AWAITING_CONTEXT step.
   const state = {
     status: STATUS.AWAITING_CONTEXT,
     lastValidation: { tabId: BOUND_TAB_ID }
   };
-  assert.equal(
-    getSidePanelConfigForTab(state, BOUND_TAB_ID, nonTradingViewValidation).enabled,
-    false
+  assert.deepEqual(
+    getSidePanelConfigForTab(state, OTHER_TAB_ID, tradingViewValidation),
+    { enabled: true, path: SIDEPANEL_OTHER_TAB_PATH }
   );
 });
 
-test("side-panel: AWAITING_CONTEXT rejects on a different tab even if it is TradingView", () => {
+test("side-panel: AWAITING_CONTEXT — validated tab now drifted off TradingView falls back to placeholder", () => {
+  // User filled the form, then navigated the validated tab to Yahoo. Should
+  // not keep showing the form on a non-TV page — render the placeholder so
+  // the user can decide to navigate back or restart.
   const state = {
     status: STATUS.AWAITING_CONTEXT,
     lastValidation: { tabId: BOUND_TAB_ID }
   };
-  assert.equal(
-    getSidePanelConfigForTab(state, OTHER_TAB_ID, tradingViewValidation).enabled,
-    false
+  assert.deepEqual(
+    getSidePanelConfigForTab(state, BOUND_TAB_ID, nonTradingViewValidation),
+    { enabled: true, path: SIDEPANEL_OTHER_TAB_PATH }
   );
+});
+
+test("side-panel: AWAITING_CONTEXT with no lastValidation disables panel everywhere (defensive)", () => {
+  // Should not happen in practice (AWAITING_CONTEXT is only reachable via
+  // successful validation, which writes lastValidation), but if state is
+  // somehow corrupted, prefer disabled over leaking a placeholder onto every
+  // tab without a target to switch to.
+  const state = { status: STATUS.AWAITING_CONTEXT };
+  assert.equal(getSidePanelConfigForTab(state, BOUND_TAB_ID, tradingViewValidation).enabled, false);
 });
 
 // ---- RUNNING / PAUSED — bound tab gets full UI; non-bound gets placeholder
@@ -161,16 +178,20 @@ test("side-panel: monitoringProfile.boundTabId takes precedence over lastMonitor
 // ---- shouldEnableSidePanelForTab back-compat shim ------------------------
 
 test("side-panel: shouldEnableSidePanelForTab agrees with getSidePanelConfigForTab.enabled", () => {
+  // Non-bound and non-validated tabs are now ENABLED during live states
+  // (previously: disabled). The shim must reflect "always enabled, content
+  // varies" — only IDLE/VALIDATING and corrupted states return false.
   const cases = [
-    { state: { status: STATUS.IDLE }, tabId: BOUND_TAB_ID, expected: false },
-    { state: { status: STATUS.RUNNING, monitoringProfile: { boundTabId: BOUND_TAB_ID } }, tabId: BOUND_TAB_ID, expected: true },
-    // Non-bound tabs are now ENABLED (previously: disabled). The back-compat
-    // shim must reflect the new "always enabled, content varies" semantics.
-    { state: { status: STATUS.RUNNING, monitoringProfile: { boundTabId: BOUND_TAB_ID } }, tabId: OTHER_TAB_ID, expected: true }
+    { state: { status: STATUS.IDLE }, tabId: BOUND_TAB_ID, validation: tradingViewValidation, expected: false },
+    { state: { status: STATUS.VALIDATING }, tabId: BOUND_TAB_ID, validation: tradingViewValidation, expected: false },
+    { state: { status: STATUS.AWAITING_CONTEXT, lastValidation: { tabId: BOUND_TAB_ID } }, tabId: BOUND_TAB_ID, validation: tradingViewValidation, expected: true },
+    { state: { status: STATUS.AWAITING_CONTEXT, lastValidation: { tabId: BOUND_TAB_ID } }, tabId: OTHER_TAB_ID, validation: tradingViewValidation, expected: true },
+    { state: { status: STATUS.RUNNING, monitoringProfile: { boundTabId: BOUND_TAB_ID } }, tabId: BOUND_TAB_ID, validation: tradingViewValidation, expected: true },
+    { state: { status: STATUS.RUNNING, monitoringProfile: { boundTabId: BOUND_TAB_ID } }, tabId: OTHER_TAB_ID, validation: tradingViewValidation, expected: true }
   ];
-  for (const { state, tabId, expected } of cases) {
+  for (const { state, tabId, validation, expected } of cases) {
     assert.equal(
-      shouldEnableSidePanelForTab(state, tabId, tradingViewValidation),
+      shouldEnableSidePanelForTab(state, tabId, validation),
       expected,
       `expected ${expected} for state ${state.status} tab ${tabId}`
     );

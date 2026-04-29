@@ -13,27 +13,41 @@ const boundTitleEl = document.getElementById("otherTabBoundTitle");
 const switchButton = document.getElementById("otherTabSwitchButton");
 const errorEl = document.getElementById("otherTabSwitchError");
 
-function getProfile(state) {
-  return state.monitoringProfile || state.lastMonitoringProfile || null;
+// Resolves the "where should the user switch to" target. During RUNNING/PAUSED
+// it's the bound monitoring tab; during AWAITING_CONTEXT it's the tab that just
+// passed validation (no profile yet). Returns null if neither is available.
+function getTargetTab(state) {
+  const profile = state.monitoringProfile || state.lastMonitoringProfile;
+  if (profile?.boundTabId) {
+    return {
+      tabId: profile.boundTabId,
+      windowId: profile.boundWindowId,
+      title: profile.boundTabTitle || profile.symbolOverride || null
+    };
+  }
+  const v = state.lastValidation;
+  if (v?.tabId) {
+    return {
+      tabId: v.tabId,
+      windowId: v.windowId,
+      title: v.pageTitle || null
+    };
+  }
+  return null;
 }
 
 async function render() {
   const settings = await getSettings();
   const language = getLanguage(settings.language);
   const state = await getState();
-  const profile = getProfile(state);
+  const target = getTargetTab(state);
 
   titleEl.textContent = t(language, "otherTabTitle");
   copyEl.textContent = t(language, "otherTabCopy");
   boundLabelEl.textContent = t(language, "otherTabBoundLabel");
   switchButton.textContent = t(language, "otherTabSwitchButton");
 
-  // Show the bound tab title so the user knows which tab to look for. Falls back
-  // to the symbol or "(unknown)" if title was not captured (older sessions).
-  const boundLabel = profile?.boundTabTitle
-    || profile?.symbolOverride
-    || "(unknown)";
-  boundTitleEl.textContent = boundLabel;
+  boundTitleEl.textContent = target?.title || "(unknown)";
 }
 
 async function handleSwitchClick() {
@@ -43,21 +57,21 @@ async function handleSwitchClick() {
   const settings = await getSettings();
   const language = getLanguage(settings.language);
   const state = await getState();
-  const profile = getProfile(state);
+  const target = getTargetTab(state);
 
-  if (!profile?.boundTabId) {
+  if (!target?.tabId) {
     errorEl.textContent = t(language, "otherTabSwitchFailed");
     errorEl.classList.remove("hidden");
     return;
   }
 
   try {
-    // Window focus first, then tab activate. Both required when bound tab is
+    // Window focus first, then tab activate. Both required when target tab is
     // in a different window than the one currently in front.
-    if (profile.boundWindowId) {
-      await chrome.windows.update(profile.boundWindowId, { focused: true });
+    if (target.windowId) {
+      await chrome.windows.update(target.windowId, { focused: true });
     }
-    await chrome.tabs.update(profile.boundTabId, { active: true });
+    await chrome.tabs.update(target.tabId, { active: true });
   } catch {
     errorEl.textContent = t(language, "otherTabSwitchFailed");
     errorEl.classList.remove("hidden");
