@@ -37,7 +37,7 @@ Completed (Batch 1):
 - #2 onStartup monitoring recovery (restore alarm after browser restart)
 - #3 Tab check only at screenshot moment; removed aggressive onActivated pause
 - #12 Merged background `bgText` into `lib/i18n.js`; fixed same-line format bug
-- #14 Simplified `shouldEnableSidePanelForTab` — side panel stays enabled for all tabs while RUNNING/PAUSED
+- #14 Simplified `shouldEnableSidePanelForTab` — side panel stays enabled for all tabs while RUNNING/PAUSED **(superseded — see "Side panel bound to original tab" below)**
 
 Completed (Batch 2):
 - #4 Symbol input (`symbolOverride`) in sidepanel + expanded chart-validator keywords (雪球/东方财富/富途/老虎/长桥/同花顺/新浪财经/seeking alpha/investing.com/barchart/stockcharts/finviz) + tightened `guessSymbol` (checks `$TSLA`, URL patterns, title-lead)
@@ -137,6 +137,20 @@ Completed (long-term context — separate one-shot LLM call + structural anti-bi
 - **i18n**: en + zh keys for: `longTermTitle`, `longTermFormCopy`, `longTermTimeframeLabel`, `longTermTimeframe_daily/_weekly`, `longTermGenerateButton`, `longTermGenerating`, `longTermFieldTrend/Stage/Support/Resistance/Summary`, `longTermGeneratedAt`, `longTermGenerateFailed`, `longTermTrend_up/down/range/unclear`, `longTermStage_base/breakout/extended/pullback/topping/reversal/unclear`.
 - **Tests**: 6 new cases in `test/llm.test.js` covering injection in entry/exit/force_exit, omission when null/empty, 24h staleness warning, no warning when fresh, and the lock-in ordering invariant `USER_CONTEXT < LONG_TERM_CONTEXT < LAST_SIGNAL_AND_ORDER`. Suite: 79/79 green.
 - **Design note**: Daily + Weekly only — no Monthly. Rationale: day trader's planning horizon rarely extends past 1–3 weeks of structure; Monthly would mostly add noise + token cost. If a swing-trading mode is ever added, revisit then.
+
+Completed (Side panel content per-tab — supersedes Batch 1 #14):
+- **Problem**: with the original "enabled on every tab" behavior, switching to a non-TradingView tab (news article, email, broker) kept the recommendation card visible — implying the analysis still applied to whatever tab was on top.
+- **First attempt (commit `6031120`, did not work)**: tried to make `setOptions({ enabled: false })` *hide* the panel on non-bound tabs. **Chrome MV3 doesn't actually close an open side panel that way.** The per-tab `enabled` flag controls toolbar-icon access and content path, but does NOT close a panel that's already open at the window level. There is **no `chrome.sidePanel.close()` API** — Chromium's deliberate design decision (panel is user-controlled). `window.close()` from inside the panel is also a no-op. So "hide on tab switch" is fundamentally not achievable; commit `6031120` shipped a fix that compiled and passed tests but did nothing visible in practice.
+- **Final design**: keep the panel `enabled: true` on every tab during a live session, but **swap the `path`** based on which tab is active.
+  - Bound tab → `sidepanel.html` (full UI: recommendation, position, journal, stats…)
+  - Non-bound tabs → `sidepanel-other-tab.html` (minimal placeholder: title, "monitored tab: AAPL · TradingView", "Switch to monitored tab" button → `chrome.tabs.update(boundTabId, { active: true })` + `chrome.windows.update(boundWindowId, { focused: true })`)
+- **Effect**: panel column always visible (we can't hide it), but content makes the binding obvious. User clicks the button → jumps to bound tab → Chrome's per-tab path updates → full UI re-appears automatically (this part of Chrome's behavior **does** work cleanly).
+- **API shape**: new `getSidePanelConfigForTab(state, tabId, validation)` returns `{ enabled, path? }`. Old `shouldEnableSidePanelForTab` retained as a thin shim returning `.enabled` for any callers that only need the boolean. Note: with the new design the boolean is `true` for *both* bound and non-bound tabs during a live session — only the path differs. So if anything checks `enabled` to mean "should I render the full UI", it will be wrong; use `path === SIDEPANEL_PATH` instead.
+- **Files added**: `sidepanel-other-tab.html`, `sidepanel-other-tab.js`. CSS rules (`.other-tab-shell`, `.other-tab-card`, etc.) appended to `sidepanel.css`. New `enableSidePanelForWindow` delegates to per-tab `setSidePanelAvailabilityForTab` so all tabs in the window get the right path immediately after Start / Continue / Restart, not just on subsequent activations.
+- **i18n**: 5 new keys per language: `otherTabTitle`, `otherTabCopy`, `otherTabBoundLabel`, `otherTabSwitchButton`, `otherTabSwitchFailed`.
+- **Defensive default**: if `boundTabId` is missing on both profiles (corrupted state), `getSidePanelConfigForTab` returns `{ enabled: false }` for every tab. Hidden panel is a discoverable bug; an "other tab" placeholder leaking onto every tab would be confusing.
+- **Tests**: `test/side-panel.test.js` rewritten to assert on the full `{enabled, path}` config. 12 cases covering IDLE/VALIDATING (always disabled), AWAITING_CONTEXT (validated TV tab → full UI), RUNNING/PAUSED bound vs non-bound (full UI vs other-tab placeholder), `lastMonitoringProfile` fallback, defensive default, profile precedence, and back-compat shim agreement. Suite: 96/96.
+- **Why Batch 1 #14 was reversed**: that earlier change traded discoverability ("panel visible from any tab") against semantic clarity ("panel reflects the analyzed tab"). Months of use showed the semantic confusion dominates — cards following the user around different tabs felt like the extension was claiming to analyze whatever was on top. The "other tab" placeholder is the right resolution because Chrome won't let us hide the panel; the next-best move is to make the content unambiguous.
 
 Completed (Batch 5 — structural cleanup + tests):
 - B1 Extracted `guessSymbol` + `sanitizeUrl` into `lib/symbol.js` (imported by `lib/llm.js` and `lib/chart-validator.js`)

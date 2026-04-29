@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Not on the analysis tab</title>
+    <link rel="stylesheet" href="sidepanel.css">
+  </head>
+  <body>
+    <main class="panel-shell other-tab-shell">
+      <div class="other-tab-card">
+        <div class="other-tab-emoji" aria-hidden="true">🔄</div>
+        <h1 id="otherTabTitle">Not on the analysis tab</h1>
+        <p id="otherTabCopy" class="other-tab-copy">
+          The recommendation and position info only render on the TradingView tab you started monitoring. Switch back to that tab — the side panel will reload automatically.
+        </p>
+        <div class="other-tab-bound">
+          <span id="otherTabBoundLabel" class="other-tab-bound-label">Monitored tab</span>
+          <span id="otherTabBoundTitle" class="other-tab-bound-title"></span>
+        </div>
+        <button id="otherTabSwitchButton" class="hero-button" type="button">Switch to monitored tab</button>
+        <p id="otherTabSwitchError" class="form-error hidden"></p>
+      </div>
+    </main>
+    <script type="module" src="sidepanel-other-tab.js"></script>
+  </body>
+</html>

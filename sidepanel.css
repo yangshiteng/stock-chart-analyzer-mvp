@@ -917,3 +917,59 @@ h2 {
     align-items: flex-start;
   }
 }
+
+/* ---------- "other tab" placeholder page ----------
+ * Shown by sidepanel-other-tab.html when the active tab is not the bound
+ * monitoring tab. Chrome MV3 cannot close an open side panel programmatically,
+ * so this is the deliberate visual signal that "your analysis lives elsewhere."
+ */
+.other-tab-shell {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 20px;
+}
+.other-tab-card {
+  text-align: center;
+  max-width: 320px;
+  display: grid;
+  gap: 16px;
+}
+.other-tab-emoji {
+  font-size: 44px;
+  line-height: 1;
+  opacity: 0.7;
+}
+.other-tab-card h1 {
+  font-size: 17px;
+  font-weight: 600;
+  margin: 0;
+  color: var(--text);
+}
+.other-tab-copy {
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--muted);
+  margin: 0;
+}
+.other-tab-bound {
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 10px;
+  padding: 10px 14px;
+  display: grid;
+  gap: 4px;
+  text-align: left;
+}
+.other-tab-bound-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+.other-tab-bound-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  word-break: break-word;
+}
