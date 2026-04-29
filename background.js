@@ -759,12 +759,26 @@ async function runValidationPreflight() {
     }));
 
     if (capture.tabId) {
+      // Set the validated tab's per-tab override first so the panel that's
+      // about to open shows sidepanel.html (the form), not the placeholder.
       await setSidePanelAvailabilityForTab(capture.tabId, {
         id: capture.tabId,
         title: capture.pageTitle,
         url: capture.pageUrl,
         windowId: capture.windowId
       });
+
+      // Then install the placeholder as global default + per-tab override on
+      // every OTHER tab in the window. Without this, the user's first switch
+      // away from the validated tab still renders the manifest default
+      // (sidepanel.html) — Chrome looks up the new tab's options on
+      // activation, falls back to the global default, renders the form, and
+      // by the time our async onActivated handler calls setOptions the panel
+      // is already on screen and won't refresh until the user switches away
+      // and back. Pre-setting closes that race.
+      if (capture.windowId) {
+        await enableSidePanelForWindow(capture.windowId);
+      }
     }
 
     return {
