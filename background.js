@@ -16,6 +16,7 @@ import { getUsTradingDay, isNearUsMarketClose, isWithinUsMarketHours } from "./l
 import {
   SIDEPANEL_PATH,
   enableSidePanelForWindow,
+  resetSidePanelDefaultsToFullUi,
   setSidePanelAvailabilityForTab
 } from "./lib/side-panel.js";
 import { getSettings, getState, patchState, saveState } from "./lib/storage.js";
@@ -698,6 +699,13 @@ async function exitMonitoring() {
 
   await saveState(await buildResetStatePreservingHistory());
 
+  // Reset the GLOBAL default panel path back to sidepanel.html. While a
+  // session was live, enableSidePanelForWindow set the default to the "switch
+  // to monitored tab" placeholder; without resetting it here, any new tab
+  // opened post-Exit would still render the placeholder pointing at a stale
+  // boundTabId.
+  await resetSidePanelDefaultsToFullUi();
+
   for (const tabId of tabIds) {
     await chrome.sidePanel.setOptions({
       tabId,
@@ -1192,6 +1200,18 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 
 chrome.tabs.onActivated.addListener(async ({ tabId }) => {
   await setSidePanelAvailabilityForTab(tabId);
+});
+
+// New tabs (Ctrl+T, link in new tab, etc.) need their per-tab side-panel path
+// set BEFORE Chrome falls back to the manifest default (sidepanel.html).
+// Without this, opening a new tab during a live session briefly shows the
+// full UI instead of the "switch back" placeholder, and Chrome doesn't
+// always re-render the panel after a delayed setOptions on the active tab.
+// onCreated fires synchronously when the tab is created, before activation,
+// giving us a tight window to install the right path first.
+chrome.tabs.onCreated.addListener(async (tab) => {
+  if (!tab?.id) return;
+  await setSidePanelAvailabilityForTab(tab.id, tab);
 });
 
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
