@@ -37,7 +37,7 @@ Completed (Batch 1):
 - #2 onStartup monitoring recovery (restore alarm after browser restart)
 - #3 Tab check only at screenshot moment; removed aggressive onActivated pause
 - #12 Merged background `bgText` into `lib/i18n.js`; fixed same-line format bug
-- #14 Simplified `shouldEnableSidePanelForTab` — side panel stays enabled for all tabs while RUNNING/PAUSED
+- #14 Simplified `shouldEnableSidePanelForTab` — side panel stays enabled for all tabs while RUNNING/PAUSED **(superseded — see "Side panel bound to original tab" below)**
 
 Completed (Batch 2):
 - #4 Symbol input (`symbolOverride`) in sidepanel + expanded chart-validator keywords (雪球/东方财富/富途/老虎/长桥/同花顺/新浪财经/seeking alpha/investing.com/barchart/stockcharts/finviz) + tightened `guessSymbol` (checks `$TSLA`, URL patterns, title-lead)
@@ -137,6 +137,15 @@ Completed (long-term context — separate one-shot LLM call + structural anti-bi
 - **i18n**: en + zh keys for: `longTermTitle`, `longTermFormCopy`, `longTermTimeframeLabel`, `longTermTimeframe_daily/_weekly`, `longTermGenerateButton`, `longTermGenerating`, `longTermFieldTrend/Stage/Support/Resistance/Summary`, `longTermGeneratedAt`, `longTermGenerateFailed`, `longTermTrend_up/down/range/unclear`, `longTermStage_base/breakout/extended/pullback/topping/reversal/unclear`.
 - **Tests**: 6 new cases in `test/llm.test.js` covering injection in entry/exit/force_exit, omission when null/empty, 24h staleness warning, no warning when fresh, and the lock-in ordering invariant `USER_CONTEXT < LONG_TERM_CONTEXT < LAST_SIGNAL_AND_ORDER`. Suite: 79/79 green.
 - **Design note**: Daily + Weekly only — no Monthly. Rationale: day trader's planning horizon rarely extends past 1–3 weeks of structure; Monthly would mostly add noise + token cost. If a swing-trading mode is ever added, revisit then.
+
+Completed (Side panel bound to original tab — supersedes Batch 1 #14):
+- **Problem**: with the previous "enabled on every tab" behavior, switching to a non-TradingView tab (news article, email, broker) kept the side panel visible. The recommendation card stayed pinned to whatever tab was on top, implying the analysis still applied — confusing UX, especially since the analysis is locked to the bound TradingView tab.
+- **Fix**: `shouldEnableSidePanelForTab` now returns `true` only for the bound tab during RUNNING/PAUSED (was: `true` for any tab). Reads `boundTabId` from `monitoringProfile` first, falls back to `lastMonitoringProfile` so PAUSED → Continue still works after a service-worker restart.
+- **Auto-show on return**: relies on Chrome's built-in per-tab visibility behavior. Switching to a non-bound tab → `setOptions({enabled: false})` → panel hides immediately. Switching back → `setOptions({enabled: true})` → panel re-shows. **No manual `chrome.sidePanel.open()` call** — that requires a user gesture and would fail from `tabs.onActivated`. The native enable-toggle is enough.
+- **`enableSidePanelForWindow` rewritten**: previously set `enabled: true` for every tab in the window indiscriminately. Now delegates to `setSidePanelAvailabilityForTab` per tab, so the bound-tab-only rule is consistently enforced after Start / Continue / Restart, not just on subsequent tab switches.
+- **Defensive default**: if `boundTabId` is missing on both `monitoringProfile` and `lastMonitoringProfile` (corrupted state), the panel is **disabled everywhere** rather than enabled everywhere. Hidden panel is a discoverable bug; a panel showing wrong analysis is not.
+- **Tests**: new `test/side-panel.test.js` with 10 cases covering IDLE/VALIDATING (always off), AWAITING_CONTEXT (validated TV tab only), RUNNING/PAUSED on bound vs non-bound tabs, fallback to `lastMonitoringProfile`, defensive default with no boundTabId, and precedence of `monitoringProfile` over `lastMonitoringProfile`. Suite: 94/94.
+- **Why this reverses Batch 1 #14**: that earlier change traded discoverability ("user can see the panel from any tab") against semantic clarity ("panel reflects the analyzed tab"). After several months of use the semantic confusion turned out to dominate — recommendation cards visually following the user around different tabs felt like the extension was claiming to analyze whatever was on top. Tab-bound is the more honest UX.
 
 Completed (Batch 5 — structural cleanup + tests):
 - B1 Extracted `guessSymbol` + `sanitizeUrl` into `lib/symbol.js` (imported by `lib/llm.js` and `lib/chart-validator.js`)
