@@ -518,7 +518,12 @@ function renderMarkLimitPlacedCard(state, language, action) {
   markLimitPlacedButton.textContent = t(language, isBuy ? "markLimitPlacedButton_buy" : "markLimitPlacedButton_sell");
   markLimitPlacedButton.className = `mode-button ${isBuy ? "buy-button" : "sell-button"}`;
 
-  const suggested = state.lastResult?.analysis?.entryPrice || "";
+  // BUY_LIMIT: limit price = entryPrice (where user will buy below current).
+  // SELL_LIMIT: limit price = targetPrice (where user takes profit above current).
+  //   In EXIT mode the prompt convention is entryPrice echoes the user's
+  //   original buy price, while targetPrice carries the actionable sell level.
+  const analysis = state.lastResult?.analysis;
+  const suggested = (isBuy ? analysis?.entryPrice : analysis?.targetPrice) || "";
   if (suggested && !limitPlacedPriceInput.value) {
     limitPlacedPriceInput.value = suggested;
   }
@@ -557,6 +562,15 @@ function renderPositionPanels(state, language) {
       <p class="position-line"><strong>${escapeHtml(t(language, "stopLossPriceLabel"))}:</strong> ${escapeHtml(position.stopLossPrice || nA)}</p>
       <p class="position-line"><strong>${escapeHtml(t(language, "targetPriceLabel"))}:</strong> ${escapeHtml(position.targetPrice || nA)}</p>
     `;
+
+    // Prefill exitPriceInput with the AI's currentPrice — user marking a manual
+    // sell is essentially a market exit, so currentPrice (≈ live market price
+    // from this round) is a better starting point than blank. They can still
+    // edit before submitting. Skip if user has already typed something.
+    const suggestedExit = state.lastResult?.analysis?.currentPrice || "";
+    if (suggestedExit && !exitPriceInput.value) {
+      exitPriceInput.value = suggestedExit;
+    }
 
     // Holding → pending SELL_LIMIT (exit-mode limit order); or show markLimitPlaced when AI says SELL_LIMIT.
     if (pending && pending.action === "SELL_LIMIT") {
