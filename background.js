@@ -701,6 +701,17 @@ async function exitMonitoring() {
   await clearMonitoringAlarm();
 
   const currentState = await getState();
+
+  // Defense in depth: UI greys out the button, but reject here too so a
+  // hostile message bypass / out-of-sync UI cannot silently strand a real
+  // broker position or pending order.
+  if (currentState.virtualPosition) {
+    throw new Error(t(await getUiLanguage(), "sessionEndBlockedByPosition"));
+  }
+  if (currentState.pendingLimitOrder) {
+    throw new Error(t(await getUiLanguage(), "sessionEndBlockedByPending"));
+  }
+
   const tabIds = getSessionTabIds(currentState);
 
   await saveState(await buildResetStatePreservingHistory());
@@ -1075,6 +1086,17 @@ async function restartMonitoring() {
 
   const currentState = await getState();
   const language = await getUiLanguage();
+
+  // Same defense as exitMonitoring: restart wipes virtualPosition /
+  // pendingLimitOrder, leaving real broker state untracked. UI already
+  // disables the button, but block at the handler too.
+  if (currentState.virtualPosition) {
+    throw new Error(t(language, "sessionEndBlockedByPosition"));
+  }
+  if (currentState.pendingLimitOrder) {
+    throw new Error(t(language, "sessionEndBlockedByPending"));
+  }
+
   const { monitoringProfile: savedMonitoringProfile } = getResumeSession({
     ...currentState,
     __languageForError: language
