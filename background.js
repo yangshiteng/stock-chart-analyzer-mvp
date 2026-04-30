@@ -546,7 +546,13 @@ async function markLimitPlaced(payload) {
     throw new Error(t(language, "limitAlreadyPending"));
   }
 
-  const limitPriceRaw = `${payload?.limitPrice ?? suggestion.entryPrice ?? ""}`.trim();
+  // Action-specific fallback when the user submits without an explicit price:
+  // BUY_LIMIT  → entryPrice (where to buy below current)
+  // SELL_LIMIT → targetPrice (where to take profit above current; in EXIT mode
+  //              the prompt convention is entryPrice echoes the original buy
+  //              price, while targetPrice carries the actionable sell level).
+  const fallbackPrice = action === "SELL_LIMIT" ? suggestion.targetPrice : suggestion.entryPrice;
+  const limitPriceRaw = `${payload?.limitPrice ?? fallbackPrice ?? ""}`.trim();
   const limitPrice = Number(limitPriceRaw);
   if (!Number.isFinite(limitPrice) || limitPrice <= 0) {
     throw new Error(t(language, "limitPriceInvalid"));
