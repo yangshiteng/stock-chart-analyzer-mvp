@@ -831,10 +831,32 @@ async function render() {
   const hasSavedSession = hasSavedMonitoringSession(state);
   const isBusy = state.status === STATUS.RUNNING || state.status === STATUS.VALIDATING || isStartingMonitoring;
 
+  // Block Exit and Restart while there's still untracked broker state on the
+  // user's account. virtualPosition = real shares held; pendingLimitOrder =
+  // resting order at broker. Either condition means tearing down the session
+  // would leave the broker out of sync with the extension's view, and the
+  // next AI round would (incorrectly) treat the user as flat. The user must
+  // resolve via Mark sold / Cancel limit before exiting or restarting.
+  // Stop is still allowed — it pauses but preserves all state for Continue.
+  const hasOpenPosition = !!state.virtualPosition;
+  const hasPendingLimit = !!state.pendingLimitOrder;
+  const sessionEndBlockedReason = hasOpenPosition
+    ? t(language, "sessionEndBlockedByPosition")
+    : hasPendingLimit
+      ? t(language, "sessionEndBlockedByPending")
+      : "";
+  const sessionEndBlocked = !!sessionEndBlockedReason;
+
   stopMonitorButton.disabled = !isBusy;
   continueMonitorButton.disabled = !apiReady || state.status === STATUS.RUNNING || !hasSavedSession;
-  restartMonitorButton.disabled = !apiReady || !hasSavedSession;
-  exitMonitorButton.disabled = isStartingMonitoring;
+  restartMonitorButton.disabled = !apiReady || !hasSavedSession || sessionEndBlocked;
+  exitMonitorButton.disabled = isStartingMonitoring || sessionEndBlocked;
+
+  // Tooltip explains WHY the buttons are disabled — a grey button with no
+  // explanation is the kind of thing that has users blaming the extension
+  // for being broken.
+  restartMonitorButton.title = sessionEndBlockedReason;
+  exitMonitorButton.title = sessionEndBlockedReason;
   confirmButton.disabled = isStartingMonitoring;
 
   contextSection.classList.toggle("hidden", state.status !== STATUS.AWAITING_CONTEXT);
