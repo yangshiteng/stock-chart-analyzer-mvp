@@ -11,7 +11,7 @@
 } from "./lib/constants.js";
 import { validateChartTab } from "./lib/chart-validator.js";
 import { getLanguage, t } from "./lib/i18n.js";
-import { analyzeChartCapture, generateLongTermContext, generateTradeLesson, LONG_TERM_TIMEFRAMES, USER_CONTEXT_MAX_LENGTH } from "./lib/llm.js";
+import { analyzeChartCapture, generateLongTermContext, generateTradeLesson, LONG_TERM_TIMEFRAMES } from "./lib/llm.js";
 import { getUsTradingDay, isNearUsMarketClose, isWithinUsMarketHours } from "./lib/market-hours.js";
 import {
   SIDEPANEL_PATH,
@@ -440,14 +440,8 @@ async function buildMonitoringProfile(payload) {
     throw new Error(t(language, "chooseValidTotalRounds"));
   }
 
-  // Optional user-supplied background notes (fundamentals, ATH, earnings, macro…).
-  // Capped at USER_CONTEXT_MAX_LENGTH so the prompt stays bounded; extra chars are dropped.
-  const rawUserContext = typeof payload.userContext === "string" ? payload.userContext : "";
-  const userContext = rawUserContext.trim().slice(0, USER_CONTEXT_MAX_LENGTH);
-
   return {
     symbolOverride,
-    userContext,
     rules: {
       analysisInterval,
       totalRounds
@@ -918,7 +912,6 @@ async function runMonitoringRound() {
       recentLessons,
       lastSignal,
       pendingLimitOrder,
-      userContext: monitoringProfile.userContext || "",
       longTermContext: monitoringProfile.longTermContext || null
     });
 
