@@ -63,15 +63,17 @@ Action vocabulary the AI is allowed to return:
 
 | Mode | Allowed actions |
 | --- | --- |
-| Entry (no position) | `BUY_NOW`, `BUY_LIMIT`, `WAIT` |
-| Exit (holding) | `SELL_NOW`, `SELL_LIMIT`, `HOLD` |
+| Entry (no position) | `BUY_LIMIT`, `WAIT` |
+| Exit (holding) | `SELL_LIMIT`, `HOLD` |
 | Force-exit (10 min before close, holding) | `SELL_NOW` only |
+
+The tool is **limit-only by design** — all entries and normal exits go through limit orders so the user controls slippage and fill quality. `SELL_NOW` survives only as the safety net for force-exit (last 10 minutes before close, where the must-be-flat-by-close rule outweighs slippage concerns). If the AI sees a setup that would have been a market `BUY_NOW` / `SELL_NOW` under a market-order regime, it issues `BUY_LIMIT` / `SELL_LIMIT` with `limitPrice` at or fractionally past the current price — a marketable limit that fills on the next tick but with price protection.
 
 Side panel buttons follow the signal:
 
-- `BUY_NOW` / `BUY_LIMIT` → user marks the entry price after filling at the broker.
-- `BUY_LIMIT` / `SELL_LIMIT` → user records the broker-placed limit price; the next round's prompt is told a resting order exists so the AI can stay consistent or explicitly invalidate it.
-- `SELL_NOW` / `SELL_LIMIT` → user marks the exit price; the trade is closed, written to the journal, and the session pauses (one trade per day; manual Continue starts the next).
+- `BUY_LIMIT` / `SELL_LIMIT` → user records the broker-placed limit price ("Mark limit placed"). The next round's prompt is told a resting order exists so the AI can stay consistent or explicitly invalidate it. When the broker reports the limit as filled, the user clicks "Limit filled" — the extension promotes it to a real position (BUY_LIMIT) or closes the existing position (SELL_LIMIT) using the limit price.
+- `SELL_NOW` (force-exit only) → user marks the actual fill price after exiting at market in the broker. The trade is closed, written to the journal, and the session pauses (one trade per day; manual Continue starts the next).
+- Manual override → if you exit early at market for any reason (panic close, fundamental news, broker rejected the limit), the position card shows a "Mark sold at this price" form pre-filled with `currentPrice`, available whenever you're holding regardless of the AI's current action.
 - Overnight gap → if a position is somehow still open when the trading day rolls over, it is auto-abandoned with `status: "abandoned"` in the journal.
 
 ## Recommendation schema
@@ -121,7 +123,7 @@ Buttons:
 
 ## Performance stats
 
-Once any closed trade exists, a Performance Stats card renders in the side panel with overall win rate, avg PnL %, total PnL %, avg held minutes, best/worst trade, plus breakdowns by action (BUY_NOW vs BUY_LIMIT) and confidence (high / medium / low — calibration check). Buckets with `n < 5` show a "small sample" warning rather than being hidden — sparse buckets are still informative if flagged.
+Once any closed trade exists, a Performance Stats card renders in the side panel with overall win rate, avg PnL %, total PnL %, avg held minutes, best/worst trade, plus breakdowns by entry action (`BUY_LIMIT` is the only current entry; legacy journal entries from before the limit-only refactor may still show `BUY_NOW`) and confidence (high / medium / low — calibration check). Buckets with `n < 5` show a "small sample" warning rather than being hidden — sparse buckets are still informative if flagged.
 
 Pure aggregation lives in `lib/trade-stats.js` and is unit-tested.
 

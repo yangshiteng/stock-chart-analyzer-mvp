@@ -10,30 +10,35 @@ import {
 } from "../lib/llm.js";
 import { getAnalysisPromptConfig } from "../lib/prompt-config.js";
 
-test("ALLOWED_ACTIONS exported with six entries", () => {
+test("ALLOWED_ACTIONS — BUY_NOW removed (limit-only entry rule); SELL_NOW retained for FORCE_EXIT only", () => {
   assert.deepEqual(
     [...ALLOWED_ACTIONS].sort(),
-    ["BUY_LIMIT", "BUY_NOW", "HOLD", "SELL_LIMIT", "SELL_NOW", "WAIT"]
+    ["BUY_LIMIT", "HOLD", "SELL_LIMIT", "SELL_NOW", "WAIT"]
   );
+  assert.ok(!ALLOWED_ACTIONS.includes("BUY_NOW"), "BUY_NOW must not be reintroduced");
 });
 
-test("getAllowedActions: entry mode allows only buy + wait", () => {
-  assert.deepEqual(getAllowedActions("entry").sort(), ["BUY_LIMIT", "BUY_NOW", "WAIT"]);
+test("getAllowedActions: entry mode allows only BUY_LIMIT + WAIT (no BUY_NOW)", () => {
+  assert.deepEqual(getAllowedActions("entry").sort(), ["BUY_LIMIT", "WAIT"]);
+  assert.ok(!getAllowedActions("entry").includes("BUY_NOW"));
 });
 
 test("getAllowedActions: default is entry", () => {
   assert.deepEqual(getAllowedActions().sort(), [...ENTRY_MODE_ACTIONS].sort());
 });
 
-test("getAllowedActions: exit mode allows sell + hold, never buy/wait", () => {
+test("getAllowedActions: exit mode allows SELL_LIMIT + HOLD only (no SELL_NOW in normal exit)", () => {
   const actions = getAllowedActions("exit");
-  assert.deepEqual(actions.sort(), ["HOLD", "SELL_LIMIT", "SELL_NOW"]);
+  assert.deepEqual(actions.sort(), ["HOLD", "SELL_LIMIT"]);
   assert.deepEqual(actions.sort(), [...EXIT_MODE_ACTIONS].sort());
   assert.ok(!actions.includes("BUY_NOW"));
+  assert.ok(!actions.includes("BUY_LIMIT"));
   assert.ok(!actions.includes("WAIT"));
+  // SELL_NOW is reserved for FORCE_EXIT — must NOT leak into normal exit.
+  assert.ok(!actions.includes("SELL_NOW"));
 });
 
-test("getAllowedActions: force_exit locks to SELL_NOW only", () => {
+test("getAllowedActions: force_exit locks to SELL_NOW only (last-10-min safety net)", () => {
   assert.deepEqual(getAllowedActions("force_exit"), ["SELL_NOW"]);
   assert.deepEqual(FORCE_EXIT_ACTIONS, ["SELL_NOW"]);
 });
@@ -194,18 +199,21 @@ test("buildAnalysisPromptFromConfig: RECENT_LESSONS skips entries with empty les
 });
 
 test("buildAnalysisPromptFromConfig: RECENT_LESSONS includes entryAction + entryConfidence when provided", () => {
+  // Use BUY_LIMIT — historical legacy lessons may carry BUY_NOW from before the
+  // limit-only refactor, but that's a property of stored journal data, not of
+  // the current action vocabulary. The lesson formatter is content-agnostic.
   const prompt = buildAnalysisPromptFromConfig(
     getAnalysisPromptConfig(),
     {
       ...samplePayload,
       mode: "entry",
       recentLessons: [
-        { symbol: "AAPL", pnlPercent: -0.5, exitTime: "2026-04-18T20:00:00Z", entryAction: "BUY_NOW", entryConfidence: "high", lesson: "x" }
+        { symbol: "AAPL", pnlPercent: -0.5, exitTime: "2026-04-18T20:00:00Z", entryAction: "BUY_LIMIT", entryConfidence: "high", lesson: "x" }
       ]
     },
     "en"
   );
-  assert.match(prompt, /AAPL -0\.50% 2026-04-18 BUY_NOW\/high\]/);
+  assert.match(prompt, /AAPL -0\.50% 2026-04-18 BUY_LIMIT\/high\]/);
 });
 
 test("buildAnalysisPromptFromConfig: RECENT_LESSONS omits action/confidence when both null (legacy trades)", () => {
@@ -247,7 +255,7 @@ test("buildAnalysisPromptFromConfig: LAST_SIGNAL_AND_ORDER injected in entry mod
   assert.match(prompt, /action=WAIT/);
   assert.match(prompt, /volume confirmation/);
   // Structured trigger + prior currentPrice must flow into the next round so the AI can
-  // decide "trigger now met → upgrade WAIT to BUY_NOW".
+  // decide "trigger now met → upgrade WAIT to BUY_LIMIT".
   assert.match(prompt, /Previous trigger condition[^\n]*pulls back to 180\.50/);
   assert.match(prompt, /Previous round's observed current price: 181\.30/);
   assert.match(prompt, /CRITICAL: if the previous trigger condition is now satisfied/);
@@ -362,7 +370,7 @@ test("buildAnalysisPromptFromConfig: prompt teaches AI to use Volume + VWAP", ()
   assert.match(prompt, /volume/i);
   // Guardrail: must forbid hallucinating either when not drawn.
   assert.match(prompt, /hallucinating a VWAP line or volume pattern/);
-  // Execution rule: low-volume breakouts must not produce BUY_NOW.
+  // Execution rule: low-volume breakouts must not chase via marketable BUY_LIMIT.
   assert.match(prompt, /low-volume breakout/);
   // Confidence must be conditioned on volume/VWAP agreement.
   assert.match(prompt, /volume and VWAP[\s\S]*agree with the direction/);

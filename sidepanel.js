@@ -56,13 +56,6 @@ const exitPriceLabelSpan = document.getElementById("exitPriceLabel");
 const exitPriceInput = document.getElementById("exitPriceInput");
 const markSoldButton = document.getElementById("markSoldButton");
 const positionError = document.getElementById("positionError");
-const markBoughtSection = document.getElementById("markBoughtSection");
-const markBoughtTitle = document.getElementById("markBoughtTitle");
-const markBoughtCopy = document.getElementById("markBoughtCopy");
-const entryPriceLabelSpan = document.getElementById("entryPriceLabel");
-const entryPriceInput = document.getElementById("entryPriceInput");
-const markBoughtButton = document.getElementById("markBoughtButton");
-const markBoughtError = document.getElementById("markBoughtError");
 const markLimitPlacedSection = document.getElementById("markLimitPlacedSection");
 const markLimitPlacedTitle = document.getElementById("markLimitPlacedTitle");
 const markLimitPlacedCopy = document.getElementById("markLimitPlacedCopy");
@@ -132,7 +125,7 @@ function formatTotalRoundsLabel(language, value) {
 }
 
 function getActionTone(action) {
-  if (action === "BUY_NOW" || action === "BUY_LIMIT") {
+  if (action === "BUY_LIMIT") {
     return "buy";
   }
 
@@ -537,13 +530,8 @@ function renderPositionPanels(state, language) {
   positionSectionHeaderCopy.textContent = t(language, "virtualPositionCopy");
   exitPriceLabelSpan.textContent = t(language, "exitPriceLabel");
   markSoldButton.textContent = t(language, "markSoldButton");
-  markBoughtTitle.textContent = t(language, "markBoughtTitle");
-  markBoughtCopy.textContent = t(language, "markBoughtCopy");
-  entryPriceLabelSpan.textContent = t(language, "entryPriceLabel");
-  markBoughtButton.textContent = t(language, "markBoughtButton");
 
   // Hide all optional cards by default; each branch below re-enables what applies.
-  markBoughtSection.classList.add("hidden");
   markLimitPlacedSection.classList.add("hidden");
   pendingLimitSection.classList.add("hidden");
 
@@ -578,8 +566,12 @@ function renderPositionPanels(state, language) {
 
   positionSection.classList.add("hidden");
 
-  // Flat → pending BUY_LIMIT (entry-mode limit order); or show markLimitPlaced when AI says BUY_LIMIT;
-  // or direct markBought when AI says BUY_NOW.
+  // Flat → pending BUY_LIMIT (entry-mode limit order); or show markLimitPlaced
+  // when AI says BUY_LIMIT. BUY_NOW is no longer in the action vocabulary
+  // (the user's "all entries via limit" principle), so there is no
+  // "manual mark bought" path here — entries always flow through:
+  //   AI BUY_LIMIT → user places at broker → "Mark limit placed" → wait → "Limit filled"
+  // The "Limit filled" button calls markBought internally with pending.limitPrice.
   if (pending && pending.action === "BUY_LIMIT") {
     renderPendingLimitCard(state, language, pending);
     return;
@@ -587,17 +579,6 @@ function renderPositionPanels(state, language) {
 
   if (isRunning && lastAction === "BUY_LIMIT") {
     renderMarkLimitPlacedCard(state, language, "BUY_LIMIT");
-    return;
-  }
-
-  const canMarkBought = isRunning && lastAction === "BUY_NOW";
-  markBoughtSection.classList.toggle("hidden", !canMarkBought);
-
-  if (canMarkBought) {
-    const suggested = state.lastResult?.analysis?.entryPrice || "";
-    if (suggested && !entryPriceInput.value) {
-      entryPriceInput.value = suggested;
-    }
   }
 }
 
@@ -907,32 +888,6 @@ restartMonitorButton.addEventListener("click", async () => {
     summaryText.textContent = response?.error || t(language, "couldNotRestart");
   }
 
-  await render();
-});
-
-markBoughtButton.addEventListener("click", async () => {
-  const settings = await getSettings();
-  const language = getLanguage(settings.language);
-  markBoughtError.classList.add("hidden");
-  markBoughtError.textContent = "";
-  const entryPrice = entryPriceInput.value.trim();
-  if (!entryPrice || Number(entryPrice) <= 0) {
-    markBoughtError.textContent = t(language, "entryPriceInvalid");
-    markBoughtError.classList.remove("hidden");
-    return;
-  }
-  markBoughtButton.disabled = true;
-  try {
-    const response = await chrome.runtime.sendMessage({ type: "mark-bought", entryPrice });
-    if (!response?.ok) {
-      markBoughtError.textContent = response?.error || t(language, "couldNotMarkBought");
-      markBoughtError.classList.remove("hidden");
-    } else {
-      entryPriceInput.value = "";
-    }
-  } finally {
-    markBoughtButton.disabled = false;
-  }
   await render();
 });
 

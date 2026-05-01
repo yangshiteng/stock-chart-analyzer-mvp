@@ -65,7 +65,7 @@ Completed (Batch 5.5 — tracked-but-already-done):
 
 Completed (Stage B — virtual-position state machine + semi-auto flow):
 - `state.virtualPosition` is the single signal for entry vs exit mode (null = scanning entry; object = holding, scanning exit). STATUS enum untouched per the "no ad-hoc flags" rule.
-- `lib/llm.js` builds the JSON schema dynamically: entry allows `BUY_NOW/BUY_LIMIT/WAIT`; exit allows `SELL_NOW/SELL_LIMIT/HOLD`; force_exit locks to `SELL_NOW` only.
+- `lib/llm.js` builds the JSON schema dynamically: entry allows `BUY_LIMIT/WAIT`; exit allows `SELL_LIMIT/HOLD`; force_exit locks to `SELL_NOW` only. (Originally entry also allowed `BUY_NOW` and exit also allowed `SELL_NOW` — those were removed in the limit-only refactor; see "Limit-only action vocabulary" below.)
 - Prompt adds `SESSION_MODE` + `POSITION_CONTEXT` sections and mode-specific rule blocks (`ENTRY_MODE_RULES` / `EXIT_MODE_RULES` / `FORCE_EXIT_RULES`).
 - `lib/market-hours.js` exports `isNearUsMarketClose` (10-min lead before 16:00 ET, DST-safe). `runMonitoringRound` flips mode to `force_exit` when holding near close.
 - New background handlers: `mark-bought` sets `virtualPosition`; `mark-sold` appends to `state.tradeHistory` and calls `pauseMonitoring` (session ends when flat).
@@ -153,6 +153,18 @@ Completed (Batch 5 — structural cleanup + tests):
 - B3 Merged trailing `Object.assign(TRANSLATIONS.en/zh, {...})` blocks back into the single dicts in `lib/i18n.js`
 - B4 Removed unused `confidence` field from `lib/chart-validator.js`
 - B5 Added `node:test` unit tests under `test/` (29 tests: symbol, chart-validator, market-hours, llm). Run via `npm test`.
+
+Completed (Limit-only action vocabulary — BUY_NOW removed, SELL_NOW restricted to FORCE_EXIT):
+- **Trigger**: real-trade testing showed market orders (`BUY_NOW` / `SELL_NOW` in normal exit) caused recurring slippage / bad-fill problems. User decision: ALL entries and normal exits via limit orders only.
+- **Schema change**: `ALLOWED_ACTIONS` is now `["BUY_LIMIT", "SELL_NOW", "SELL_LIMIT", "HOLD", "WAIT"]` (was 6, now 5). `ENTRY_MODE_ACTIONS` = `["BUY_LIMIT", "WAIT"]` (was 3). `EXIT_MODE_ACTIONS` = `["SELL_LIMIT", "HOLD"]` (was 3). `FORCE_EXIT_ACTIONS` unchanged at `["SELL_NOW"]`.
+- **Why SELL_NOW survives in FORCE_EXIT only**: the day-trading must-be-flat-by-close rule outweighs the slippage concern in the final 10 minutes. Limit orders carry too much fill-risk so close to the bell. The overnight-gap auto-abandon mechanism (Stage B follow-up) remains as the second-line safety net if a force-exit somehow doesn't fill.
+- **Prompt rewrites in `lib/prompt-config.js`**: `actionRules` rewritten — for setups that would have warranted BUY_NOW under a market-order regime (hot breakout, reclaim already triggered), the AI now issues `BUY_LIMIT` with `limitPrice` at or fractionally below current price (within ~0.1–0.3%) — a "marketable limit" that fills on the next tick but with price protection. Same for stop-out exits: `SELL_LIMIT` with `limitPrice` at or just below current bid. `entryModeRules` / `exitModeRules` updated with the "never SELL_NOW in normal mode" guardrail. `forceExitRules` adds an explicit note that this mode overrides the limit-only principle. `executionRules` Volume-gating + VWAP-gating wording updated to use BUY_LIMIT / SELL_LIMIT throughout.
+- **UI removed**: the entire `markBoughtSection` card (`<section id="markBoughtSection">` in HTML, ~7 DOM refs in sidepanel.js, `markBoughtButton` event handler, the `lastAction === "BUY_NOW"` branch in `renderPositionPanels`). No "manual mark bought" path anymore — entries always flow through `AI BUY_LIMIT → Mark limit placed → Limit filled` (the "Limit filled" button calls `markBought` internally with `pending.limitPrice`). i18n keys `markBoughtTitle / markBoughtCopy / markBoughtButton` deleted (en + zh).
+- **UI kept**: `positionActions` card with `exitPriceInput` and "Mark sold at this price" — needed as manual-override exit path (panic close, broker rejected limit, etc.). Pre-filled with `currentPrice` for the convenience case.
+- **Backend untouched**: `markBought` and `markSold` handlers in `background.js` are still wired — they're reused by the "Limit filled" button to promote a pending limit into a real position / close. `entryPriceInvalid` and `couldNotMarkBought` i18n keys retained for those paths.
+- **Legacy journal data**: pre-refactor `tradeHistory` entries may carry `entryAction: "BUY_NOW"`. The `action_BUY_NOW` i18n key is intentionally retained so historical entries still render correctly in the trade journal.
+- **Tests**: `ALLOWED_ACTIONS` / `getAllowedActions` test cases rewritten to assert the new vocabulary, with explicit assertions that `BUY_NOW` is **not** in any allowed list and `SELL_NOW` is **not** in normal exit. RECENT_LESSONS test updated to use `BUY_LIMIT` (legacy journals can still hold older labels). Suite: 92/92 green.
+- **Why the user pushed for this**: market orders during fast intraday moves frequently filled 1-3 cents off the chart price the user was reading, and stop-loss "panic" SELL_NOW exits were even worse. A marketable limit at the same price fills slightly slower (0–1 ticks) but with bounded slippage. For a strategy that depends on the AI's price levels being right, bounded slippage is non-negotiable.
 
 ## Future work (registered, not done)
 
