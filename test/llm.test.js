@@ -5,7 +5,6 @@ import {
   ENTRY_MODE_ACTIONS,
   EXIT_MODE_ACTIONS,
   FORCE_EXIT_ACTIONS,
-  USER_CONTEXT_MAX_LENGTH,
   buildAnalysisPromptFromConfig,
   getAllowedActions
 } from "../lib/llm.js";
@@ -335,80 +334,25 @@ test("buildAnalysisPromptFromConfig: LAST_SIGNAL_AND_ORDER omitted when neither 
   assert.ok(!/\[LAST_SIGNAL_AND_ORDER\]/.test(prompt));
 });
 
-test("buildAnalysisPromptFromConfig: USER_CONTEXT injected when userContext provided (entry)", () => {
+test("buildAnalysisPromptFromConfig: USER_CONTEXT section is never emitted (feature removed)", () => {
+  // Free-text user-context notes were removed because they invited
+  // confirmation bias — users would type predictions or directional
+  // opinions that subtly steered the AI even with anti-bias rules. The
+  // tool is now strictly a price-action analyzer; it intentionally has
+  // no surface for user-supplied non-chart context.
   const prompt = buildAnalysisPromptFromConfig(
     getAnalysisPromptConfig(),
     {
       ...samplePayload,
       mode: "entry",
-      userContext: "Stock at all-time high after 3 up-days. Earnings next Tuesday."
+      // Even if a stray userContext field somehow leaks into the payload
+      // (e.g. legacy state), it must NOT be injected.
+      userContext: "Earnings tomorrow."
     },
     "en"
   );
-  assert.match(prompt, /\[USER_CONTEXT\]/);
-  assert.match(prompt, /all-time high/);
-  assert.match(prompt, /Earnings next Tuesday/);
-  // Bias meta-rule MUST be present so the model knows to distinguish facts from opinions.
-  assert.match(prompt, /USER BIAS/);
-  assert.match(prompt, /do NOT let them override what the current chart actually shows/);
-});
-
-test("buildAnalysisPromptFromConfig: USER_CONTEXT also injected in exit mode (fundamentals matter for exits too)", () => {
-  const prompt = buildAnalysisPromptFromConfig(
-    getAnalysisPromptConfig(),
-    {
-      ...samplePayload,
-      mode: "exit",
-      virtualPosition: { entryPrice: "180" },
-      userContext: "Earnings tomorrow AMC — consider exiting early."
-    },
-    "en"
-  );
-  assert.match(prompt, /\[USER_CONTEXT\]/);
-  assert.match(prompt, /Earnings tomorrow/);
-});
-
-test("buildAnalysisPromptFromConfig: USER_CONTEXT also injected in force_exit mode", () => {
-  const prompt = buildAnalysisPromptFromConfig(
-    getAnalysisPromptConfig(),
-    {
-      ...samplePayload,
-      mode: "force_exit",
-      virtualPosition: { entryPrice: "180" },
-      userContext: "Watch for closing auction imbalance."
-    },
-    "en"
-  );
-  assert.match(prompt, /\[USER_CONTEXT\]/);
-  assert.match(prompt, /closing auction/);
-});
-
-test("buildAnalysisPromptFromConfig: USER_CONTEXT omitted when absent / empty / whitespace", () => {
-  for (const userContext of [undefined, null, "", "   ", "\n\n  \t"]) {
-    const prompt = buildAnalysisPromptFromConfig(
-      getAnalysisPromptConfig(),
-      { ...samplePayload, mode: "entry", userContext },
-      "en"
-    );
-    assert.ok(!/\[USER_CONTEXT\]/.test(prompt), `should omit for value: ${JSON.stringify(userContext)}`);
-  }
-});
-
-test("buildAnalysisPromptFromConfig: USER_CONTEXT truncated at USER_CONTEXT_MAX_LENGTH", () => {
-  const long = "x".repeat(USER_CONTEXT_MAX_LENGTH + 50);
-  const prompt = buildAnalysisPromptFromConfig(
-    getAnalysisPromptConfig(),
-    { ...samplePayload, mode: "entry", userContext: long },
-    "en"
-  );
-  const match = prompt.match(/--- BEGIN NOTES ---\n([\s\S]*?)\n--- END NOTES ---/);
-  assert.ok(match, "should contain notes block");
-  assert.equal(match[1].length, USER_CONTEXT_MAX_LENGTH);
-});
-
-test("USER_CONTEXT_MAX_LENGTH exported and is a reasonable cap", () => {
-  assert.equal(typeof USER_CONTEXT_MAX_LENGTH, "number");
-  assert.ok(USER_CONTEXT_MAX_LENGTH >= 200 && USER_CONTEXT_MAX_LENGTH <= 2000);
+  assert.ok(!/\[USER_CONTEXT\]/.test(prompt));
+  assert.ok(!/USER BIAS/.test(prompt));
 });
 
 test("buildAnalysisPromptFromConfig: prompt teaches AI to use Volume + VWAP", () => {
@@ -509,22 +453,23 @@ test("buildAnalysisPromptFromConfig: LONG_TERM_CONTEXT does NOT show staleness w
   assert.ok(!/more than 24 hours old/.test(prompt));
 });
 
-test("buildAnalysisPromptFromConfig: LONG_TERM_CONTEXT placed after USER_CONTEXT, before LAST_SIGNAL_AND_ORDER", () => {
+test("buildAnalysisPromptFromConfig: LONG_TERM_CONTEXT placed before LAST_SIGNAL_AND_ORDER", () => {
+  // After USER_CONTEXT was removed, LONG_TERM_CONTEXT became the first
+  // user-anchored section; the only ordering constraint left is that the
+  // model reads structural anchors before deciding whether to repeat the
+  // previous round's call.
   const prompt = buildAnalysisPromptFromConfig(
     getAnalysisPromptConfig(),
     {
       ...samplePayload,
       mode: "entry",
-      userContext: "Earnings tomorrow.",
       longTermContext: longTermFresh,
       lastSignal: { action: "WAIT", reasoning: "x" }
     },
     "en"
   );
-  const userIdx = prompt.indexOf("[USER_CONTEXT]");
   const longIdx = prompt.indexOf("[LONG_TERM_CONTEXT]");
   const lastIdx = prompt.indexOf("[LAST_SIGNAL_AND_ORDER]");
-  assert.ok(userIdx >= 0 && longIdx >= 0 && lastIdx >= 0);
-  assert.ok(userIdx < longIdx, "USER_CONTEXT should come before LONG_TERM_CONTEXT");
+  assert.ok(longIdx >= 0 && lastIdx >= 0);
   assert.ok(longIdx < lastIdx, "LONG_TERM_CONTEXT should come before LAST_SIGNAL_AND_ORDER");
 });

@@ -79,10 +79,6 @@ const pendingLimitSignalChanged = document.getElementById("pendingLimitSignalCha
 const pendingLimitFilledButton = document.getElementById("pendingLimitFilledButton");
 const pendingLimitCancelButton = document.getElementById("pendingLimitCancelButton");
 const pendingLimitError = document.getElementById("pendingLimitError");
-const userContextFormLabel = document.getElementById("userContextFormLabel");
-const userContextFormInput = document.getElementById("userContextFormInput");
-const userContextFormCharCount = document.getElementById("userContextFormCharCount");
-const userContextFormHint = document.getElementById("userContextFormHint");
 // Long-term context form widget (visible inside the start form)
 const longTermFormSection = document.getElementById("longTermFormSection");
 const longTermFormLabel = document.getElementById("longTermFormLabel");
@@ -96,7 +92,6 @@ const LONG_TERM_TIMEFRAME_OPTIONS = ["daily", "weekly"];
 let isGeneratingLongTerm = false;
 
 const STALE_LIMIT_THRESHOLD_MINUTES = 10;
-const USER_CONTEXT_MAX = 500;
 
 let isStartingMonitoring = false;
 
@@ -606,14 +601,6 @@ function renderPositionPanels(state, language) {
   }
 }
 
-function renderUserContextFormHint(language) {
-  const used = (userContextFormInput.value || "").length;
-  userContextFormCharCount.textContent = t(language, "backgroundNotesCharLimit", {
-    used,
-    max: USER_CONTEXT_MAX
-  });
-}
-
 function populateLongTermTimeframeOptions(selectEl, language, selectedValue = "daily") {
   selectEl.innerHTML = LONG_TERM_TIMEFRAME_OPTIONS
     .map((tf) => `<option value="${tf}">${escapeHtml(t(language, `longTermTimeframe_${tf}`))}</option>`)
@@ -716,9 +703,6 @@ function updateStaticText(language, settings) {
   totalRoundsLabel.textContent = t(language, "totalRounds");
   confirmButton.textContent = t(language, "start");
   recommendationTitle.textContent = t(language, "latestRecommendation");
-  userContextFormLabel.textContent = t(language, "backgroundNotesTitle");
-  userContextFormInput.placeholder = t(language, "backgroundNotesPlaceholder");
-  userContextFormHint.textContent = t(language, "backgroundNotesCopy");
   apiKeyStatus.textContent = settings.openaiApiKey
     ? t(language, "apiKeySaved", { model: settings.model })
     : t(language, "noApiKeySaved");
@@ -794,11 +778,6 @@ function populateContextForm(state, language) {
   symbolOverrideInput.value = profile?.symbolOverride ?? "";
   populateAnalysisIntervalOptions(language, normalizeAnalysisInterval(profile?.rules?.analysisInterval));
   populateTotalRoundsOptions(language, normalizeTotalRounds(profile?.rules?.totalRounds));
-  // Prefill notes from last profile so the user doesn't have to retype them when restarting.
-  if (!userContextFormInput.value) {
-    userContextFormInput.value = profile?.userContext ?? "";
-  }
-  renderUserContextFormHint(language);
 }
 
 async function render() {
@@ -1100,11 +1079,6 @@ clearApiKeyButton.addEventListener("click", async () => {
   await render();
 });
 
-userContextFormInput.addEventListener("input", async () => {
-  const settings = await getSettings();
-  renderUserContextFormHint(getLanguage(settings.language));
-});
-
 async function runLongTermGenerate({ timeframe, errorEl }) {
   const settings = await getSettings();
   const language = getLanguage(settings.language);
@@ -1182,8 +1156,7 @@ contextForm.addEventListener("submit", async (event) => {
       type: "start-monitoring",
       symbolOverride: symbolOverrideInput.value,
       analysisInterval: analysisIntervalSelect.value,
-      totalRounds: totalRoundsSelect.value,
-      userContext: userContextFormInput.value
+      totalRounds: totalRoundsSelect.value
     });
   } catch (error) {
     sendError = error;
