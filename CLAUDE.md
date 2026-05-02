@@ -1,6 +1,6 @@
 # auto-stock
 
-Chrome Extension (Manifest V3) that screenshots a TradingView chart every N seconds, sends it to OpenAI (vision + Structured Outputs) for an execution recommendation, and shows the result in a side panel. Locked to TradingView so the prompt can rely on a consistent chart layout. Single-user tool (not multi-tenant).
+Chrome Extension (Manifest V3) that screenshots a TradingView chart on a fixed 5 / 10 / 15 / 30 minute cadence, sends it to OpenAI (vision + Structured Outputs) for an execution recommendation, and shows the result in a side panel. Locked to TradingView so the prompt can rely on a consistent chart layout. Single-user tool (not multi-tenant).
 
 ## Tech stack
 - MV3 service worker (`background.js`) + offscreen document (`offscreen.js`) for audio
@@ -11,17 +11,19 @@ Chrome Extension (Manifest V3) that screenshots a TradingView chart every N seco
 - Optional Discord webhook notifications
 
 ## Key files
-- `background.js` — service worker, monitoring loop, tab binding
-- `lib/llm.js` — OpenAI calls (`callOpenAi` + `callOpenAiOnce` + retry wrapper)
-- `lib/prompt-config.js` — execution prompt config + JSON schema
+- `background.js` — service worker, monitoring loop, tab binding, message routing, trade lifecycle handlers
+- `lib/llm.js` — OpenAI calls (`callOpenAi` + `callOpenAiOnce` + retry wrapper), prompt assembly, lesson / long-term context calls, analysis-output validation
+- `lib/prompt-config.js` — execution prompt config + JSON schema + long-term prompt config
 - `lib/chart-validator.js` — TradingView hostname check (extension is hard-locked to TradingView)
 - `lib/symbol.js` — `guessSymbol` + `sanitizeUrl` (pure, unit-tested)
-- `lib/market-hours.js` — `isWithinUsMarketHours` (pure, unit-tested, DST-correct)
-- `lib/side-panel.js` — side-panel availability helpers (`shouldEnableSidePanelForTab`, `enableSidePanelForWindow`, `setSidePanelAvailabilityForTab`)
-- `lib/storage.js`, `lib/constants.js` — state/settings helpers, STATUS enum
+- `lib/market-hours.js` — `isWithinUsMarketHours`, `isNearUsMarketClose`, `getUsTradingDay` (pure, unit-tested, DST-correct)
+- `lib/side-panel.js` — side-panel path/availability helpers (`getSidePanelConfigForTab`, `shouldEnableSidePanelForTab`, `enableSidePanelForWindow`, `setSidePanelAvailabilityForTab`)
+- `lib/storage.js`, `lib/constants.js` — state/settings helpers, STATUS enum, `STATE_VERSION`, `migrateState()`, `buildResetStatePreservingHistory()`
+- `lib/trade-stats.js` — pure real-trade stats aggregator
 - `lib/i18n.js` — all user-facing + background-log strings (single source of truth)
-- `sidepanel.js`, `popup.js`, `offscreen.js`
-- `test/*.test.js` — `node:test` unit tests; run `npm test`
+- `sidepanel.js`, `sidepanel-other-tab.js`, `popup.js`, `offscreen.js`
+- `scripts/run-tests.mjs`, `scripts/lint.mjs` — dependency-free local/CI verification helpers
+- `test/*.test.js` — 103 `node:test` unit tests; run `npm run check`
 
 ## IMPORTANT: loading the extension
 
@@ -40,7 +42,7 @@ Completed (Batch 1):
 - #14 Simplified `shouldEnableSidePanelForTab` — side panel stays enabled for all tabs while RUNNING/PAUSED **(superseded — see "Side panel bound to original tab" below)**
 
 Completed (Batch 2):
-- #4 Symbol input (`symbolOverride`) in sidepanel + expanded chart-validator keywords (雪球/东方财富/富途/老虎/长桥/同花顺/新浪财经/seeking alpha/investing.com/barchart/stockcharts/finviz) + tightened `guessSymbol` (checks `$TSLA`, URL patterns, title-lead)
+- #4 Symbol input (`symbolOverride`) in sidepanel + tightened `guessSymbol` (checks `$TSLA`, URL patterns, title-lead). The earlier multi-platform chart-validator keyword expansion was later removed; the extension is now hard-locked to TradingView (see "Hard-locked to TradingView").
 - #6 Merged Chinese translation into a single analysis call via a language-aware `LANGUAGE_OUTPUT` prompt section (translation round-trip removed)
 - #8 Exponential backoff in `callOpenAi` (3 attempts, 1s/2s, retries only network errors + HTTP 429/5xx)
 - #11 Deduped `callOpenAiJson` / `callOpenAiAnalysis` into one `callOpenAi` + `callOpenAiOnce` pair
@@ -54,7 +56,7 @@ Completed (Batch 3):
 Completed (Batch 4):
 - A1 Sidepanel summary now surfaces `stopReason` while still RUNNING (market-closed skip is visible)
 - A2 Alarm handler guards against re-entry via `isRoundInFlight`; staleness timeout (3 min via `roundStartedAt`) prevents deadlock if the service worker is evicted mid-round
-- A4 Raised `ANALYSIS_MAX_OUTPUT_TOKENS` to 1800 (Chinese merge made 1100 tight); `incomplete: max_output_tokens` now marked retryable; retry wrapper honors an explicit `error.retryable` flag
+- A4 `incomplete: max_output_tokens` is marked retryable and retry wrapper honors an explicit `error.retryable` flag. Current `ANALYSIS_MAX_OUTPUT_TOKENS` is 1200.
 - C2 `sanitizeUrl()` strips query + fragment before sending page URL to OpenAI; `guessSymbol` also runs on the cleaned URL
 - C4 `recoverMonitoringAfterStartup` clears a stale `isRoundInFlight: true` on service-worker cold start
 - Non-blocking start: `startMonitoring` / `continueMonitoring` / `restartMonitoring` schedule the alarm and fire-and-forget the first round; sidepanel submit has an explicit `catch` so any `sendMessage` failure still re-renders instead of stranding the loading card
@@ -69,7 +71,7 @@ Completed (Stage B — virtual-position state machine + semi-auto flow):
 - Prompt adds `SESSION_MODE` + `POSITION_CONTEXT` sections and mode-specific rule blocks (`ENTRY_MODE_RULES` / `EXIT_MODE_RULES` / `FORCE_EXIT_RULES`).
 - `lib/market-hours.js` exports `isNearUsMarketClose` (10-min lead before 16:00 ET, DST-safe). `runMonitoringRound` flips mode to `force_exit` when holding near close.
 - New background handlers: `mark-bought` sets `virtualPosition`; `mark-sold` appends to `state.tradeHistory` and calls `pauseMonitoring` (session ends when flat).
-- Sidepanel: position-summary card + mark-bought/mark-sold input forms appear based on `virtualPosition` + last action.
+- Sidepanel: position-summary card + manual mark-sold form appear based on `virtualPosition`; mark-bought now flows through `BUY_LIMIT → Mark limit placed → Limit filled` after the limit-only refactor.
 
 Completed (Stage C — trade journal + self-learning):
 - `markSold` persists closed trades to `state.tradeHistory` with `{ id, plannedStopLoss, plannedTarget, heldMinutes, lesson: null }`, then fires a background `generateTradeLesson` call that writes a ≤80-char lesson back by matching on `trade.id` (fire-and-forget; failures are swallowed so they cannot strand the session).
@@ -79,14 +81,14 @@ Completed (Stage C — trade journal + self-learning):
 - i18n keys added (en + zh): `tradeJournalTitle`, `tradeJournalCopy`, `noClosedTrades`, `lessonPending`.
 - Tests: 4 new cases in `test/llm.test.js` cover RECENT_LESSONS injection, exit-mode omission, empty-list omission, and blank-lesson filtering. Suite: 45/45 green.
 
-Completed (real-trade stats card — Stage D prerequisite):
+Completed (real-trade stats card):
 - `MAX_TRADE_HISTORY = 500` decouples `tradeHistory` retention from `MAX_RESULTS` (20, which is still used for the per-round `results` timeline). See Known risks below.
 - `virtualPosition` now captures `entryAction` + `entryConfidence` at `markBought` time; `markSold` copies them into the trade record. Legacy trades stay at `null` and fall into an "unknown" bucket that only renders when non-empty.
 - `lib/trade-stats.js` is a pure aggregator: `computeTradeStats(tradeHistory)` → `{ overall, byAction, byConfidence }`. Filters `status:"abandoned"` and non-finite `pnlPercent`. Known buckets (`BUY_NOW`/`BUY_LIMIT`, `high`/`medium`/`low`) are always present with `n:0` for stable UI rendering.
 - Sidepanel Performance Stats card hides entirely when `overall.n === 0`. Buckets with `n < 5` render with a visible "small sample" warning — explicit choice to show-with-caveat rather than hide, since a 3-month run will still produce sparse confidence buckets and hiding them is worse than flagging them.
 - i18n keys: `statsTitle`, `statsCopy`, `statsSmallSampleWarning`, `statsOverallHeading`, `statsByActionHeading`, `statsByConfidenceHeading`, `statsSampleSize`, `statsWinRate`, `statsAvgPnl`, `statsTotalPnl`, `statsAvgHeld`, `statsBestTrade`, `statsWorstTrade`, `statsBucketEmpty`.
 - Tests: 10 new cases in `test/trade-stats.test.js`. Suite: 58/58 green.
-- Intentionally scoped down from Stage D: this is **read-only aggregation of real-trade journal data**, not paper-trading simulation. Stage D adds auto-execution on top; this card is the measurement layer that tells us whether Stage D is even worth building.
+- This is **read-only aggregation of real-trade journal data**, not paper-trading simulation. Paper-trading / Stage D is not planned.
 
 Completed (BUY_LIMIT/SELL_LIMIT unfilled-order tracking — combined A+B):
 - **Problem**: AI suggests a limit order, user places it at the broker, next round fires before the limit fills. Without state, the next LLM call has no idea a resting order exists — it may contradict itself, or the user may silently skip a signal change.
@@ -166,23 +168,35 @@ Completed (Limit-only action vocabulary — BUY_NOW removed, SELL_NOW restricted
 - **Tests**: `ALLOWED_ACTIONS` / `getAllowedActions` test cases rewritten to assert the new vocabulary, with explicit assertions that `BUY_NOW` is **not** in any allowed list and `SELL_NOW` is **not** in normal exit. RECENT_LESSONS test updated to use `BUY_LIMIT` (legacy journals can still hold older labels). Suite: 92/92 green.
 - **Why the user pushed for this**: market orders during fast intraday moves frequently filled 1-3 cents off the chart price the user was reading, and stop-loss "panic" SELL_NOW exits were even worse. A marketable limit at the same price fills slightly slower (0–1 ticks) but with bounded slippage. For a strategy that depends on the AI's price levels being right, bounded slippage is non-negotiable.
 
-## Future work (registered, not done)
+Completed (analysis-output validation + continuity prompt cleanup):
+- **Problem**: after the limit-only refactor, `LAST_SIGNAL_AND_ORDER` still had stale examples saying WAIT/BUY_LIMIT could become `BUY_NOW` and HOLD/SELL_LIMIT could become `SELL_NOW`. That contradicted the current mode-specific action schema.
+- **Prompt fix**: continuity text now says upgrades must stay inside the current allowed vocabulary: entry `WAIT -> BUY_LIMIT`; exit `HOLD -> SELL_LIMIT`. Regression tests assert the prompt no longer contains `becomes BUY_NOW` / `becomes SELL_NOW`.
+- **Validation layer**: `validateAnalysisResult()` checks that the returned action is allowed in the current mode, all price fields are single positive decimal strings, and entry-mode long setups have `stopLossPrice < entryPrice < targetPrice` with at least 1:1 reward-to-risk.
+- **Retry behavior**: invalid structured analysis output gets one fresh model retry (`ANALYSIS_VALIDATION_MAX_ATTEMPTS = 2`). If the second output is still invalid, the round fails and monitoring pauses with the validation error.
+- **Tests**: 6 validation tests plus the continuity prompt regression. Suite: 98/98 green when run file-by-file with `node test/*.test.js`.
 
-### Stage D — paper-trading mode + 30-day stats dashboard
-**Prerequisite**: 1–2 weeks of real live-mode usage first. Without a baseline dataset, paper-trading statistics are optimizing against noise.
+Completed (stateVersion migration layer):
+- `STATE_VERSION = 1` is now part of `createDefaultState()`, and every saved monitor state is normalized through `migrateState()` in `lib/storage.js`.
+- Migration v1 handles legacy local state from before the user-context removal: it strips `userContext` from `monitoringProfile` / `lastMonitoringProfile`, restores missing default fields, and caps `results` / `tradeHistory` to `MAX_RESULTS` / `MAX_TRADE_HISTORY`.
+- Design note: migration is intentionally pure and exported so future shape changes can be unit-tested without a Chrome runtime. When adding `STATE_VERSION = 2`, add the new version branch inside `migrateState()` and a focused regression test in `test/storage.test.js`.
+- Tests: `test/storage.test.js` covers invalid input, legacy state preservation, malformed legacy profiles, legacy userContext stripping, and array capping.
 
-Scope:
-- `popup.html` adds a `tradingMode: "live" | "paper"` radio (default live). Stored in settings.
-- Paper mode: `BUY_NOW`/`BUY_LIMIT` auto-creates a `virtualPosition` at the AI's `entryPrice`; next round reads `currentPrice` from the analysis output and auto-closes if price crosses `stopLossPrice` or `targetPrice`. No manual Mark bought / Mark sold buttons — fully hands-off.
-- Paper trades go into `state.paperTradeHistory` (separate from `tradeHistory`) so real and simulated data never mix.
-- New sidepanel stats card: rolling-30-day win rate, avg RR ratio, total PnL, breakdown by action (BUY_NOW vs BUY_LIMIT), breakdown by confidence (high/medium/low hit rates — calibration check).
-- Yellow banner "🟡 PAPER TRADING MODE" at top of sidepanel while paper mode is active.
-- Open design question: where does `currentPrice` come from? Options: (a) ask the LLM to report it each round (risk: hallucinated prices; add sanity check vs previous round), (b) call a separate quote API (more deps, rate limits). Start with (a) + sanity check.
+Completed (CI + dependency-free lint/check):
+- `npm test` now runs `node scripts/run-tests.mjs`, which imports all `node:test` files in a single process. This avoids the Windows sandbox `spawn EPERM` failure seen with `node --test "test/*.test.js"` while still using the same test framework.
+- `npm run lint` runs `node --check` against every `.js` / `.mjs` file (excluding `.git`, `.claude`, `.github`, and `node_modules`). No ESLint dependency by design.
+- `npm run check` runs lint + tests.
+- `.github/workflows/ci.yml` runs lint and tests on every push and pull request using Node 22.
+- Suite after this change: 103/103 tests green via `npm test`.
 
-Rationale: Stage D is the **verification layer** for Stages A/B/C — it answers "does this signal pipeline actually have positive expectancy?" Without it, every subsequent prompt tweak is subjective.
+Completed (recommendation confidence color coding):
+- `sidepanel.js` maps `analysis.confidence` to `data-tone="confidence-high|confidence-medium|confidence-low"` on the recommendation metric card. Unknown / malformed confidence stays neutral.
+- `sidepanel.css` renders high confidence green, medium amber, and low red so signal quality is visible without reading the full rationale.
+- UI-only change: prompt schema and stats aggregation remain unchanged (`confidence` is still `high | medium | low`).
+
+## Future work / not planned
 
 ### Known risks / follow-ups (small)
-- `state.tradeHistory` now uses its own `MAX_TRADE_HISTORY = 500` (previously reused `MAX_RESULTS = 20`, which silently dropped journal entries after ~20 trades). Decoupled so months of history survive for the RECENT_LESSONS loop + the upcoming real-trade stats card. 500 is not unbounded — if a user ever runs for multiple years, consider export-to-CSV + purge, or a separate `journalArchive`.
+- `state.tradeHistory` now uses its own `MAX_TRADE_HISTORY = 500` (previously reused `MAX_RESULTS = 20`, which silently dropped journal entries after ~20 trades). Decoupled so months of history survive for the RECENT_LESSONS loop + real-trade stats. 500 is not unbounded — if a user ever runs for multiple years, consider export-to-CSV + purge, or a separate `journalArchive`.
 - `generateTradeLesson` is fire-and-forget with a swallowed catch. If the call fails (network / rate limit), the trade's `lesson` stays `null` forever — no retry, no backfill. Fine for now; revisit if many lessons end up stuck at null.
 - `tradeHistory` is now preserved across every state reset via `buildResetStatePreservingHistory()` helper. Previously 6 code paths silently wiped the journal: `onInstalled` (reload/update), `exitMonitoring` (Exit button), `restartMonitoring` (Restart button), and 3 branches inside `runValidationPreflight` (fires on every Start click). That's why a fresh Start cleared months of journal. Other state fields (virtualPosition, pendingLimitOrder, monitoringProfile, results, …) still reset to defaults in all those paths — only tradeHistory is protected. If the shape of `tradeHistory` entries ever changes, add a one-off migration inside the helper — it's the single chokepoint for cross-version journal preservation. The only remaining raw `createDefaultState()` use is `onStartup`, guarded by `!state.updatedAt` (fires only on empty storage, nothing to preserve).
 - No tab-activity freshness check: if user leaves the tab backgrounded for 30+ min, the screenshot still fires on schedule but the chart data may be stale. Currently ignored because users actively watching wouldn't hit this; worth revisiting if false signals correlate with tab-switch patterns.
@@ -196,7 +210,7 @@ Rationale: Stage D is the **verification layer** for Stages A/B/C — it answers
 - **Tests**: `test/chart-validator.test.js` covers `tradingview.com`, `cn.tradingview.com`, subdomain matching, rejection of non-TV platforms (Yahoo / 雪球 / 富途 / generic blogs), and bilingual rejection reasons. 7 cases.
 
 ### Design decisions worth preserving
-- **One trade per day, manual Continue to start a second**: chosen over auto-resume because the manual click is a natural cool-off period. Do not add an "allow multi-trade per day" toggle without first getting Stage D win-rate data; if multi-trading dilutes edge, the toggle will become a foot-gun.
+- **One trade per day, manual Continue to start a second**: chosen over auto-resume because the manual click is a natural cool-off period. Do not add an "allow multi-trade per day" toggle without first getting real evidence that multi-trading does not dilute edge; otherwise the toggle will become a foot-gun.
 - **Overnight positions auto-abandoned without asking**: day-trading by definition cannot hold overnight, so resurrecting a cross-day position is never the right answer. No confirmation dialog — the `status: "abandoned"` journal entry preserves the audit trail.
 - **No ad-hoc STATUS flags**: mode (entry/exit/force_exit) is derived from `virtualPosition` presence + `isNearUsMarketClose()`, not stored. This keeps the STATUS state machine (`IDLE`/`VALIDATING`/`AWAITING_CONTEXT`/`RUNNING`/`PAUSED`) as the single source of truth per original design.
 - **Exit and Restart are blocked while `virtualPosition` or `pendingLimitOrder` is non-null**: tearing down the session would clear those fields, but the user still has a real position / resting order at the broker. The next AI round would (incorrectly) treat the user as flat and could issue another BUY. Blocking the button forces the user to resolve via Mark sold / Cancel limit first. Stop is still allowed — it preserves all state for Continue. UI greys out the buttons with a tooltip; backend `exitMonitoring` and `restartMonitoring` also throw if either field is non-null (defense in depth). Considered a confirmation dialog instead but rejected — destructive-confirmation dialogs trained users to click through them; a hard block is the only thing that reliably prevents the double-position bug.
@@ -205,8 +219,9 @@ Rationale: Stage D is the **verification layer** for Stages A/B/C — it answers
 - #1 Changing the model name — `gpt-5.4` is verified to work; user uses it intentionally
 - #7 Compressing screenshots — user prefers high-resolution captures for chart accuracy
 - #13 Encrypting the API key in storage — single-user local tool, not worth the complexity
-- Auto multi-trade per day — current manual Continue is the cool-off period; revisit only after Stage D shows multi-trading doesn't dilute edge
-- Compression / batching of `tradeHistory` for older entries — premature optimization until user hits the 50-trade cap
+- Stage D / paper-trading mode / 30-day simulated stats — user decided not to build it
+- Auto multi-trade per day — current manual Continue is the cool-off period; revisit only with real evidence that multi-trading doesn't dilute edge
+- Compression / batching of `tradeHistory` for older entries — premature optimization until user hits the 500-trade cap
 
 ## Conventions
 - User writes in Chinese; respond in Chinese.

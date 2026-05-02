@@ -458,6 +458,41 @@ h2 {
   background: rgba(255, 255, 255, 0.7);
 }
 
+.metric-card[data-tone^="confidence-"] {
+  border-width: 1px;
+}
+
+.metric-card[data-tone="confidence-high"] {
+  border-color: rgba(12, 122, 67, 0.28);
+  background: rgba(12, 122, 67, 0.1);
+}
+
+.metric-card[data-tone="confidence-medium"] {
+  border-color: rgba(154, 106, 20, 0.3);
+  background: rgba(154, 106, 20, 0.12);
+}
+
+.metric-card[data-tone="confidence-low"] {
+  border-color: rgba(163, 63, 47, 0.28);
+  background: rgba(163, 63, 47, 0.1);
+}
+
+.metric-card[data-tone="confidence-high"] .metric-value {
+  color: var(--buy);
+}
+
+.metric-card[data-tone="confidence-medium"] .metric-value {
+  color: var(--wait);
+}
+
+.metric-card[data-tone="confidence-low"] .metric-value {
+  color: var(--sell);
+}
+
+.metric-card[data-tone^="confidence-"] .metric-value {
+  font-weight: 800;
+}
+
 .metric-label {
   margin: 0 0 6px;
   font-size: 12px;
