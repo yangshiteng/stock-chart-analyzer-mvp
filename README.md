@@ -1,6 +1,6 @@
 # Stock Chart Analyzer
 
-A Chrome Extension (Manifest V3) that screenshots a TradingView chart every N seconds, sends it to OpenAI (vision + Structured Outputs, model `gpt-5.4`), and returns an executable day-trading recommendation in a side panel. Single-user local tool, locked to TradingView so the prompt can rely on a consistent chart layout across users.
+A Chrome Extension (Manifest V3) that screenshots a TradingView chart on a fixed 5 / 10 / 15 / 30 minute cadence, sends it to OpenAI (vision + Structured Outputs, model `gpt-5.4`), and returns an executable day-trading recommendation in a side panel. Single-user local tool, locked to TradingView so the prompt can rely on a consistent chart layout across users.
 
 This is an execution assistant, not a fundamental screener. It assumes the user has already decided **which** stock to trade and only needs help with **when** to enter, hold, or exit during the session.
 
@@ -11,6 +11,7 @@ This is an execution assistant, not a fundamental screener. It assumes the user 
 - Tracks a virtual position lifecycle (entry → hold → exit) inside the extension so the AI prompt is mode-aware.
 - Logs each closed trade to a journal, generates an AI-written lesson, and feeds the last 10 lessons back into future prompts.
 - Surfaces a real-trade performance stats card (win rate, avg PnL, breakdown by action and confidence) once trade history is non-empty.
+- Color-codes the latest recommendation confidence (`high` = green, `medium` = amber, `low` = red) so weak signals are obvious at a glance.
 - Optionally posts a Discord webhook notification when the action changes between rounds.
 - Bilingual UI (English + Simplified Chinese), single source of truth in `lib/i18n.js`.
 
@@ -50,9 +51,8 @@ Show roughly **1.5–2 trading sessions** of 5-min bars. Each candle should be a
 3. Click `Start` in the popup. The extension validates the tab.
 4. The side panel opens with the session form. Fill in:
    - **Ticker symbol** (auto-guessed from title/URL when possible, but user input wins)
-   - **Analysis interval** (e.g. every 60 / 90 / 120 seconds)
+   - **Analysis interval** (5 / 10 / 15 / 30 minutes)
    - **Total rounds**
-   - **Background notes** (optional, ≤ 500 chars — e.g. "stock at ATH, earnings tomorrow, sector risk-off")
    - **Long-term context** (optional — generate once from a Daily or Weekly chart, see below)
 5. Click `Start Monitoring`. The first round fires immediately; subsequent rounds run on the alarm.
 6. The recommendation card shows the latest signal. The session enters entry mode (looking for BUY) or exit mode (managing an open position) depending on whether you have marked a trade as filled.
@@ -85,7 +85,7 @@ The model returns strict JSON with these fields:
 - `stopLossPrice` — invalidation level
 - `targetPrice` — profit target
 - `triggerCondition` — short string describing the price/structure trigger ("close above $182.40 on 5m")
-- `confidence` — `high` | `medium` | `low`
+- `confidence` — `high` | `medium` | `low`; rendered green / amber / red in the recommendation card
 - `reasoning` — short rationale, must name specific structure / EMAs / VWAP / volume seen on the chart
 - `symbol`
 - `currentPrice`
@@ -94,32 +94,34 @@ The model returns strict JSON with these fields:
 
 Single OpenAI call per round, language-aware (Chinese-mode output is generated in one shot — no separate translation step). Prompt is assembled from these sections, in order:
 
-`[ROLE]` → `[OBJECTIVE]` → `[SESSION_MODE]` → `[POSITION_CONTEXT]` → `[CHART_CONTEXT]` → `[CHART_FOCUS]` → `[CHART_GUARDRAILS]` → `[ENTRY_MODE_RULES] | [EXIT_MODE_RULES] | [FORCE_EXIT_RULES]` → `[EXECUTION_RULES]` → `[OUTPUT_RULES]` → `[LANGUAGE_OUTPUT]` → `[RECENT_LESSONS]` → `[USER_CONTEXT]` → `[LONG_TERM_CONTEXT]` → `[LAST_SIGNAL_AND_ORDER]` → `[OUTPUT_FORMAT]`
+`[ROLE]` → `[OBJECTIVE]` → `[SESSION_MODE]` → `[POSITION_CONTEXT]` → `[RECENT_LESSONS]` → `[LONG_TERM_CONTEXT]` → `[LAST_SIGNAL_AND_ORDER]` → `[CHART_CONTEXT]` → `[CHART_FOCUS]` → `[CHART_GUARDRAILS]` → `[ACTION_RULES]` → `[ENTRY_MODE_RULES] | [EXIT_MODE_RULES] | [FORCE_EXIT_RULES]` → `[EXECUTION_RULES]` → `[LANGUAGE_RULES]` → `[LANGUAGE_OUTPUT]` → `[OUTPUT_FORMAT]`
 
 Mode is derived (no ad-hoc flags): `virtualPosition === null && !nearClose` → entry; `virtualPosition !== null && !nearClose` → exit; `virtualPosition !== null && nearClose` → force-exit.
 
 Notable injected sections:
 
 - `RECENT_LESSONS` — last 10 closed trades with non-empty AI-generated lessons, formatted as `- [SYMBOL ±pnl% date] lesson`. Entry mode only.
-- `USER_CONTEXT` — the per-session background notes the user typed, wrapped in `--- BEGIN NOTES --- / --- END NOTES ---` with an explicit anti-bias meta-rule: treat verifiable facts as true, treat user predictions / sentiment as USER BIAS, never let opinion override what the chart shows.
 - `LONG_TERM_CONTEXT` — a structural read of the user's Daily or Weekly chart (trend, stage, key support/resistance, ≤300-char summary) generated once via a separate one-shot LLM call before the session starts. Anti-bias rules tell the AI: structural bias only, the 5-min chart is the trigger, on conflict lower confidence by one tier rather than letting the higher timeframe steamroll the intraday signal. A 24h staleness warning is included if the long-term snapshot is older than a day.
 - `LAST_SIGNAL_AND_ORDER` — the prior round's action plus any resting limit order (action, price, age in minutes, full snapshot) so the next round either reuses the same numbers or explicitly flags invalidation in `reasoning`. Omitted in force-exit mode.
+- Post-response validation checks that the returned action is legal for the current mode, all price fields are positive decimal prices, and entry-mode long setups have stop < entry < target with at least 1:1 reward-to-risk. Invalid analysis output gets one fresh model retry before the session pauses with the validation error.
 
 ## State model
 
-Single source of truth: `STATUS` enum (`IDLE` / `VALIDATING` / `AWAITING_CONTEXT` / `RUNNING` / `PAUSED`) plus four orthogonal data fields:
+Single source of truth: `STATUS` enum (`IDLE` / `VALIDATING` / `AWAITING_CONTEXT` / `RUNNING` / `PAUSED`) plus a versioned state object (`stateVersion`) and four orthogonal data fields:
 
 - `virtualPosition` — `null` when scanning for entry, `{ entryPrice, stopLossPrice, targetPrice, entryAction, entryConfidence, tradingDay, ... }` when holding.
 - `pendingLimitOrder` — `null` or a snapshot of a resting BUY_LIMIT / SELL_LIMIT the user has placed at the broker.
-- `monitoringProfile` — per-session config: `symbolOverride`, `analysisInterval`, `totalRounds`, `userContext`, `longTermContext`, …
+- `monitoringProfile` — per-session config: `symbolOverride`, `analysisInterval`, `totalRounds`, `longTermContext`, bound tab/window metadata.
 - `tradeHistory` — closed (and abandoned) trades, capped at 500. Preserved across every reset path via `buildResetStatePreservingHistory()`.
+
+Stored monitor state is migrated through `migrateState()` in `lib/storage.js` before use. Version 1 removes legacy `userContext` fields from saved profiles, restores missing defaults, and caps large `results` / `tradeHistory` arrays to their configured limits.
 
 Buttons:
 
 - `Stop` — pauses; keeps profile, virtualPosition, pendingLimitOrder, tradeHistory.
 - `Continue` — resumes a paused session on the original bound tab.
-- `Restart` — round 1 with the same profile.
-- `Exit` — clears the session (but `tradeHistory` is always preserved).
+- `Restart` — round 1 with the same profile. Disabled while a real position or resting limit order is still tracked.
+- `Exit` — clears the session (but `tradeHistory` is always preserved). Disabled while a real position or resting limit order is still tracked.
 
 ## Performance stats
 
@@ -130,9 +132,9 @@ Pure aggregation lives in `lib/trade-stats.js` and is unit-tested.
 ## File layout
 
 - `manifest.json`
-- `background.js` — service worker; alarm-driven monitoring loop; tab binding; message routing; handlers for mark-bought / mark-sold / mark-limit-placed / mark-limit-cancelled / update-user-context / generate-long-term-context.
+- `background.js` — service worker; alarm-driven monitoring loop; tab binding; message routing; handlers for mark-bought / mark-sold / mark-limit-placed / mark-limit-cancelled / generate-long-term-context.
 - `popup.html` / `popup.js` / `popup.css` — language, API key, Discord webhook, market-hours toggle, Start.
-- `sidepanel.html` / `sidepanel.js` / `sidepanel.css` — session form, recommendation card, position card, limit-order card, background-notes editor, long-term context widget, trade journal, performance stats, recent rounds timeline.
+- `sidepanel.html` / `sidepanel-other-tab.html` / `sidepanel.js` / `sidepanel.css` — session form, recommendation card, confidence coloring, position card, limit-order card, long-term context widget, trade journal, performance stats, recent rounds timeline, and the non-bound-tab placeholder.
 - `offscreen.html` / `offscreen.js` — short audio cue when a fresh round lands.
 - `lib/llm.js` — OpenAI calls (`callOpenAi` + `callOpenAiOnce` + retry wrapper with exponential backoff), prompt assembly, `generateTradeLesson`, `generateLongTermContext`.
 - `lib/prompt-config.js` — execution prompt config + JSON schema + long-term prompt config.
@@ -140,10 +142,11 @@ Pure aggregation lives in `lib/trade-stats.js` and is unit-tested.
 - `lib/symbol.js` — `guessSymbol` + `sanitizeUrl` (pure, unit-tested).
 - `lib/market-hours.js` — `isWithinUsMarketHours`, `isNearUsMarketClose`, `getUsTradingDay` (pure, DST-correct via `Intl.DateTimeFormat`, unit-tested).
 - `lib/side-panel.js` — side-panel availability helpers.
-- `lib/storage.js`, `lib/constants.js` — state/settings helpers, `STATUS` enum, `createDefaultState()`, `buildResetStatePreservingHistory()`.
+- `lib/storage.js`, `lib/constants.js` — state/settings helpers, `STATUS` enum, `STATE_VERSION`, `createDefaultState()`, `migrateState()`, `buildResetStatePreservingHistory()`.
 - `lib/trade-stats.js` — pure aggregator.
 - `lib/i18n.js` — single dictionary for all user-facing + log strings (en + zh).
-- `test/*.test.js` — 79 `node:test` cases (`npm test`).
+- `test/*.test.js` — 103 `node:test` cases (`npm test`).
+- `scripts/run-tests.mjs`, `scripts/lint.mjs` — dependency-free local/CI verification helpers.
 
 ## OpenAI setup
 
@@ -151,6 +154,7 @@ Pure aggregation lives in `lib/trade-stats.js` and is unit-tested.
 - Image input: high detail (no compression — full-resolution screenshots).
 - Strict JSON schema output.
 - Retry: 3 attempts, 1s/2s exponential backoff, retries network errors + HTTP 429/5xx + `incomplete: max_output_tokens`.
+- Analysis validation: one extra model retry if the structured JSON is internally invalid for the current mode or price geometry.
 - Key stored in `chrome.storage.local` (single-user local tool — see Security below).
 
 ## Discord notifications
@@ -178,7 +182,11 @@ Optional toggle in the popup. When on, scheduled rounds are skipped outside 9:30
 npm test
 ```
 
-`node:test` covers symbol parsing, chart validator, market hours / DST, trade-stats aggregation, and prompt assembly (mode awareness, RECENT_LESSONS, USER_CONTEXT, LONG_TERM_CONTEXT, LAST_SIGNAL_AND_ORDER, ordering invariants, anti-bias meta-rules).
+`npm run lint` syntax-checks every JS/MJS file with `node --check`. `npm run check` runs lint + tests.
+
+`node:test` covers symbol parsing, chart validator, market hours / DST, storage migration, trade-stats aggregation, prompt assembly (mode awareness, RECENT_LESSONS, LONG_TERM_CONTEXT, LAST_SIGNAL_AND_ORDER, ordering invariants, anti-bias meta-rules), USER_CONTEXT removal regression, and analysis-output validation.
+
+GitHub Actions runs the same lint + test suite on every push and pull request via `.github/workflows/ci.yml`.
 
 ## Security & limitations
 

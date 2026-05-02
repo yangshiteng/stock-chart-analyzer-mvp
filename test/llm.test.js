@@ -6,7 +6,8 @@ import {
   EXIT_MODE_ACTIONS,
   FORCE_EXIT_ACTIONS,
   buildAnalysisPromptFromConfig,
-  getAllowedActions
+  getAllowedActions,
+  validateAnalysisResult
 } from "../lib/llm.js";
 import { getAnalysisPromptConfig } from "../lib/prompt-config.js";
 
@@ -259,6 +260,9 @@ test("buildAnalysisPromptFromConfig: LAST_SIGNAL_AND_ORDER injected in entry mod
   assert.match(prompt, /Previous trigger condition[^\n]*pulls back to 180\.50/);
   assert.match(prompt, /Previous round's observed current price: 181\.30/);
   assert.match(prompt, /CRITICAL: if the previous trigger condition is now satisfied/);
+  assert.match(prompt, /WAIT can become BUY_LIMIT/);
+  assert.doesNotMatch(prompt, /becomes BUY_NOW/);
+  assert.doesNotMatch(prompt, /becomes SELL_NOW/);
 });
 
 test("buildAnalysisPromptFromConfig: LAST_SIGNAL_AND_ORDER tolerates missing triggerCondition / currentPrice (legacy rounds)", () => {
@@ -480,4 +484,73 @@ test("buildAnalysisPromptFromConfig: LONG_TERM_CONTEXT placed before LAST_SIGNAL
   const lastIdx = prompt.indexOf("[LAST_SIGNAL_AND_ORDER]");
   assert.ok(longIdx >= 0 && lastIdx >= 0);
   assert.ok(longIdx < lastIdx, "LONG_TERM_CONTEXT should come before LAST_SIGNAL_AND_ORDER");
+});
+
+const validEntryAnalysis = {
+  action: "BUY_LIMIT",
+  entryPrice: "180.50",
+  stopLossPrice: "179.50",
+  targetPrice: "182.00",
+  triggerCondition: "5m close above 180.50 with volume expansion",
+  confidence: "medium",
+  reasoning: "VWAP reclaim with rising volume",
+  symbol: "TSLA",
+  currentPrice: "180.70"
+};
+
+test("validateAnalysisResult: accepts a valid entry-mode long setup", () => {
+  assert.equal(validateAnalysisResult(validEntryAnalysis, "entry"), validEntryAnalysis);
+});
+
+test("validateAnalysisResult: rejects action outside the current mode vocabulary", () => {
+  assert.throws(
+    () => validateAnalysisResult({ ...validEntryAnalysis, action: "SELL_NOW" }, "entry"),
+    /only allows BUY_LIMIT, WAIT/
+  );
+});
+
+test("validateAnalysisResult: rejects non-positive or non-decimal price fields", () => {
+  assert.throws(
+    () => validateAnalysisResult({ ...validEntryAnalysis, currentPrice: "N/A" }, "entry"),
+    /invalid currentPrice/
+  );
+  assert.throws(
+    () => validateAnalysisResult({ ...validEntryAnalysis, currentPrice: "$180.70" }, "entry"),
+    /invalid currentPrice/
+  );
+  assert.throws(
+    () => validateAnalysisResult({ ...validEntryAnalysis, currentPrice: "0" }, "entry"),
+    /invalid currentPrice/
+  );
+});
+
+test("validateAnalysisResult: rejects entry setups whose stop is not below entry", () => {
+  assert.throws(
+    () => validateAnalysisResult({ ...validEntryAnalysis, stopLossPrice: "181.00" }, "entry"),
+    /stopLossPrice must be below entryPrice/
+  );
+});
+
+test("validateAnalysisResult: rejects entry setups below 1:1 reward-to-risk", () => {
+  assert.throws(
+    () => validateAnalysisResult({ ...validEntryAnalysis, targetPrice: "181.00" }, "entry"),
+    /at least 1:1/
+  );
+});
+
+test("validateAnalysisResult: force_exit accepts only SELL_NOW with positive prices", () => {
+  const forceExit = {
+    ...validEntryAnalysis,
+    action: "SELL_NOW",
+    entryPrice: "180.50",
+    stopLossPrice: "179.50",
+    targetPrice: "180.10",
+    currentPrice: "180.10"
+  };
+
+  assert.equal(validateAnalysisResult(forceExit, "force_exit"), forceExit);
+  assert.throws(
+    () => validateAnalysisResult({ ...forceExit, action: "SELL_LIMIT" }, "force_exit"),
+    /only allows SELL_NOW/
+  );
 });

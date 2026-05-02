@@ -108,6 +108,10 @@ function formatConfidenceLabel(language, confidence) {
   return label === key ? confidence : label;
 }
 
+function getConfidenceTone(confidence) {
+  return ["high", "medium", "low"].includes(confidence) ? confidence : "unknown";
+}
+
 function normalizeAnalysisInterval(value) {
   return ANALYSIS_INTERVAL_OPTIONS.some((option) => option.value === value) ? value : "5m";
 }
@@ -140,9 +144,10 @@ function getActionTone(action) {
   return "no-trade";
 }
 
-function renderMetricCard(language, label, value, fullSpan = false) {
+function renderMetricCard(language, label, value, { fullSpan = false, tone = null } = {}) {
+  const toneAttr = tone ? ` data-tone="${escapeHtml(tone)}"` : "";
   return `
-    <article class="metric-card${fullSpan ? " full-span" : ""}">
+    <article class="metric-card${fullSpan ? " full-span" : ""}"${toneAttr}>
       <p class="metric-label">${escapeHtml(label)}</p>
       <p class="metric-value">${escapeHtml(value || t(language, "nA"))}</p>
     </article>
@@ -240,8 +245,8 @@ function renderAnalysisCard(state, language) {
       ${renderMetricCard(language, t(language, "entryPriceLabel"), analysis.entryPrice || nA)}
       ${renderMetricCard(language, t(language, "stopLossPriceLabel"), analysis.stopLossPrice || nA)}
       ${renderMetricCard(language, t(language, "targetPriceLabel"), analysis.targetPrice || nA)}
-      ${renderMetricCard(language, t(language, "confidenceLabel"), formatConfidenceLabel(language, analysis.confidence))}
-      ${renderMetricCard(language, t(language, "reasoningLabel"), analysis.reasoning || nA, true)}
+      ${renderMetricCard(language, t(language, "confidenceLabel"), formatConfidenceLabel(language, analysis.confidence), { tone: `confidence-${getConfidenceTone(analysis.confidence)}` })}
+      ${renderMetricCard(language, t(language, "reasoningLabel"), analysis.reasoning || nA, { fullSpan: true })}
     </div>
   `;
 }

@@ -3,6 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test \"test/*.test.js\""
+    "test": "node scripts/run-tests.mjs",
+    "lint": "node scripts/lint.mjs",
+    "check": "npm run lint && npm test"
   }
 }
