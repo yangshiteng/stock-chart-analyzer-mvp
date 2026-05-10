@@ -25,10 +25,12 @@ import {
 } from "./lib/llm.js";
 import {
   MARKET_CONTEXT_STATUS,
+  createDefaultMarketContext,
   createMarketContextForProfile,
   isMarketContextValidForProfile,
   mergeMarketContextScans,
-  normalizeMarketContext
+  normalizeMarketContext,
+  shouldPreserveMarketContextAcrossReset
 } from "./lib/market-context.js";
 import { getUsMarketSessionPhase, getUsTradingDay, isNearUsMarketClose } from "./lib/market-hours.js";
 import {
@@ -971,9 +973,23 @@ async function markSold(payload) {
 // the source of truth for any real position/order.
 async function buildResetStatePreservingHistory(overrides = {}) {
   const prior = await getState();
+
+  // Preserve same-day completed marketContext across resets — it's expensive
+  // (~$0.10 + ~30s of UX per session) to re-scan, and structural Daily / 1H
+  // context does not change intraday. Trading-day mismatch wipes it (correct:
+  // yesterday's structure is irrelevant). Symbol mismatch is checked at
+  // consume-time by isMarketContextValidForProfile, which compares against
+  // the new profile's symbolOverride and forces a re-scan if different.
+  // Caller can still pass `marketContext: createDefaultMarketContext()` in
+  // overrides to force a wipe (none currently need to).
+  const preservedContext = shouldPreserveMarketContextAcrossReset(prior?.marketContext)
+    ? normalizeMarketContext(prior.marketContext)
+    : createDefaultMarketContext();
+
   return {
     ...createDefaultState(),
     tradeHistory: Array.isArray(prior?.tradeHistory) ? prior.tradeHistory : [],
+    marketContext: preservedContext,
     ...overrides
   };
 }
