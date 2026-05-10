@@ -19,7 +19,6 @@ import { getLanguage, t } from "./lib/i18n.js";
 import {
   analyzeChartCapture,
   analyzeMarketContextScan,
-  analyzeSignalReview,
   generatePremarketDipPlan,
   generateTradeLesson
 } from "./lib/llm.js";
@@ -562,7 +561,7 @@ async function setAwaitingMarketContext(monitoringProfile, currentState, reason 
     lastMonitoringProfile: monitoringProfile,
     marketContext,
     premarketDipPlan: null,
-    lastSignalReview: null,
+
     stopReason: reason,
     lastError: null,
     ...overrides
@@ -583,7 +582,7 @@ async function beginMonitoringRounds(monitoringProfile, currentState, overrides 
     premarketDipPlan: currentState.pendingLimitOrder?.source === "premarket_dip_plan"
       ? currentState.premarketDipPlan
       : null,
-    lastSignalReview: null,
+
     stopReason: null,
     lastError: null,
     ...overrides
@@ -650,145 +649,6 @@ function getCurrentAnalysisMode(state) {
   return isNearUsMarketClose() ? "force_exit" : "exit";
 }
 
-async function reviewSignal(payload) {
-  const language = await getUiLanguage();
-  const currentState = await getState();
-  const monitoringProfile = currentState.monitoringProfile;
-  const lastResult = currentState.lastResult;
-  const originalAnalysis = lastResult?.analysis;
-  const userChallenge = `${payload?.userChallenge || ""}`.trim().slice(0, 1000);
-
-  if (currentState.status !== STATUS.RUNNING || !monitoringProfile || !originalAnalysis) {
-    throw new Error(t(language, "reviewUnavailable"));
-  }
-  if (!userChallenge) {
-    throw new Error(t(language, "reviewInputRequired"));
-  }
-
-  if (monitoringProfile.boundTabId) {
-    const activeTab = await getActiveTab(monitoringProfile.boundWindowId || null);
-    if (activeTab.id !== monitoringProfile.boundTabId) {
-      throw new Error(t(language, "resumeTabMismatch"));
-    }
-  }
-
-  const capture = await captureActiveTab(monitoringProfile.boundWindowId || null);
-  const validation = validateChartTab({
-    ...capture,
-    language
-  });
-
-  if (!validation.isTradingView) {
-    throw new Error(t(language, "validationFailedChart"));
-  }
-
-  const mode = getCurrentAnalysisMode(currentState);
-  const review = await analyzeSignalReview({
-    ...capture,
-    symbolHint: monitoringProfile.symbolOverride || originalAnalysis.symbol || null,
-    mode,
-    virtualPosition: currentState.virtualPosition || null,
-    sellStrategy: getSellStrategyForState(currentState, monitoringProfile),
-    pendingLimitOrder: currentState.pendingLimitOrder || null,
-    marketContext: currentState.marketContext?.summary || null,
-    originalAnalysis,
-    userChallenge
-  });
-
-  const lastSignalReview = {
-    id: createId(),
-    sourceResultId: lastResult.id || null,
-    sourceRound: lastResult.round ?? currentState.roundCount ?? 0,
-    mode,
-    createdAt: new Date().toISOString(),
-    userChallenge,
-    originalAnalysis,
-    review
-  };
-
-  const state = await patchState({
-    lastSignalReview,
-    lastError: null
-  });
-  return { ok: true, state, review: lastSignalReview };
-}
-
-async function acceptReviewedSignal() {
-  const language = await getUiLanguage();
-  const currentState = await getState();
-  const reviewRecord = currentState.lastSignalReview;
-  const review = reviewRecord?.review;
-
-  if (currentState.status !== STATUS.RUNNING || !reviewRecord || !review) {
-    throw new Error(t(language, "reviewUnavailable"));
-  }
-
-  const action = review.action;
-  if (action !== "BUY_LIMIT" && action !== "SELL_LIMIT") {
-    const state = await patchState({
-      lastSignalReview: {
-        ...reviewRecord,
-        acceptedAt: new Date().toISOString()
-      },
-      lastError: null
-    });
-    return { ok: true, state };
-  }
-
-  if (action === "BUY_LIMIT" && currentState.virtualPosition) {
-    throw new Error(t(language, "limitBuyWhileHolding"));
-  }
-  if (action === "SELL_LIMIT" && !currentState.virtualPosition) {
-    throw new Error(t(language, "limitSellWithoutPosition"));
-  }
-  if (currentState.pendingLimitOrder) {
-    throw new Error(t(language, "limitAlreadyPending"));
-  }
-
-  const limitPriceRaw = `${review.orderPrice ?? ""}`.trim();
-  const limitPrice = Number(limitPriceRaw);
-  if (!Number.isFinite(limitPrice) || limitPrice <= 0) {
-    throw new Error(t(language, "limitPriceInvalid"));
-  }
-
-  const pendingLimitOrder = {
-    action,
-    limitPrice: limitPriceRaw,
-    stopLossPrice: review.stopLossPrice || null,
-    targetPrice: review.targetPrice || null,
-    reasoning: review.explanation || null,
-    confidence: review.confidence || null,
-    symbol: currentState.monitoringProfile?.symbolOverride || reviewRecord.originalAnalysis?.symbol || null,
-    placedAt: new Date().toISOString(),
-    sourceRound: reviewRecord.sourceRound ?? currentState.roundCount ?? 0,
-    source: "review",
-    sourceReviewId: reviewRecord.id,
-    sourceResultId: reviewRecord.sourceResultId || null
-  };
-
-  const state = await patchState({
-    pendingLimitOrder,
-    lastSignalReview: {
-      ...reviewRecord,
-      acceptedAt: new Date().toISOString()
-    },
-    lastError: null
-  });
-
-  await rescheduleMonitoringAlarmIfRunning(state);
-
-  return { ok: true, state };
-}
-
-async function dismissSignalReview() {
-  const state = await patchState({
-    lastSignalReview: null,
-    lastError: null
-  });
-
-  return { ok: true, state };
-}
-
 async function markBought(payload) {
   const language = await getUiLanguage();
   const currentState = await getState();
@@ -832,7 +692,7 @@ async function markBought(payload) {
   const state = await patchState({
     virtualPosition,
     pendingLimitOrder: null,
-    lastSignalReview: null,
+
     lastError: null
   });
   await rescheduleMonitoringAlarmIfRunning(state);
@@ -880,7 +740,7 @@ async function markLimitPlaced(payload) {
     sourceRound: currentState.roundCount || 0
   };
 
-  const state = await patchState({ pendingLimitOrder, lastSignalReview: null, lastError: null });
+  const state = await patchState({ pendingLimitOrder, lastError: null });
   await rescheduleMonitoringAlarmIfRunning(state);
   return { ok: true, state };
 }
@@ -944,7 +804,7 @@ async function markSold(payload) {
   await patchState({
     virtualPosition: null,
     pendingLimitOrder: null,
-    lastSignalReview: null,
+
     tradeHistory
   });
 
@@ -1233,7 +1093,7 @@ async function runMonitoringRound() {
       roundCount: round,
       lastValidation: validationRecord,
       lastResult: result,
-      lastSignalReview: null,
+  
       results: [result, ...currentState.results].slice(0, MAX_RESULTS),
       stopReason: null,
       lastError: null
@@ -1540,7 +1400,7 @@ async function adoptPremarketDipPlan() {
       status: "accepted",
       acceptedAt: now.toISOString()
     },
-    lastSignalReview: null,
+
     lastError: null
   });
 
@@ -1578,7 +1438,7 @@ async function startMonitoring(payload) {
     lastMonitoringProfile: baseProfile,
     roundCount: 0,
     lastResult: null,
-    lastSignalReview: null,
+
     marketContext,
     results: [],
     virtualPosition: null,
@@ -1988,21 +1848,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     if (message?.type === "update-sell-strategy") {
       sendResponse(await updateSellStrategy(message));
-      return;
-    }
-
-    if (message?.type === "review-signal") {
-      sendResponse(await reviewSignal(message));
-      return;
-    }
-
-    if (message?.type === "accept-reviewed-signal") {
-      sendResponse(await acceptReviewedSignal());
-      return;
-    }
-
-    if (message?.type === "dismiss-signal-review") {
-      sendResponse(await dismissSignalReview());
       return;
     }
 
