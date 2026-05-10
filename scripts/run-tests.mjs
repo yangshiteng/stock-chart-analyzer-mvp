@@ -3,6 +3,7 @@ const testFiles = [
   "../test/chart-validator.test.js",
   "../test/discord-signal.test.js",
   "../test/llm.test.js",
+  "../test/market-context.test.js",
   "../test/market-hours.test.js",
   "../test/premarket-dip.test.js",
   "../test/sell-strategy.test.js",
