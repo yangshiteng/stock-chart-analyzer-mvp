@@ -119,23 +119,20 @@ Notable injected sections:
 - `MARKET_CONTEXT` — mandatory same-symbol, same-trading-day Daily + 1H context. The prompt uses it as a higher-timeframe map for regime, support/resistance, dip-buy aggressiveness, and profit-taking style; the final action still must be executable from the current 5-minute screenshot.
 - Post-response validation checks that the returned action is legal for the current mode, `BUY_LIMIT` / `SELL_LIMIT` include a positive decimal `orderPrice`, `WAIT` / `HOLD` keep `orderPrice` empty, and entry-mode long setups have stop < orderPrice < target with at least 1:1 reward-to-risk. Invalid analysis output gets one fresh model retry before the session pauses with the validation error.
 
-Signal Review is a separate one-shot LLM call. It sends the current screenshot, original signal, current mode/position context, and the user's challenge as `USER_CHALLENGE`. The review prompt explicitly treats the challenge as a hypothesis, not a fact, and returns structured JSON with `reviewDecision`, `action`, `orderPrice`, stops/targets, `confidence`, and `explanation`. Reviews are saved in `lastSignalReview` only; they do not enter `results` or future main prompts unless the user accepts a reviewed limit signal, which creates a normal `pendingLimitOrder`.
-
 Legacy optional Daily / Weekly long-term context was removed. The current design reintroduces higher-timeframe information only as a mandatory, structured Market Context Scan for intraday execution: Daily + 1H regime and key levels, not swing-trading thesis text.
 Recent trade lessons are intentionally kept out of the prompt. They remain in the trade journal as human review material, not as model self-learning context.
 
 ## State model
 
-Single source of truth: `STATUS` enum (`IDLE` / `VALIDATING` / `AWAITING_CONTEXT` / `RUNNING` / `PAUSED`) plus a versioned state object (`stateVersion`) and six orthogonal data fields:
+Single source of truth: `STATUS` enum (`IDLE` / `VALIDATING` / `AWAITING_CONTEXT` / `RUNNING` / `PAUSED`) plus a versioned state object (`stateVersion`) and five orthogonal data fields:
 
 - `virtualPosition` — `null` when scanning for entry, `{ entryPrice, stopLossPrice, targetPrice, entryAction, entryConfidence, tradingDay, ... }` when holding.
 - `pendingLimitOrder` — `null` or a snapshot of a resting BUY_LIMIT / SELL_LIMIT the user has placed at the broker.
-- `lastSignalReview` — `null` or the latest one-shot review of the current signal. Cleared when a new main analysis round arrives.
 - `marketContext` — mandatory pre-session context tied to `symbol` + US trading day. Contains Daily scan, 1H scan, and merged summary; invalid/missing context forces `AWAITING_CONTEXT`.
 - `monitoringProfile` — per-session config: `symbolOverride`, state-specific scan intervals, sell-strategy deltas, bound tab/window metadata.
 - `tradeHistory` — closed (and abandoned) trades, capped at 500. Preserved across every reset path via `buildResetStatePreservingHistory()`.
 
-Stored monitor state is migrated through `migrateState()` in `lib/storage.js` before use. Version 5 removes legacy `userContext` / `longTermContext` fields and stale `longTermContextDraft`, clears old session signal state that predates `orderPrice`, clears stale pre-v4 signal reviews, resets pre-v5 market context, restores missing defaults, and caps large `results` / `tradeHistory` arrays to their configured limits. `tradeHistory` and `lastMonitoringProfile` are preserved.
+Stored monitor state is migrated through `migrateState()` in `lib/storage.js` before use. The migration chain through `STATE_VERSION = 10` removes legacy `userContext` / `longTermContext` / `longTermContextDraft` / `lastSignalReview` fields, resets pre-v5 market context, restores missing defaults, and caps large `results` / `tradeHistory` arrays to their configured limits. `tradeHistory` and `lastMonitoringProfile` are preserved.
 
 Buttons:
 
@@ -158,7 +155,7 @@ Pure aggregation lives in `lib/trade-stats.js` and is unit-tested.
 - `popup.html` / `popup.js` / `popup.css` — language, API key, Discord webhook, Start.
 - `sidepanel.html` / `sidepanel-other-tab.html` / `sidepanel.js` / `sidepanel.css` — session form, recommendation card, confidence coloring, position card, limit-order card, trade journal, performance stats, recent rounds timeline, and the non-bound-tab placeholder.
 - `offscreen.html` / `offscreen.js` — short audio cue when a fresh round lands.
-- `lib/llm.js` — OpenAI calls (`callOpenAi` + `callOpenAiOnce` + retry wrapper with exponential backoff), Market Context scan prompt, execution prompt assembly, Signal Review, `generateTradeLesson`.
+- `lib/llm.js` — OpenAI calls (`callOpenAi` + `callOpenAiOnce` + retry wrapper), Market Context scan prompt, execution prompt assembly, review/lesson calls, analysis-output validation.
 - `lib/market-context.js` — Market Context state helpers, same-day/same-symbol validity, Daily + 1H merge policy, key-level dedupe.
 - `lib/prompt-config.js` — execution prompt config + JSON schema.
 - `lib/chart-validator.js` — TradingView hostname check (the extension only supports TradingView).

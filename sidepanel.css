@@ -462,73 +462,6 @@ h2 {
   gap: 14px;
 }
 
-.signal-review-panel {
-  display: grid;
-  gap: 12px;
-  margin-top: 14px;
-  padding-top: 14px;
-  border-top: 1px solid var(--line);
-}
-
-.review-panel-header {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 12px;
-  align-items: start;
-}
-
-.review-header-actions {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-.review-panel-header h3 {
-  margin: 0 0 4px;
-  font-size: 15px;
-  color: var(--ink);
-}
-
-.review-form {
-  display: grid;
-  gap: 12px;
-}
-
-.review-result {
-  display: grid;
-  gap: 12px;
-}
-
-.review-result-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.review-accept-actions {
-  margin-top: 2px;
-}
-
-.review-original-note {
-  display: grid;
-  gap: 4px;
-  padding: 10px 12px;
-  border-radius: 12px;
-  border: 1px solid rgba(20, 37, 58, 0.08);
-  background: rgba(13, 93, 99, 0.07);
-}
-
-.review-original-note p {
-  margin: 0;
-  font-size: 12px;
-  color: var(--muted);
-}
-
-.review-original-note strong {
-  color: var(--ink);
-}
-
 .empty-analysis {
   padding: 0;
 }
@@ -1228,19 +1161,6 @@ h2 {
 
   .analysis-grid {
     grid-template-columns: 1fr;
-  }
-
-  .review-panel-header,
-  .review-result-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .review-header-actions {
-    justify-content: stretch;
-  }
-
-  .review-header-actions .ghost-button {
-    width: 100%;
   }
 
   .field-row {

@@ -113,18 +113,6 @@ const marketContextError = document.getElementById("marketContextError");
 const confirmMarketContextButton = document.getElementById("confirmMarketContextButton");
 const recommendationTitle = document.getElementById("recommendationTitle");
 const analysisCard = document.getElementById("analysisCard");
-const signalReviewPanel = document.getElementById("signalReviewPanel");
-const signalReviewTitle = document.getElementById("signalReviewTitle");
-const signalReviewCopy = document.getElementById("signalReviewCopy");
-const reviewSignalButton = document.getElementById("reviewSignalButton");
-const ignoreReviewButton = document.getElementById("ignoreReviewButton");
-const signalReviewForm = document.getElementById("signalReviewForm");
-const reviewChallengeLabel = document.getElementById("reviewChallengeLabel");
-const reviewChallengeInput = document.getElementById("reviewChallengeInput");
-const submitReviewSignalButton = document.getElementById("submitReviewSignalButton");
-const cancelReviewSignalButton = document.getElementById("cancelReviewSignalButton");
-const signalReviewError = document.getElementById("signalReviewError");
-const signalReviewResult = document.getElementById("signalReviewResult");
 const recentRoundsTitle = document.getElementById("recentRoundsTitle");
 const recentRoundsList = document.getElementById("recentRoundsList");
 const statsSection = document.getElementById("statsSection");
@@ -163,9 +151,6 @@ const pendingLimitError = document.getElementById("pendingLimitError");
 const STALE_LIMIT_THRESHOLD_MINUTES = 10;
 
 let isStartingMonitoring = false;
-let isReviewFormOpen = false;
-let isReviewingSignal = false;
-let isAcceptingReviewedSignal = false;
 let scanningMarketContextTimeframe = null;
 let isConfirmingMarketContext = false;
 let isGeneratingPremarketDipPlan = false;
@@ -295,43 +280,7 @@ function getOrderGuidanceLabel(language, analysis) {
 }
 
 function getDisplayAnalysis(state) {
-  const original = state.lastResult?.analysis || null;
-  const review = state.lastSignalReview?.review || null;
-  if (!original || !review) {
-    return { analysis: original, originalAnalysis: original, isReviewed: false };
-  }
-
-  return {
-    analysis: {
-      action: review.action,
-      orderPrice: review.orderPrice,
-      entryPrice: original.entryPrice ?? null,
-      stopLossPrice: review.stopLossPrice,
-      targetPrice: review.targetPrice,
-      confidence: review.confidence,
-      reasoning: review.explanation,
-      symbol: original.symbol ?? null,
-      currentPrice: original.currentPrice
-    },
-    originalAnalysis: original,
-    isReviewed: true
-  };
-}
-
-function renderOriginalSignalNote(language, originalAnalysis) {
-  if (!originalAnalysis) {
-    return "";
-  }
-
-  const action = formatAnalysisActionLabel(language, originalAnalysis);
-  const price = getOrderGuidanceValue(language, originalAnalysis);
-  const confidence = formatConfidenceLabel(language, originalAnalysis.confidence);
-  return `
-    <section class="review-original-note">
-      <p>${escapeHtml(t(language, "reviewOverrideNotice"))}</p>
-      <p><strong>${escapeHtml(t(language, "originalSignalLabel"))}:</strong> ${escapeHtml(action)} @ ${escapeHtml(price)} · ${escapeHtml(confidence)}</p>
-    </section>
-  `;
+  return { analysis: state.lastResult?.analysis || null };
 }
 
 function parsePositivePrice(value) {
@@ -487,7 +436,7 @@ function renderRecentRounds(state, language) {
 }
 
 function renderAnalysisCard(state, language) {
-  const { analysis, originalAnalysis, isReviewed } = getDisplayAnalysis(state);
+  const { analysis } = getDisplayAnalysis(state);
 
   if (isStartingMonitoring || state.isRoundInFlight || (state.status === STATUS.RUNNING && state.roundCount === 0 && !analysis)) {
     analysisCard.className = "analysis-card";
@@ -516,7 +465,7 @@ function renderAnalysisCard(state, language) {
     <section class="signal-banner ${tone}">
       <div class="signal-topline">
         <div>
-          <p class="signal-label">${escapeHtml(t(language, isReviewed ? "reviewedActionNow" : "actionNow"))}</p>
+          <p class="signal-label">${escapeHtml(t(language, "actionNow"))}</p>
           <h3 class="signal-value">${escapeHtml(action)}</h3>
         </div>
       </div>
@@ -533,117 +482,7 @@ function renderAnalysisCard(state, language) {
       ${renderMetricCard(language, t(language, "reasoningLabel"), analysis.reasoning || nA, { fullSpan: true })}
     </div>
     ${renderNearbyMarketLevels(state, analysis, language)}
-    ${isReviewed ? renderOriginalSignalNote(language, originalAnalysis) : ""}
   `;
-}
-
-function formatReviewDecisionLabel(language, decision) {
-  const key = `reviewDecision_${decision}`;
-  const label = t(language, key);
-  return label === key ? (decision || t(language, "unknown")) : label;
-}
-
-function canAcceptReviewSignal(state, review) {
-  if (state.status !== STATUS.RUNNING || state.pendingLimitOrder) {
-    return false;
-  }
-
-  if (review?.action === "BUY_LIMIT") {
-    return !state.virtualPosition && !!review.orderPrice;
-  }
-
-  if (review?.action === "SELL_LIMIT") {
-    return !!state.virtualPosition && !!review.orderPrice;
-  }
-
-  if (review?.action === "SELL_NOW") {
-    return !!state.virtualPosition;
-  }
-
-  return false;
-}
-
-function getReviewUnavailableReason(language, state, reviewRecord, accepted) {
-  if (accepted) {
-    return t(language, "reviewAccepted");
-  }
-
-  if (state.pendingLimitOrder) {
-    return t(language, "reviewPendingLimitHint");
-  }
-
-  if (reviewRecord?.review?.action === "SELL_NOW") {
-    return t(language, "reviewSellNowHint");
-  }
-
-  if (reviewRecord?.review?.action === "WAIT" || reviewRecord?.review?.action === "HOLD") {
-    return t(language, "reviewNoExecutableOrder");
-  }
-
-  return t(language, "reviewNoExecutableOrder");
-}
-
-function renderSignalReviewPanel(state, language) {
-  const analysis = state.lastResult?.analysis;
-  const reviewRecord = state.lastSignalReview;
-  const review = reviewRecord?.review;
-  const shouldShow = !!analysis && state.status === STATUS.RUNNING && !state.isRoundInFlight;
-
-  signalReviewTitle.textContent = t(language, "reviewSignalTitle");
-  signalReviewCopy.textContent = t(language, "reviewSignalCopy");
-  reviewSignalButton.textContent = t(language, "reviewSignalButton");
-  ignoreReviewButton.textContent = t(language, "ignoreReviewButton");
-  reviewChallengeLabel.textContent = t(language, "reviewChallengeLabel");
-  reviewChallengeInput.placeholder = t(language, "reviewChallengePlaceholder");
-  submitReviewSignalButton.textContent = isReviewingSignal ? t(language, "reviewingSignal") : t(language, "submitReviewSignal");
-  cancelReviewSignalButton.textContent = t(language, "cancelReviewSignal");
-
-  signalReviewPanel.classList.toggle("hidden", !shouldShow);
-  if (!shouldShow) {
-    isReviewFormOpen = false;
-    signalReviewForm.classList.add("hidden");
-    signalReviewResult.classList.add("hidden");
-    signalReviewError.textContent = "";
-    signalReviewError.classList.add("hidden");
-    return;
-  }
-
-  reviewSignalButton.disabled = isReviewingSignal || isAcceptingReviewedSignal;
-  ignoreReviewButton.classList.toggle("hidden", !review);
-  ignoreReviewButton.disabled = isReviewingSignal || isAcceptingReviewedSignal;
-  signalReviewForm.classList.toggle("hidden", !isReviewFormOpen);
-  submitReviewSignalButton.disabled = isReviewingSignal;
-  cancelReviewSignalButton.disabled = isReviewingSignal;
-
-  if (!review) {
-    signalReviewResult.innerHTML = "";
-    signalReviewResult.classList.add("hidden");
-    return;
-  }
-
-  const nA = t(language, "nA");
-  const canAccept = canAcceptReviewSignal(state, review);
-  const accepted = !!reviewRecord.acceptedAt;
-  const acceptButton = canAccept && !accepted
-    ? `<button id="acceptReviewedSignalButton" class="mode-button ${review.action === "BUY_LIMIT" ? "buy-button" : "sell-button"}" type="button">${escapeHtml(isAcceptingReviewedSignal ? t(language, "acceptingReviewedSignal") : t(language, "acceptReviewedSignal"))}</button>`
-    : `<p class="form-hint">${escapeHtml(getReviewUnavailableReason(language, state, reviewRecord, accepted))}</p>`;
-
-  signalReviewResult.innerHTML = `
-    <div class="review-result-grid">
-      ${renderMetricCard(language, t(language, "reviewDecisionLabel"), formatReviewDecisionLabel(language, review.reviewDecision))}
-      ${renderMetricCard(language, t(language, "actionNow"), formatActionLabel(language, review.action))}
-      ${renderMetricCard(language, t(language, "orderPriceLabel"), review.orderPrice || nA)}
-      ${renderMetricCard(language, t(language, "stopLossPriceLabel"), review.stopLossPrice || nA)}
-      ${renderMetricCard(language, t(language, "targetPriceLabel"), review.targetPrice || nA)}
-      ${renderMetricCard(language, t(language, "confidenceLabel"), formatConfidenceLabel(language, review.confidence), { tone: `confidence-${getConfidenceTone(review.confidence)}` })}
-      ${renderMetricCard(language, t(language, "reviewExplanationLabel"), review.explanation || nA, { fullSpan: true })}
-      ${renderMetricCard(language, t(language, "reviewUserChallengeLabel"), reviewRecord.userChallenge || nA, { fullSpan: true })}
-    </div>
-    <div class="form-actions review-accept-actions">
-      ${acceptButton}
-    </div>
-  `;
-  signalReviewResult.classList.remove("hidden");
 }
 
 function getMonitoringDetailCopy(language, round, interval) {
@@ -1476,7 +1315,6 @@ async function render() {
   summaryText.textContent = getSummary(state, language);
   apiKeyInput.value = "";
   renderAnalysisCard(state, language);
-  renderSignalReviewPanel(state, language);
   renderPositionPanels(state, language);
   renderRecentRounds(state, language);
   renderStatsCard(state, language);
@@ -1537,88 +1375,6 @@ continueMonitorButton.addEventListener("click", async () => {
 
   if (!response?.ok) {
     summaryText.textContent = response?.error || t(language, "couldNotContinue");
-  }
-
-  await render();
-});
-
-reviewSignalButton.addEventListener("click", () => {
-  isReviewFormOpen = true;
-  signalReviewError.textContent = "";
-  signalReviewError.classList.add("hidden");
-  void render();
-});
-
-ignoreReviewButton.addEventListener("click", async () => {
-  ignoreReviewButton.disabled = true;
-  await chrome.runtime.sendMessage({ type: "dismiss-signal-review" });
-  await render();
-});
-
-cancelReviewSignalButton.addEventListener("click", async () => {
-  isReviewFormOpen = false;
-  reviewChallengeInput.value = "";
-  signalReviewError.textContent = "";
-  signalReviewError.classList.add("hidden");
-  await render();
-});
-
-signalReviewForm.addEventListener("submit", async (event) => {
-  event.preventDefault();
-
-  const settings = await getSettings();
-  const language = getLanguage(settings.language);
-  const userChallenge = reviewChallengeInput.value.trim();
-
-  signalReviewError.textContent = "";
-  signalReviewError.classList.add("hidden");
-
-  if (!userChallenge) {
-    signalReviewError.textContent = t(language, "reviewInputRequired");
-    signalReviewError.classList.remove("hidden");
-    return;
-  }
-
-  isReviewingSignal = true;
-  submitReviewSignalButton.disabled = true;
-  reviewSignalButton.disabled = true;
-
-  try {
-    const response = await chrome.runtime.sendMessage({ type: "review-signal", userChallenge });
-    if (!response?.ok) {
-      signalReviewError.textContent = response?.error || t(language, "couldNotReviewSignal");
-      signalReviewError.classList.remove("hidden");
-    } else {
-      isReviewFormOpen = false;
-      reviewChallengeInput.value = "";
-    }
-  } finally {
-    isReviewingSignal = false;
-  }
-
-  await render();
-});
-
-signalReviewResult.addEventListener("click", async (event) => {
-  if (event.target?.id !== "acceptReviewedSignalButton") {
-    return;
-  }
-
-  const settings = await getSettings();
-  const language = getLanguage(settings.language);
-
-  isAcceptingReviewedSignal = true;
-  try {
-    const response = await chrome.runtime.sendMessage({ type: "accept-reviewed-signal" });
-    if (!response?.ok) {
-      signalReviewError.textContent = response?.error || t(language, "couldNotStart");
-      signalReviewError.classList.remove("hidden");
-    } else {
-      signalReviewError.textContent = "";
-      signalReviewError.classList.add("hidden");
-    }
-  } finally {
-    isAcceptingReviewedSignal = false;
   }
 
   await render();

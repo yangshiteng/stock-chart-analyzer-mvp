@@ -82,23 +82,38 @@ test("migrateState: pre-v3 state clears old session signals but preserves journa
   assert.equal(state.marketContext.status, MARKET_CONTEXT_STATUS.MISSING);
 });
 
-test("migrateState: v3 state is upgraded to current version with lastSignalReview and marketContext cleared", () => {
+test("migrateState: v3 state is upgraded to current version with marketContext cleared", () => {
   const state = migrateState({
     stateVersion: 3,
     status: STATUS.RUNNING,
-    lastSignalReview: {
-      id: "review-1",
-      review: { action: "BUY_LIMIT", orderPrice: "182.00" }
-    },
     tradeHistory: [{ id: "t1" }],
     results: [{ id: "r1" }]
   });
 
   assert.equal(state.stateVersion, STATE_VERSION);
-  assert.equal(state.lastSignalReview, null);
   assert.equal(state.marketContext.status, MARKET_CONTEXT_STATUS.MISSING);
   assert.deepEqual(state.tradeHistory, [{ id: "t1" }]);
   assert.deepEqual(state.results, [{ id: "r1" }]);
+});
+
+test("migrateState: v9 state is upgraded to v10 with lastSignalReview field stripped", () => {
+  // Signal Review feature was removed at v10. Any stored review record from
+  // earlier versions must be silently dropped from state so the new shape
+  // doesn't carry orphan data.
+  const state = migrateState({
+    stateVersion: 9,
+    status: STATUS.IDLE,
+    lastSignalReview: {
+      id: "review-legacy",
+      review: { action: "BUY_LIMIT", orderPrice: "182.00" }
+    },
+    tradeHistory: [{ id: "t1" }],
+    results: []
+  });
+
+  assert.equal(state.stateVersion, STATE_VERSION);
+  assert.equal(state.lastSignalReview, undefined);
+  assert.equal("lastSignalReview" in state, false);
 });
 
 test("migrateState: v4 state is upgraded to v5 with Market Context reset", () => {
