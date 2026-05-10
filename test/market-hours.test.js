@@ -1,6 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { getUsMarketMinutesOfDay, getUsTradingDay, isNearUsMarketClose, isWithinUsMarketHours } from "../lib/market-hours.js";
+import {
+  getUsMarketMinutesOfDay,
+  getUsMarketSessionPhase,
+  getUsTradingDay,
+  isNearUsMarketClose,
+  isWithinUsMarketHours
+} from "../lib/market-hours.js";
 
 // Pick dates during Eastern Standard Time (not DST) for deterministic offsets.
 // 2026-01-05 is a Monday. EST = UTC-5.
@@ -47,6 +53,13 @@ test("getUsMarketMinutesOfDay: weekday returns minute-of-day", () => {
 
 test("getUsMarketMinutesOfDay: weekend returns null", () => {
   assert.equal(getUsMarketMinutesOfDay(new Date("2026-01-10T17:00:00Z")), null);
+});
+
+test("getUsMarketSessionPhase: separates before-open, open, after-close, and weekend", () => {
+  assert.equal(getUsMarketSessionPhase(new Date("2026-01-05T14:29:00Z")), "before_open");
+  assert.equal(getUsMarketSessionPhase(new Date("2026-01-05T14:30:00Z")), "open");
+  assert.equal(getUsMarketSessionPhase(new Date("2026-01-05T21:00:00Z")), "after_close");
+  assert.equal(getUsMarketSessionPhase(new Date("2026-01-10T17:00:00Z")), "closed");
 });
 
 test("isNearUsMarketClose: 15:49 ET is not near close", () => {

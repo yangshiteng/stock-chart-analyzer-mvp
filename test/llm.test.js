@@ -6,12 +6,18 @@ import {
   EXIT_MODE_ACTIONS,
   FORCE_EXIT_ACTIONS,
   buildAnalysisPromptFromConfig,
+  buildMarketContextScanPrompt,
+  buildPremarketDipPlanPrompt,
+  buildSignalReviewPrompt,
   getAllowedActions,
-  validateAnalysisResult
+  validateAnalysisResult,
+  validateMarketContextScanResult,
+  validatePremarketDipPlanResult,
+  validateSignalReviewResult
 } from "../lib/llm.js";
 import { getAnalysisPromptConfig } from "../lib/prompt-config.js";
 
-test("ALLOWED_ACTIONS — BUY_NOW removed (limit-only entry rule); SELL_NOW retained for FORCE_EXIT only", () => {
+test("ALLOWED_ACTIONS: BUY_NOW removed; SELL_NOW available for exits", () => {
   assert.deepEqual(
     [...ALLOWED_ACTIONS].sort(),
     ["BUY_LIMIT", "HOLD", "SELL_LIMIT", "SELL_NOW", "WAIT"]
@@ -19,7 +25,7 @@ test("ALLOWED_ACTIONS — BUY_NOW removed (limit-only entry rule); SELL_NOW reta
   assert.ok(!ALLOWED_ACTIONS.includes("BUY_NOW"), "BUY_NOW must not be reintroduced");
 });
 
-test("getAllowedActions: entry mode allows only BUY_LIMIT + WAIT (no BUY_NOW)", () => {
+test("getAllowedActions: entry mode allows only BUY_LIMIT + WAIT", () => {
   assert.deepEqual(getAllowedActions("entry").sort(), ["BUY_LIMIT", "WAIT"]);
   assert.ok(!getAllowedActions("entry").includes("BUY_NOW"));
 });
@@ -28,18 +34,16 @@ test("getAllowedActions: default is entry", () => {
   assert.deepEqual(getAllowedActions().sort(), [...ENTRY_MODE_ACTIONS].sort());
 });
 
-test("getAllowedActions: exit mode allows SELL_LIMIT + HOLD only (no SELL_NOW in normal exit)", () => {
+test("getAllowedActions: exit mode allows SELL_NOW + SELL_LIMIT + HOLD", () => {
   const actions = getAllowedActions("exit");
-  assert.deepEqual(actions.sort(), ["HOLD", "SELL_LIMIT"]);
+  assert.deepEqual(actions.sort(), ["HOLD", "SELL_LIMIT", "SELL_NOW"]);
   assert.deepEqual(actions.sort(), [...EXIT_MODE_ACTIONS].sort());
   assert.ok(!actions.includes("BUY_NOW"));
   assert.ok(!actions.includes("BUY_LIMIT"));
   assert.ok(!actions.includes("WAIT"));
-  // SELL_NOW is reserved for FORCE_EXIT — must NOT leak into normal exit.
-  assert.ok(!actions.includes("SELL_NOW"));
 });
 
-test("getAllowedActions: force_exit locks to SELL_NOW only (last-10-min safety net)", () => {
+test("getAllowedActions: force_exit locks to SELL_NOW only", () => {
   assert.deepEqual(getAllowedActions("force_exit"), ["SELL_NOW"]);
   assert.deepEqual(FORCE_EXIT_ACTIONS, ["SELL_NOW"]);
 });
@@ -48,6 +52,26 @@ const samplePayload = {
   pageTitle: "TSLA Stock Chart",
   pageUrl: "https://tradingview.com/chart?key=secret",
   symbolHint: "TSLA"
+};
+
+const sampleMarketContext = {
+  regime: "uptrend",
+  aggression: "high",
+  dipBuyPolicy: "aggressive",
+  profitTakingStyle: "normal",
+  keyLevels: [
+    {
+      label: "Prior breakout shelf",
+      type: "support",
+      strength: "strong",
+      timeframe: "daily",
+      price: "180.50",
+      zoneLow: "180.00",
+      zoneHigh: "181.00",
+      reason: "Breakout retest held twice"
+    }
+  ],
+  riskNotes: "Resistance overhead near 188."
 };
 
 test("buildAnalysisPromptFromConfig: entry mode injects ENTRY_MODE_RULES and SESSION_MODE", () => {
@@ -70,6 +94,12 @@ test("buildAnalysisPromptFromConfig: exit mode includes virtual position context
         stopLossPrice: "179.20",
         targetPrice: "183.00",
         reason: "breakout continuation"
+      },
+      sellStrategy: {
+        quickProfitDelta: "0.20",
+        maxLossDelta: "0.30",
+        quickProfitPrice: "180.70",
+        maxLossPrice: "180.20"
       }
     },
     "en"
@@ -77,8 +107,13 @@ test("buildAnalysisPromptFromConfig: exit mode includes virtual position context
   assert.match(prompt, /\[SESSION_MODE\][\s\S]*EXIT/);
   assert.match(prompt, /\[POSITION_CONTEXT\]/);
   assert.match(prompt, /180\.50/);
+  assert.match(prompt, /Quick-profit trigger price: 180\.70/);
+  assert.match(prompt, /Max-loss trigger price: 180\.20/);
   assert.match(prompt, /breakout continuation/);
   assert.match(prompt, /\[EXIT_MODE_RULES\]/);
+  assert.match(prompt, /Allowed actions: SELL_NOW, SELL_LIMIT, HOLD/);
+  assert.match(prompt, /default to SELL_NOW to lock the scalp profit/);
+  assert.match(prompt, /orderPrice must be above currentPrice/);
   assert.ok(!/\[ENTRY_MODE_RULES\]/.test(prompt));
 });
 
@@ -98,9 +133,10 @@ test("buildAnalysisPromptFromConfig: force_exit includes FORCE_EXIT_RULES", () =
 
 test("buildAnalysisPromptFromConfig: required schema fields present", () => {
   const prompt = buildAnalysisPromptFromConfig(getAnalysisPromptConfig(), samplePayload, "en");
-  for (const key of ["entryPrice", "stopLossPrice", "targetPrice", "triggerCondition", "confidence"]) {
+  for (const key of ["orderPrice", "entryPrice", "stopLossPrice", "targetPrice", "confidence"]) {
     assert.ok(prompt.includes(key), `prompt should mention ${key}`);
   }
+  assert.match(prompt, /Do not output triggerCondition/);
 });
 
 test("buildAnalysisPromptFromConfig: no capital/position-size leakage", () => {
@@ -122,115 +158,38 @@ test("buildAnalysisPromptFromConfig: Chinese LANGUAGE_OUTPUT section", () => {
   assert.match(prompt, /Simplified Chinese/);
 });
 
-test("buildAnalysisPromptFromConfig: Chinese mode requires triggerCondition in Chinese (regression: was leaking English)", () => {
-  // Without an explicit rule, the model writes reasoning in Chinese but triggerCondition
-  // in English by default — visible inconsistency in the user's recommendation card.
+test("buildAnalysisPromptFromConfig: Chinese mode keeps price fields raw and removes triggerCondition", () => {
   const prompt = buildAnalysisPromptFromConfig(getAnalysisPromptConfig(), samplePayload, "zh");
-  assert.match(prompt, /triggerCondition in natural Simplified Chinese/);
-  // Must also instruct the model to keep raw prices and English technical abbreviations
-  // inside the Chinese sentence — otherwise we lose precision (e.g. AI translates 21.93
-  // into something looser, or drops the VWAP keyword).
   assert.match(prompt, /raw decimal prices/i);
-  assert.match(prompt, /VWAP \/ EMA \/ RSI in English/);
+  assert.match(prompt, /Do not output triggerCondition/);
 });
 
-test("buildAnalysisPromptFromConfig: English mode also pins triggerCondition language explicitly", () => {
-  // Symmetry: model defaults to English already, but being explicit is cheap and prevents
-  // future drift if the prompt ever picks up multilingual influence from other sections.
+test("buildAnalysisPromptFromConfig: English mode uses orderPrice as the actionable price", () => {
   const prompt = buildAnalysisPromptFromConfig(getAnalysisPromptConfig(), samplePayload, "en");
-  assert.match(prompt, /triggerCondition in English/);
+  assert.match(prompt, /orderPrice/);
+  assert.match(prompt, /Do not output triggerCondition/);
 });
 
-test("buildAnalysisPromptFromConfig: entry mode injects RECENT_LESSONS when provided", () => {
+test("buildAnalysisPromptFromConfig: legacy recentLessons are ignored", () => {
   const prompt = buildAnalysisPromptFromConfig(
     getAnalysisPromptConfig(),
     {
       ...samplePayload,
       mode: "entry",
       recentLessons: [
-        { symbol: "AAPL", pnlPercent: -0.75, exitTime: "2026-04-18T20:00:00Z", lesson: "Did not wait for volume confirmation on breakout." },
-        { symbol: "TSLA", pnlPercent: 1.2, exitTime: "2026-04-17T20:30:00Z", lesson: "EMA20 bounce with clean stop worked." }
+        {
+          symbol: "AAPL",
+          pnlPercent: -0.75,
+          exitTime: "2026-04-18T20:00:00Z",
+          lesson: "Legacy lesson should stay out of the prompt."
+        }
       ]
     },
     "en"
   );
-  assert.match(prompt, /\[RECENT_LESSONS\]/);
-  assert.match(prompt, /AAPL -0\.75%/);
-  assert.match(prompt, /TSLA \+1\.20%/);
-  assert.match(prompt, /volume confirmation/);
-});
 
-test("buildAnalysisPromptFromConfig: RECENT_LESSONS omitted in exit mode", () => {
-  const prompt = buildAnalysisPromptFromConfig(
-    getAnalysisPromptConfig(),
-    {
-      ...samplePayload,
-      mode: "exit",
-      virtualPosition: { entryPrice: "180" },
-      recentLessons: [{ symbol: "AAPL", pnlPercent: 1, exitTime: "2026-04-18T20:00:00Z", lesson: "x" }]
-    },
-    "en"
-  );
   assert.ok(!/\[RECENT_LESSONS\]/.test(prompt));
-});
-
-test("buildAnalysisPromptFromConfig: RECENT_LESSONS omitted when list is empty", () => {
-  const prompt = buildAnalysisPromptFromConfig(
-    getAnalysisPromptConfig(),
-    { ...samplePayload, mode: "entry", recentLessons: [] },
-    "en"
-  );
-  assert.ok(!/\[RECENT_LESSONS\]/.test(prompt));
-});
-
-test("buildAnalysisPromptFromConfig: RECENT_LESSONS skips entries with empty lesson", () => {
-  const prompt = buildAnalysisPromptFromConfig(
-    getAnalysisPromptConfig(),
-    {
-      ...samplePayload,
-      mode: "entry",
-      recentLessons: [
-        { symbol: "AAPL", pnlPercent: 0.5, lesson: "" },
-        { symbol: "TSLA", pnlPercent: 1, lesson: "   " }
-      ]
-    },
-    "en"
-  );
-  assert.ok(!/\[RECENT_LESSONS\]/.test(prompt));
-});
-
-test("buildAnalysisPromptFromConfig: RECENT_LESSONS includes entryAction + entryConfidence when provided", () => {
-  // Use BUY_LIMIT — historical legacy lessons may carry BUY_NOW from before the
-  // limit-only refactor, but that's a property of stored journal data, not of
-  // the current action vocabulary. The lesson formatter is content-agnostic.
-  const prompt = buildAnalysisPromptFromConfig(
-    getAnalysisPromptConfig(),
-    {
-      ...samplePayload,
-      mode: "entry",
-      recentLessons: [
-        { symbol: "AAPL", pnlPercent: -0.5, exitTime: "2026-04-18T20:00:00Z", entryAction: "BUY_LIMIT", entryConfidence: "high", lesson: "x" }
-      ]
-    },
-    "en"
-  );
-  assert.match(prompt, /AAPL -0\.50% 2026-04-18 BUY_LIMIT\/high\]/);
-});
-
-test("buildAnalysisPromptFromConfig: RECENT_LESSONS omits action/confidence when both null (legacy trades)", () => {
-  const prompt = buildAnalysisPromptFromConfig(
-    getAnalysisPromptConfig(),
-    {
-      ...samplePayload,
-      mode: "entry",
-      recentLessons: [
-        { symbol: "AAPL", pnlPercent: 1, exitTime: "2026-04-18T20:00:00Z", entryAction: null, entryConfidence: null, lesson: "y" }
-      ]
-    },
-    "en"
-  );
-  // Legacy trade should render cleanly without trailing whitespace or stray slashes.
-  assert.match(prompt, /\[AAPL \+1\.00% 2026-04-18\] y/);
+  assert.ok(!/Legacy lesson should stay out/.test(prompt));
 });
 
 test("buildAnalysisPromptFromConfig: LAST_SIGNAL_AND_ORDER injected in entry mode when lastSignal provided", () => {
@@ -241,11 +200,11 @@ test("buildAnalysisPromptFromConfig: LAST_SIGNAL_AND_ORDER injected in entry mod
       mode: "entry",
       lastSignal: {
         action: "WAIT",
-        entryPrice: "180.50",
+        orderPrice: null,
+        entryPrice: null,
         stopLossPrice: "179.10",
         targetPrice: "183.00",
         currentPrice: "181.30",
-        triggerCondition: "price pulls back to 180.50 +/- 0.10 and 5m candle closes above 180.50",
         confidence: "medium",
         reasoning: "waiting for volume confirmation"
       }
@@ -254,30 +213,26 @@ test("buildAnalysisPromptFromConfig: LAST_SIGNAL_AND_ORDER injected in entry mod
   );
   assert.match(prompt, /\[LAST_SIGNAL_AND_ORDER\]/);
   assert.match(prompt, /action=WAIT/);
+  assert.match(prompt, /orderPrice=null/);
   assert.match(prompt, /volume confirmation/);
-  // Structured trigger + prior currentPrice must flow into the next round so the AI can
-  // decide "trigger now met → upgrade WAIT to BUY_LIMIT".
-  assert.match(prompt, /Previous trigger condition[^\n]*pulls back to 180\.50/);
   assert.match(prompt, /Previous round's observed current price: 181\.30/);
-  assert.match(prompt, /CRITICAL: if the previous trigger condition is now satisfied/);
   assert.match(prompt, /WAIT can become BUY_LIMIT/);
   assert.doesNotMatch(prompt, /becomes BUY_NOW/);
   assert.doesNotMatch(prompt, /becomes SELL_NOW/);
 });
 
-test("buildAnalysisPromptFromConfig: LAST_SIGNAL_AND_ORDER tolerates missing triggerCondition / currentPrice (legacy rounds)", () => {
+test("buildAnalysisPromptFromConfig: LAST_SIGNAL_AND_ORDER tolerates missing orderPrice / currentPrice", () => {
   const prompt = buildAnalysisPromptFromConfig(
     getAnalysisPromptConfig(),
     {
       ...samplePayload,
       mode: "entry",
       lastSignal: { action: "WAIT", reasoning: "legacy round" }
-      // no currentPrice, no triggerCondition
     },
     "en"
   );
+  assert.match(prompt, /orderPrice=null/);
   assert.match(prompt, /Previous round's observed current price: \?/);
-  assert.match(prompt, /Previous trigger condition[^\n]*not recorded/);
 });
 
 test("buildAnalysisPromptFromConfig: LAST_SIGNAL_AND_ORDER includes pending limit order details", () => {
@@ -310,7 +265,7 @@ test("buildAnalysisPromptFromConfig: LAST_SIGNAL_AND_ORDER injected in exit mode
       ...samplePayload,
       mode: "exit",
       virtualPosition: { entryPrice: "180.50" },
-      lastSignal: { action: "HOLD", reasoning: "trend still up" }
+      lastSignal: { action: "HOLD", orderPrice: null, reasoning: "trend still up" }
     },
     "en"
   );
@@ -346,19 +301,12 @@ test("buildAnalysisPromptFromConfig: LAST_SIGNAL_AND_ORDER omitted when neither 
   assert.ok(!/\[LAST_SIGNAL_AND_ORDER\]/.test(prompt));
 });
 
-test("buildAnalysisPromptFromConfig: USER_CONTEXT section is never emitted (feature removed)", () => {
-  // Free-text user-context notes were removed because they invited
-  // confirmation bias — users would type predictions or directional
-  // opinions that subtly steered the AI even with anti-bias rules. The
-  // tool is now strictly a price-action analyzer; it intentionally has
-  // no surface for user-supplied non-chart context.
+test("buildAnalysisPromptFromConfig: USER_CONTEXT section is never emitted", () => {
   const prompt = buildAnalysisPromptFromConfig(
     getAnalysisPromptConfig(),
     {
       ...samplePayload,
       mode: "entry",
-      // Even if a stray userContext field somehow leaks into the payload
-      // (e.g. legacy state), it must NOT be injected.
       userContext: "Earnings tomorrow."
     },
     "en"
@@ -369,129 +317,349 @@ test("buildAnalysisPromptFromConfig: USER_CONTEXT section is never emitted (feat
 
 test("buildAnalysisPromptFromConfig: prompt teaches AI to use Volume + VWAP", () => {
   const prompt = buildAnalysisPromptFromConfig(getAnalysisPromptConfig(), samplePayload, "en");
-  // Focus areas must name both signals.
   assert.match(prompt, /VWAP/);
   assert.match(prompt, /volume/i);
-  // Guardrail: must forbid hallucinating either when not drawn.
   assert.match(prompt, /hallucinating a VWAP line or volume pattern/);
-  // Execution rule: low-volume breakouts must not chase via marketable BUY_LIMIT.
-  assert.match(prompt, /low-volume breakout/);
-  // Confidence must be conditioned on volume/VWAP agreement.
+  assert.match(prompt, /breakout-style BUY_LIMIT/);
   assert.match(prompt, /volume and VWAP[\s\S]*agree with the direction/);
 });
 
-test("buildAnalysisPromptFromConfig: sanitizes URL (strips query)", () => {
+test("buildAnalysisPromptFromConfig: sanitizes URL", () => {
   const prompt = buildAnalysisPromptFromConfig(getAnalysisPromptConfig(), samplePayload, "en");
   assert.ok(!prompt.includes("key=secret"));
   assert.match(prompt, /https:\/\/tradingview\.com\/chart/);
 });
 
-// ---- LONG_TERM_CONTEXT injection ----------------------------------------------------------
-
-const longTermFresh = {
-  timeframe: "daily",
-  summary: "Stock in clear uptrend, post-breakout from 6-month base. Closest resistance at 200/210, support at 180/175.",
-  trend: "up",
-  stage: "breakout",
-  keySupport: "180, 175",
-  keyResistance: "200, 210",
-  symbol: "TSLA",
-  generatedAt: new Date().toISOString()
-};
-
-test("buildAnalysisPromptFromConfig: LONG_TERM_CONTEXT injected in entry mode with anti-bias rules", () => {
+test("buildAnalysisPromptFromConfig: legacy longTermContext is ignored", () => {
   const prompt = buildAnalysisPromptFromConfig(
     getAnalysisPromptConfig(),
-    { ...samplePayload, mode: "entry", longTermContext: longTermFresh },
+    {
+      ...samplePayload,
+      longTermContext: {
+        timeframe: "daily",
+        summary: "Legacy long-term note that should not reach the execution prompt."
+      }
+    },
     "en"
   );
-  assert.match(prompt, /\[LONG_TERM_CONTEXT\]/);
-  assert.match(prompt, /Higher-timeframe \(daily\)/);
-  assert.match(prompt, /Trend: up/);
-  assert.match(prompt, /Stage: breakout/);
-  assert.match(prompt, /Key support: 180, 175/);
-  assert.match(prompt, /Key resistance: 200, 210/);
-  assert.match(prompt, /post-breakout from 6-month base/);
-  // Anti-bias rules MUST be present so a long-term tag cannot steamroll the 5-min signal.
-  assert.match(prompt, /structural bias only/);
-  assert.match(prompt, /5-min chart is the trigger/);
-  assert.match(prompt, /do NOT let long-term bullishness override/i);
-  assert.match(prompt, /lower confidence by one tier/);
+
+  assert.ok(!/\[LONG_TERM_CONTEXT\]/.test(prompt));
+  assert.ok(!/Legacy long-term note/.test(prompt));
 });
 
-test("buildAnalysisPromptFromConfig: LONG_TERM_CONTEXT also injected in exit + force_exit modes", () => {
-  for (const mode of ["exit", "force_exit"]) {
-    const prompt = buildAnalysisPromptFromConfig(
-      getAnalysisPromptConfig(),
-      { ...samplePayload, mode, virtualPosition: { entryPrice: "180" }, longTermContext: longTermFresh },
-      "en"
-    );
-    assert.match(prompt, /\[LONG_TERM_CONTEXT\]/, `should inject in ${mode}`);
-    assert.match(prompt, /post-breakout from 6-month base/);
-  }
-});
-
-test("buildAnalysisPromptFromConfig: LONG_TERM_CONTEXT omitted when missing / empty / null", () => {
-  for (const longTermContext of [undefined, null, {}, { summary: "" }, { summary: "   " }]) {
-    const prompt = buildAnalysisPromptFromConfig(
-      getAnalysisPromptConfig(),
-      { ...samplePayload, mode: "entry", longTermContext },
-      "en"
-    );
-    assert.ok(!/\[LONG_TERM_CONTEXT\]/.test(prompt), `should omit for: ${JSON.stringify(longTermContext)}`);
-  }
-});
-
-test("buildAnalysisPromptFromConfig: LONG_TERM_CONTEXT shows staleness warning when >24h old", () => {
-  const stale = {
-    ...longTermFresh,
-    generatedAt: new Date(Date.now() - 30 * 3600 * 1000).toISOString() // 30h ago
-  };
-  const prompt = buildAnalysisPromptFromConfig(
-    getAnalysisPromptConfig(),
-    { ...samplePayload, mode: "entry", longTermContext: stale },
-    "en"
-  );
-  assert.match(prompt, /more than 24 hours old/);
-  assert.match(prompt, /potentially stale/);
-});
-
-test("buildAnalysisPromptFromConfig: LONG_TERM_CONTEXT does NOT show staleness when fresh", () => {
-  const prompt = buildAnalysisPromptFromConfig(
-    getAnalysisPromptConfig(),
-    { ...samplePayload, mode: "entry", longTermContext: longTermFresh },
-    "en"
-  );
-  assert.ok(!/more than 24 hours old/.test(prompt));
-});
-
-test("buildAnalysisPromptFromConfig: LONG_TERM_CONTEXT placed before LAST_SIGNAL_AND_ORDER", () => {
-  // After USER_CONTEXT was removed, LONG_TERM_CONTEXT became the first
-  // user-anchored section; the only ordering constraint left is that the
-  // model reads structural anchors before deciding whether to repeat the
-  // previous round's call.
+test("buildAnalysisPromptFromConfig: injects Market Context Scan summary when present", () => {
   const prompt = buildAnalysisPromptFromConfig(
     getAnalysisPromptConfig(),
     {
       ...samplePayload,
       mode: "entry",
-      longTermContext: longTermFresh,
-      lastSignal: { action: "WAIT", reasoning: "x" }
+      marketContext: sampleMarketContext
     },
     "en"
   );
-  const longIdx = prompt.indexOf("[LONG_TERM_CONTEXT]");
-  const lastIdx = prompt.indexOf("[LAST_SIGNAL_AND_ORDER]");
-  assert.ok(longIdx >= 0 && lastIdx >= 0);
-  assert.ok(longIdx < lastIdx, "LONG_TERM_CONTEXT should come before LAST_SIGNAL_AND_ORDER");
+
+  assert.match(prompt, /\[MARKET_CONTEXT\]/);
+  assert.match(prompt, /Regime: uptrend/);
+  assert.match(prompt, /Dip-buy policy: aggressive/);
+  assert.match(prompt, /Prior breakout shelf/);
+  assert.match(prompt, /Market context gating/);
+  assert.match(prompt, /visible-range high \/ low labels/i);
+});
+
+test("buildMarketContextScanPrompt: Daily scan tells user to hide VWAP and high-low labels", () => {
+  const prompt = buildMarketContextScanPrompt({ ...samplePayload, timeframe: "daily" }, "en");
+  assert.match(prompt, /Expected timeframe: daily/);
+  assert.match(prompt, /3-6 months/);
+  assert.match(prompt, /temporarily hidden on Daily/i);
+  assert.match(prompt, /Visible-range High \/ Low labels should be hidden/);
+  assert.match(prompt, /Do not include action, orderPrice/);
+});
+
+test("buildMarketContextScanPrompt: 1H scan makes VWAP optional", () => {
+  const prompt = buildMarketContextScanPrompt({ ...samplePayload, timeframe: "1h" }, "en");
+  assert.match(prompt, /Expected timeframe: 1h/);
+  assert.match(prompt, /5-20 trading days/);
+  assert.match(prompt, /VWAP is optional on 1H/);
+});
+
+test("validateMarketContextScanResult: accepts a valid scan and rejects wrong timeframe", () => {
+  const scan = {
+    timeframe: "daily",
+    regime: "range",
+    keyLevels: [
+      {
+        label: "Range support",
+        type: "support",
+        strength: "strong",
+        timeframe: "daily",
+        price: "180.50",
+        zoneLow: "180.00",
+        zoneHigh: "181.00",
+        reason: "Repeated pivot"
+      }
+    ],
+    riskNotes: "Choppy range."
+  };
+
+  assert.deepEqual(validateMarketContextScanResult(scan, "daily"), scan);
+  assert.throws(
+    () => validateMarketContextScanResult({ ...scan, timeframe: "1h" }, "daily"),
+    /expected daily/
+  );
+});
+
+test("buildPremarketDipPlanPrompt: uses symbol, Market Context, fixed 10% threshold, and anti-FOMO rules", () => {
+  const prompt = buildPremarketDipPlanPrompt(
+    {
+      symbol: "USAR",
+      referenceClose: "27.42",
+      marketContext: sampleMarketContext
+    },
+    "en"
+  );
+
+  assert.match(prompt, /\[PREMARKET_INPUTS\]/);
+  assert.match(prompt, /Symbol: USAR/);
+  assert.match(prompt, /User-entered yesterday close: 27\.42/);
+  assert.match(prompt, /Fixed defensive dip threshold: 10%/);
+  assert.match(prompt, /Reference dip price: 24\.68/);
+  assert.match(prompt, /\[MARKET_CONTEXT\]/);
+  assert.match(prompt, /Prior breakout shelf/);
+  assert.match(prompt, /FOMO/);
+  assert.match(prompt, /Do not request additional chart images/);
+  assert.doesNotMatch(prompt, /input_image/);
+});
+
+test("validatePremarketDipPlanResult: accepts a conservative BUY_LIMIT plan", () => {
+  const plan = validatePremarketDipPlanResult(
+    {
+      action: "BUY_LIMIT",
+      symbol: "USAR",
+      orderPrice: "24.70",
+      stopLossPrice: "24.00",
+      targetPrice: "25.60",
+      confidence: "medium",
+      referenceClose: "27.42",
+      discountPercent: "10%",
+      nearestSupport: "24.65",
+      supportStrength: "strong",
+      reasoning: "Near strong support at the fixed dip threshold."
+    },
+    {
+      symbol: "USAR",
+      referenceClose: "27.42"
+    }
+  );
+
+  assert.equal(plan.action, "BUY_LIMIT");
+  assert.equal(plan.symbol, "USAR");
+  assert.equal(plan.orderPrice, "24.70");
+  assert.equal(plan.nearestSupport, "24.65");
+});
+
+test("validatePremarketDipPlanResult: rejects shallow FOMO entries", () => {
+  assert.throws(
+    () => validatePremarketDipPlanResult(
+      {
+        action: "BUY_LIMIT",
+        symbol: "USAR",
+        orderPrice: "27.00",
+        stopLossPrice: "26.50",
+        targetPrice: "28.00",
+        confidence: "high",
+        referenceClose: "27.42",
+        discountPercent: "10%",
+        nearestSupport: "27.00",
+        supportStrength: "medium",
+        reasoning: "Chasing because the stock is strong."
+      },
+      {
+        symbol: "USAR",
+        referenceClose: "27.42"
+      }
+    ),
+    /too close to yesterday's close/
+  );
+});
+
+test("buildSignalReviewPrompt: includes original signal, user challenge, and anti-blind-agreement rule", () => {
+  const prompt = buildSignalReviewPrompt(
+    {
+      ...samplePayload,
+      mode: "entry",
+      originalAnalysis: {
+        action: "WAIT",
+        orderPrice: null,
+        stopLossPrice: null,
+        targetPrice: null,
+        confidence: "medium",
+        currentPrice: "182.10",
+        reasoning: "No volume confirmation"
+      },
+      userChallenge: "Price is at the support I drew near 182.00. Why not buy?"
+    },
+    "en"
+  );
+
+  assert.match(prompt, /\[ORIGINAL_SIGNAL\]/);
+  assert.match(prompt, /action: WAIT/);
+  assert.match(prompt, /\[USER_CHALLENGE\]/);
+  assert.match(prompt, /support I drew near 182\.00/);
+  assert.match(prompt, /not automatically true/);
+  assert.match(prompt, /Do not flatter or blindly agree/);
+  assert.match(prompt, /Do not affect future rounds/);
+});
+
+test("buildSignalReviewPrompt: includes Market Context in second-pass review", () => {
+  const prompt = buildSignalReviewPrompt(
+    {
+      ...samplePayload,
+      mode: "entry",
+      marketContext: sampleMarketContext,
+      originalAnalysis: {
+        action: "WAIT",
+        orderPrice: null,
+        stopLossPrice: null,
+        targetPrice: null,
+        confidence: "medium",
+        currentPrice: "182.10",
+        reasoning: "No volume confirmation"
+      },
+      userChallenge: "This looks like a support retest."
+    },
+    "en"
+  );
+
+  assert.match(prompt, /\[MARKET_CONTEXT\]/);
+  assert.match(prompt, /Prior breakout shelf/);
+  assert.match(prompt, /\[USER_CHALLENGE\]/);
+});
+
+test("buildSignalReviewPrompt: includes pending order context and forbids second order implication", () => {
+  const prompt = buildSignalReviewPrompt(
+    {
+      ...samplePayload,
+      mode: "exit",
+      virtualPosition: { entryPrice: "180.50" },
+      originalAnalysis: {
+        action: "SELL_LIMIT",
+        orderPrice: "183.00",
+        stopLossPrice: "179.80",
+        targetPrice: "183.00",
+        confidence: "medium",
+        currentPrice: "182.20",
+        reasoning: "Resistance ahead"
+      },
+      pendingLimitOrder: {
+        action: "SELL_LIMIT",
+        limitPrice: "183.00",
+        stopLossPrice: "179.80",
+        targetPrice: "183.00",
+        confidence: "medium",
+        reasoning: "Resistance ahead",
+        placedAt: new Date().toISOString()
+      },
+      userChallenge: "Price looks weak now. Should I keep this sell limit?"
+    },
+    "en"
+  );
+
+  assert.match(prompt, /\[PENDING_LIMIT_ORDER\]/);
+  assert.match(prompt, /SELL_LIMIT at 183\.00/);
+  assert.match(prompt, /keep resting, be cancelled/);
+  assert.match(prompt, /do not imply the user can place a second order/);
+  assert.match(prompt, /cancel the existing order before placing the revised one/);
+});
+
+test("validateSignalReviewResult: accepts a revised BUY_LIMIT review", () => {
+  const review = {
+    reviewDecision: "REVISE",
+    action: "BUY_LIMIT",
+    orderPrice: "182.00",
+    stopLossPrice: "181.20",
+    targetPrice: "183.20",
+    confidence: "medium",
+    explanation: "Support held with volume improving."
+  };
+
+  assert.equal(validateSignalReviewResult(review, "entry"), review);
+});
+
+test("validateSignalReviewResult: rejects mode-illegal review actions", () => {
+  assert.throws(
+    () => validateSignalReviewResult({
+      reviewDecision: "REVISE",
+      action: "SELL_LIMIT",
+      orderPrice: "183.20",
+      stopLossPrice: null,
+      targetPrice: null,
+      confidence: "medium",
+      explanation: "Exit instead."
+    }, "entry"),
+    /entry mode only allows BUY_LIMIT, WAIT/
+  );
+});
+
+test("validateSignalReviewResult: exit reviews allow SELL_NOW with null orderPrice", () => {
+  const review = {
+    reviewDecision: "REVISE",
+    action: "SELL_NOW",
+    orderPrice: null,
+    stopLossPrice: "179.50",
+    targetPrice: "180.70",
+    confidence: "medium",
+    explanation: "VWAP failed after entry."
+  };
+
+  assert.equal(validateSignalReviewResult(review, "exit", "180.70"), review);
+  assert.throws(
+    () => validateSignalReviewResult({ ...review, orderPrice: "180.70" }, "exit", "180.70"),
+    /orderPrice must be null/
+  );
+});
+
+test("validateSignalReviewResult: exit SELL_LIMIT must be above currentPrice when known", () => {
+  const review = {
+    reviewDecision: "REVISE",
+    action: "SELL_LIMIT",
+    orderPrice: "181.20",
+    stopLossPrice: null,
+    targetPrice: "181.20",
+    confidence: "medium",
+    explanation: "Wait for resistance retest."
+  };
+
+  assert.equal(validateSignalReviewResult(review, "exit", "180.70"), review);
+  assert.throws(
+    () => validateSignalReviewResult({ ...review, orderPrice: "180.70" }, "exit", "180.70"),
+    /above currentPrice/
+  );
+});
+
+test("validateSignalReviewResult: WAIT and HOLD reviews cannot carry orderPrice", () => {
+  const wait = {
+    reviewDecision: "KEEP",
+    action: "WAIT",
+    orderPrice: null,
+    stopLossPrice: null,
+    targetPrice: null,
+    confidence: "low",
+    explanation: "Extended move, no clean entry."
+  };
+
+  assert.equal(validateSignalReviewResult(wait, "entry"), wait);
+  assert.throws(
+    () => validateSignalReviewResult({ ...wait, orderPrice: "182.00" }, "entry"),
+    /orderPrice must be null/
+  );
 });
 
 const validEntryAnalysis = {
   action: "BUY_LIMIT",
-  entryPrice: "180.50",
+  orderPrice: "180.50",
+  entryPrice: null,
   stopLossPrice: "179.50",
   targetPrice: "182.00",
-  triggerCondition: "5m close above 180.50 with volume expansion",
   confidence: "medium",
   reasoning: "VWAP reclaim with rising volume",
   symbol: "TSLA",
@@ -524,10 +692,10 @@ test("validateAnalysisResult: rejects non-positive or non-decimal price fields",
   );
 });
 
-test("validateAnalysisResult: rejects entry setups whose stop is not below entry", () => {
+test("validateAnalysisResult: rejects entry setups whose stop is not below orderPrice", () => {
   assert.throws(
     () => validateAnalysisResult({ ...validEntryAnalysis, stopLossPrice: "181.00" }, "entry"),
-    /stopLossPrice must be below entryPrice/
+    /stopLossPrice must be below orderPrice/
   );
 });
 
@@ -542,6 +710,7 @@ test("validateAnalysisResult: force_exit accepts only SELL_NOW with positive pri
   const forceExit = {
     ...validEntryAnalysis,
     action: "SELL_NOW",
+    orderPrice: null,
     entryPrice: "180.50",
     stopLossPrice: "179.50",
     targetPrice: "180.10",
@@ -552,5 +721,82 @@ test("validateAnalysisResult: force_exit accepts only SELL_NOW with positive pri
   assert.throws(
     () => validateAnalysisResult({ ...forceExit, action: "SELL_LIMIT" }, "force_exit"),
     /only allows SELL_NOW/
+  );
+});
+
+test("validateAnalysisResult: SELL_LIMIT requires an executable orderPrice", () => {
+  const sellLimit = {
+    ...validEntryAnalysis,
+    action: "SELL_LIMIT",
+    orderPrice: "182.00",
+    entryPrice: "180.50"
+  };
+
+  assert.equal(validateAnalysisResult(sellLimit, "exit"), sellLimit);
+  assert.throws(
+    () => validateAnalysisResult({ ...sellLimit, orderPrice: null }, "exit"),
+    /invalid orderPrice/
+  );
+});
+
+test("validateAnalysisResult: exit SELL_NOW accepts immediate exits and rejects orderPrice", () => {
+  const sellNow = {
+    ...validEntryAnalysis,
+    action: "SELL_NOW",
+    orderPrice: null,
+    entryPrice: "180.50",
+    currentPrice: "180.70"
+  };
+
+  assert.equal(validateAnalysisResult(sellNow, "exit"), sellNow);
+  assert.throws(
+    () => validateAnalysisResult({ ...sellNow, orderPrice: "180.70" }, "exit"),
+    /orderPrice must be null/
+  );
+});
+
+test("validateAnalysisResult: exit SELL_LIMIT must be above currentPrice", () => {
+  const takeProfit = {
+    ...validEntryAnalysis,
+    action: "SELL_LIMIT",
+    orderPrice: "181.25",
+    entryPrice: "180.50",
+    currentPrice: "180.70"
+  };
+
+  assert.equal(validateAnalysisResult(takeProfit, "exit"), takeProfit);
+  assert.throws(
+    () => validateAnalysisResult({ ...takeProfit, orderPrice: "180.70" }, "exit"),
+    /above currentPrice/
+  );
+  assert.throws(
+    () => validateAnalysisResult({ ...takeProfit, orderPrice: "180.25" }, "exit"),
+    /above currentPrice/
+  );
+});
+
+test("validateAnalysisResult: WAIT and HOLD reject orderPrice", () => {
+  const wait = {
+    ...validEntryAnalysis,
+    action: "WAIT",
+    orderPrice: null,
+    entryPrice: null,
+    stopLossPrice: null,
+    targetPrice: null
+  };
+  const hold = {
+    ...wait,
+    action: "HOLD"
+  };
+
+  assert.equal(validateAnalysisResult(wait, "entry"), wait);
+  assert.equal(validateAnalysisResult(hold, "exit"), hold);
+  assert.throws(
+    () => validateAnalysisResult({ ...wait, orderPrice: "180.50" }, "entry"),
+    /orderPrice must be null/
+  );
+  assert.throws(
+    () => validateAnalysisResult({ ...hold, orderPrice: "182.00" }, "exit"),
+    /orderPrice must be null/
   );
 });

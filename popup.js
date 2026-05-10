@@ -1,4 +1,5 @@
 import { STATUS } from "./lib/constants.js";
+import { getActiveAnalysisIntervalRule, normalizeAnalysisInterval } from "./lib/analysis-intervals.js";
 import { getLanguage, t } from "./lib/i18n.js";
 import { getSettings, getState, patchSettings } from "./lib/storage.js";
 
@@ -21,8 +22,6 @@ const popupDiscordWebhookInput = document.getElementById("popupDiscordWebhookInp
 const popupSaveDiscordButton = document.getElementById("popupSaveDiscordButton");
 const popupClearDiscordButton = document.getElementById("popupClearDiscordButton");
 const popupDiscordStatus = document.getElementById("popupDiscordStatus");
-const popupMarketHoursToggle = document.getElementById("popupMarketHoursToggle");
-const popupMarketHoursLabel = document.getElementById("popupMarketHoursLabel");
 const startButton = document.getElementById("startButton");
 const statusText = document.getElementById("statusText");
 const detailText = document.getElementById("detailText");
@@ -62,10 +61,13 @@ function formatStatus(state, language) {
   }
 
   if (state.status === STATUS.RUNNING) {
+    const profile = state.monitoringProfile || state.lastMonitoringProfile || {};
+    const intervalRule = getActiveAnalysisIntervalRule(state, profile.rules || {});
     return {
       title: t(language, "monitoringTitle"),
       detail: t(language, "monitoringDetail", {
-        round: state.roundCount
+        round: state.roundCount,
+        interval: t(language, `analysisInterval_${normalizeAnalysisInterval(intervalRule)}`)
       })
     };
   }
@@ -119,8 +121,6 @@ async function render() {
   popupApiKeyStatus.textContent = settings.openaiApiKey
     ? t(language, "apiKeySaved", { model: settings.model })
     : t(language, "noApiKeySaved");
-  popupMarketHoursLabel.textContent = t(language, "marketHoursOnly");
-  popupMarketHoursToggle.checked = Boolean(settings.marketHoursOnly);
   popupDiscordStatus.textContent = settings.discordWebhookUrl
     ? t(language, "discordWebhookSaved")
     : t(language, "noDiscordWebhookSaved");
@@ -129,7 +129,9 @@ async function render() {
   detailText.textContent = view.detail;
   chartSetupText.textContent = t(language, "chartSetupCopy");
 
-  startButton.disabled = state.status === STATUS.VALIDATING || state.status === STATUS.RUNNING || state.status === STATUS.PAUSED;
+  startButton.disabled = state.status === STATUS.VALIDATING
+    || state.status === STATUS.RUNNING
+    || state.status === STATUS.PAUSED;
   popupSaveKeyButton.disabled = false;
   popupClearKeyButton.disabled = false;
   popupSaveDiscordButton.disabled = false;
@@ -166,17 +168,16 @@ startButton.addEventListener("click", async () => {
     type: "start-validation"
   });
 
-  if (response?.ok && response.state?.status === STATUS.AWAITING_CONTEXT) {
+  if (
+    response?.ok
+    && response.state?.status === STATUS.AWAITING_CONTEXT
+  ) {
     await openSidePanel();
     window.close();
     return;
   }
 
   await render();
-});
-
-popupMarketHoursToggle.addEventListener("change", async () => {
-  await patchSettings({ marketHoursOnly: popupMarketHoursToggle.checked });
 });
 
 popupLanguageSelect.addEventListener("change", async () => {
