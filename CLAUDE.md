@@ -12,8 +12,9 @@ Chrome Extension (Manifest V3) that screenshots a TradingView chart on a fixed 5
 
 ## Key files
 - `background.js` — service worker, monitoring loop, tab binding, message routing, trade lifecycle handlers
-- `lib/llm.js` — OpenAI calls (`callOpenAi` + `callOpenAiOnce` + retry wrapper), prompt assembly, lesson / long-term context calls, analysis-output validation
-- `lib/prompt-config.js` — execution prompt config + JSON schema + long-term prompt config
+- `lib/llm.js` — OpenAI calls (`callOpenAi` + `callOpenAiOnce` + retry wrapper), Market Context scan prompt, execution prompt assembly, review/lesson calls, analysis-output validation
+- `lib/market-context.js` — Market Context state helpers, same-symbol/same-day validity, Daily + 1H merge policy, key-level dedupe
+- `lib/prompt-config.js` — execution prompt config + JSON schema
 - `lib/chart-validator.js` — TradingView hostname check (extension is hard-locked to TradingView)
 - `lib/symbol.js` — `guessSymbol` + `sanitizeUrl` (pure, unit-tested)
 - `lib/market-hours.js` — `isWithinUsMarketHours`, `isNearUsMarketClose`, `getUsTradingDay` (pure, unit-tested, DST-correct)
@@ -23,7 +24,7 @@ Chrome Extension (Manifest V3) that screenshots a TradingView chart on a fixed 5
 - `lib/i18n.js` — all user-facing + background-log strings (single source of truth)
 - `sidepanel.js`, `sidepanel-other-tab.js`, `popup.js`, `offscreen.js`
 - `scripts/run-tests.mjs`, `scripts/lint.mjs` — dependency-free local/CI verification helpers
-- `test/*.test.js` — 103 `node:test` unit tests; run `npm run check`
+- `test/*.test.js` — 144 `node:test` unit tests; run `npm run check`
 
 ## IMPORTANT: loading the extension
 
@@ -36,7 +37,7 @@ This repo uses a git worktree at `.claude/worktrees/<branch>/`. Chrome's "Load u
 ## Approved improvements — status
 
 Completed (Batch 1):
-- #2 onStartup monitoring recovery (restore alarm after browser restart)
+- #2 onStartup session cleanup (current behavior: clear active plugin session state after browser restart; broker state is re-declared by the user on the next run)
 - #3 Tab check only at screenshot moment; removed aggressive onActivated pause
 - #12 Merged background `bgText` into `lib/i18n.js`; fixed same-line format bug
 - #14 Simplified `shouldEnableSidePanelForTab` — side panel stays enabled for all tabs while RUNNING/PAUSED **(superseded — see "Side panel bound to original tab" below)**
@@ -50,7 +51,7 @@ Completed (Batch 2):
 Completed (Batch 3):
 - #5 Discord notification fires only when `analysis.action` differs from previous round's action
 - #9 Recent rounds timeline section in sidepanel (top 10 of `state.results`)
-- #10 Market-hours gate (popup toggle `marketHoursOnly`, 9:30–16:00 ET Mon–Fri via `Intl.DateTimeFormat` so DST is correct)
+- #10 Market-hours gate (5-minute monitoring is always limited to 9:30–16:00 ET Mon–Fri via `Intl.DateTimeFormat` so DST is correct)
 - #15 Debounced sidepanel `render()` (100ms) and `currentShares` input handler (150ms); `storage.onChanged` filters to `local` + `monitorState`/`appSettings`
 
 Completed (Batch 4):
@@ -58,8 +59,20 @@ Completed (Batch 4):
 - A2 Alarm handler guards against re-entry via `isRoundInFlight`; staleness timeout (3 min via `roundStartedAt`) prevents deadlock if the service worker is evicted mid-round
 - A4 `incomplete: max_output_tokens` is marked retryable and retry wrapper honors an explicit `error.retryable` flag. Current `ANALYSIS_MAX_OUTPUT_TOKENS` is 1200.
 - C2 `sanitizeUrl()` strips query + fragment before sending page URL to OpenAI; `guessSymbol` also runs on the cleaned URL
-- C4 `recoverMonitoringAfterStartup` clears a stale `isRoundInFlight: true` on service-worker cold start
-- Non-blocking start: `startMonitoring` / `continueMonitoring` / `restartMonitoring` schedule the alarm and fire-and-forget the first round; sidepanel submit has an explicit `catch` so any `sendMessage` failure still re-renders instead of stranding the loading card
+- C4 Stale `isRoundInFlight: true` is cleared by the alarm handler's 3-minute timeout before a fresh round runs
+- Non-blocking start: `startMonitoring` / `continueMonitoring` schedule the alarm and fire-and-forget the first round; sidepanel submit has an explicit `catch` so any `sendMessage` failure still re-renders instead of stranding the loading card
+
+Completed (continuous regular-session monitoring):
+- Removed the start-form "analysis rounds" selector and the `totalRounds` rule from normalized profiles. `roundCount` remains only as a display/history counter.
+- `runMonitoringRound()` no longer auto-pauses after a configured round count. It keeps scheduling by the active interval until the user pauses/stops it or the regular session ends.
+- 5-minute monitoring is always regular-session only: before 9:30 ET it stays armed and retries on the selected cadence; at/after 16:00 ET or on weekends it pauses automatically.
+- The popup market-hours toggle was removed because the gate is no longer optional.
+
+Completed (explicit broker-state declaration after restart):
+- Browser/tab close, extension reload, and Chrome startup intentionally clear active plugin session state via `buildResetStatePreservingHistory()`; `tradeHistory` is preserved, but `virtualPosition`, `pendingLimitOrder`, `monitoringProfile`, and Market Context are session-scoped.
+- Popup no longer exposes `Recover Session`. A fresh `Start Monitoring` validates the current TradingView tab and sends the user through setup + Market Context Scan again.
+- After Daily + 1H Market Context Scan, the side panel asks whether the user already holds the stock. If yes, the user enters the broker entry price and monitoring starts directly in exit mode; if flat, the optional premarket dip plan remains available in its 4:00-9:30 ET window.
+- `Exit` is always available and clears plugin session state without trying to infer or mutate broker state. The broker account is the source of truth.
 
 Completed (Batch 5.5 — tracked-but-already-done):
 - C3 Timeline rows in sidepanel are colored by `data-action` (green BUY_*, red SELL_*, amber WAIT) — implemented in `sidepanel.css`, logged for audit trail.
@@ -67,26 +80,26 @@ Completed (Batch 5.5 — tracked-but-already-done):
 
 Completed (Stage B — virtual-position state machine + semi-auto flow):
 - `state.virtualPosition` is the single signal for entry vs exit mode (null = scanning entry; object = holding, scanning exit). STATUS enum untouched per the "no ad-hoc flags" rule.
-- `lib/llm.js` builds the JSON schema dynamically: entry allows `BUY_LIMIT/WAIT`; exit allows `SELL_LIMIT/HOLD`; force_exit locks to `SELL_NOW` only. (Originally entry also allowed `BUY_NOW` and exit also allowed `SELL_NOW` — those were removed in the limit-only refactor; see "Limit-only action vocabulary" below.)
+- `lib/llm.js` builds the JSON schema dynamically: entry allows `BUY_LIMIT/WAIT`; exit allows `SELL_NOW/SELL_LIMIT/HOLD`; force_exit locks to `SELL_NOW` only.
 - Prompt adds `SESSION_MODE` + `POSITION_CONTEXT` sections and mode-specific rule blocks (`ENTRY_MODE_RULES` / `EXIT_MODE_RULES` / `FORCE_EXIT_RULES`).
 - `lib/market-hours.js` exports `isNearUsMarketClose` (10-min lead before 16:00 ET, DST-safe). `runMonitoringRound` flips mode to `force_exit` when holding near close.
 - New background handlers: `mark-bought` sets `virtualPosition`; `mark-sold` appends to `state.tradeHistory` and calls `pauseMonitoring` (session ends when flat).
 - Sidepanel: position-summary card + manual mark-sold form appear based on `virtualPosition`; mark-bought now flows through `BUY_LIMIT → Mark limit placed → Limit filled` after the limit-only refactor.
 
-Completed (Stage C — trade journal + self-learning):
+Completed (Stage C — trade journal + human-review lessons):
 - `markSold` persists closed trades to `state.tradeHistory` with `{ id, plannedStopLoss, plannedTarget, heldMinutes, lesson: null }`, then fires a background `generateTradeLesson` call that writes a ≤80-char lesson back by matching on `trade.id` (fire-and-forget; failures are swallowed so they cannot strand the session).
 - `lib/llm.js` adds `generateTradeLesson` (separate OpenAI call with strict JSON schema, `LESSON_MAX_OUTPUT_TOKENS = 400`). Prompt instructs the model to name specific errors instead of generic praise.
-- Entry-mode prompts inject a `[RECENT_LESSONS]` section built from the last 10 trades with non-empty lessons (formatted as `- [SYMBOL ±pnl% date] lesson`). Omitted in exit/force_exit modes and when the list is empty.
+- `RECENT_LESSONS` prompt injection was removed later. Lessons stay in the Trade Journal for human review only; they are not fed back into future analysis calls.
 - Sidepanel gains a Trade Journal card rendering `tradeHistory` with win/loss tone + `Generating lesson...` placeholder until the async lesson lands.
 - i18n keys added (en + zh): `tradeJournalTitle`, `tradeJournalCopy`, `noClosedTrades`, `lessonPending`.
-- Tests: 4 new cases in `test/llm.test.js` cover RECENT_LESSONS injection, exit-mode omission, empty-list omission, and blank-lesson filtering. Suite: 45/45 green.
+- Tests include a regression asserting legacy `recentLessons` payloads are ignored by prompt assembly.
 
 Completed (real-trade stats card):
 - `MAX_TRADE_HISTORY = 500` decouples `tradeHistory` retention from `MAX_RESULTS` (20, which is still used for the per-round `results` timeline). See Known risks below.
 - `virtualPosition` now captures `entryAction` + `entryConfidence` at `markBought` time; `markSold` copies them into the trade record. Legacy trades stay at `null` and fall into an "unknown" bucket that only renders when non-empty.
-- `lib/trade-stats.js` is a pure aggregator: `computeTradeStats(tradeHistory)` → `{ overall, byAction, byConfidence }`. Filters `status:"abandoned"` and non-finite `pnlPercent`. Known buckets (`BUY_NOW`/`BUY_LIMIT`, `high`/`medium`/`low`) are always present with `n:0` for stable UI rendering.
+- `lib/trade-stats.js` is a pure aggregator: `computeTradeStats(tradeHistory)` → `{ overall, byConfidence }`. Filters `status:"abandoned"` and non-finite `pnlPercent`. Known confidence buckets (`high`/`medium`/`low`) are always present with `n:0` for stable UI rendering.
 - Sidepanel Performance Stats card hides entirely when `overall.n === 0`. Buckets with `n < 5` render with a visible "small sample" warning — explicit choice to show-with-caveat rather than hide, since a 3-month run will still produce sparse confidence buckets and hiding them is worse than flagging them.
-- i18n keys: `statsTitle`, `statsCopy`, `statsSmallSampleWarning`, `statsOverallHeading`, `statsByActionHeading`, `statsByConfidenceHeading`, `statsSampleSize`, `statsWinRate`, `statsAvgPnl`, `statsTotalPnl`, `statsAvgHeld`, `statsBestTrade`, `statsWorstTrade`, `statsBucketEmpty`.
+- i18n keys: `statsTitle`, `statsCopy`, `statsSmallSampleWarning`, `statsOverallHeading`, `statsByConfidenceHeading`, `statsSampleSize`, `statsWinRate`, `statsAvgPnl`, `statsTotalPnl`, `statsAvgHeld`, `statsBestTrade`, `statsWorstTrade`, `statsBucketEmpty`.
 - Tests: 10 new cases in `test/trade-stats.test.js`. Suite: 58/58 green.
 - This is **read-only aggregation of real-trade journal data**, not paper-trading simulation. Paper-trading / Stage D is not planned.
 
@@ -110,7 +123,7 @@ Removed (user-context notes — fully deleted):
 Completed (Stage B follow-up — overnight-gap auto-abandon):
 - `virtualPosition` now carries `tradingDay` (US/Eastern YYYY-MM-DD) at `markBought` time.
 - `lib/market-hours.js` exports `getUsTradingDay(now)`; DST-safe via `Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" })`.
-- `abandonStaleVirtualPositionIfNeeded()` runs on `chrome.runtime.onStartup` (before `recoverMonitoringAfterStartup`) and at the start of every `runMonitoringRound`. If the stored `tradingDay !== today`, the position is cleared, an `{ status: "abandoned", abandonReason: "overnight_gap" }` record is appended to `tradeHistory`, and the session is paused with i18n reason `sessionAbandonedOvernight`.
+- `abandonStaleVirtualPositionIfNeeded()` runs at the start of every `runMonitoringRound`. If the stored `tradingDay !== today`, the position is cleared, an `{ status: "abandoned", abandonReason: "overnight_gap" }` record is appended to `tradeHistory`, and the session is paused with i18n reason `sessionAbandonedOvernight`.
 - Sidepanel Trade Journal renders abandoned trades with `data-tone="abandoned"` (gray, 75% opacity) + `ABANDONED` badge + explanatory lesson text.
 - Design choice: no user confirmation — per day-trading rule, any cross-day position is invalid by definition. Prevents the "stale ghost position" scenario from power loss / lid-close / Chrome crash.
 
@@ -121,18 +134,21 @@ Completed (VWAP + Volume signal gating in execution prompt):
 - **Tests**: new case in `test/llm.test.js` ("buildAnalysisPromptFromConfig: prompt teaches AI to use Volume + VWAP") asserts both keywords appear in the assembled prompt and that the guardrail "only if visible" wording is present.
 - **Design note**: deliberately kept as prompt-side gating, not schema-side. Adding `volumeConfirmed: boolean` to the JSON schema would invite the model to confidently fill in `true` even when no volume pane is visible. Keeping it in `reasoning` text means the user can spot-check what the model actually saw.
 
-Completed (long-term context — separate one-shot LLM call + structural anti-bias):
-- **Problem**: 5-min chart alone is myopic. Same setup at $50 in a multi-month base vs $50 at the top of a parabolic run is a completely different trade, and the intraday model has no way to know which one it is.
-- **Solution**: before the session starts, the user generates a one-shot read of a Daily or Weekly chart. That read is cached on `monitoringProfile.longTermContext` and injected into every 5-min prompt for the rest of the session. **No per-round refresh** — long-term structure does not change minute to minute, and re-fetching would burn tokens for no information gain.
-- **State**: pre-session staging via `state.longTermContextDraft: null` (added to `createDefaultState()`). `startMonitoring` reads the draft, copies it onto the new `monitoringProfile.longTermContext`, then clears the draft. Means: long-term context is **frozen for the entire session**. To refresh, Exit and start a new session — chosen over a mid-session re-generate button because each new session is already a natural moment to re-evaluate.
-- **Separate prompt + schema**: `LONG_TERM_PROMPT_CONFIG` + `LONG_TERM_RESPONSE_SCHEMA` in `lib/prompt-config.js`; `generateLongTermContext(payload)` in `lib/llm.js` runs a separate one-shot call (`LONG_TERM_MAX_OUTPUT_TOKENS = 700`). Output: `{ timeframe, summary (≤300 chars), trend ∈ {up,down,range,unclear}, stage ∈ {base,breakout,extended,pullback,topping,reversal,unclear}, keySupport, keyResistance, symbol, generatedAt }`. The long-term role is **structural reader, not signal generator** — explicitly forbidden from emitting trade actions.
-- **Injection**: `formatLongTermContextSection` outputs `[LONG_TERM_CONTEXT]` placed BEFORE `formatLastSignalAndOrderSection` — ordering locked by a unit test. (Originally also placed AFTER the now-removed `formatUserContextSection`; that constraint became moot when user-context notes were deleted.) Included in **all three modes** (entry/exit/force_exit) since structural context matters for hold/exit decisions too. 24h staleness warning auto-injected when `now - generatedAt > 24h`.
-- **Anti-bias rules** (the non-negotiable part): the section ends with explicit instructions: (a) treat the long-term read as **structural bias only**, never as a trade signal; (b) the 5-min chart is the **trigger**, the long-term read is just **context for sizing/confidence**; (c) on conflict, do **not** let long-term bullishness override what the 5-min shows — instead, lower confidence by one tier (`high → medium`, `medium → low`); (d) name the long-term read in `reasoning` only when it actually influenced the decision. Without these rules, a "long-term uptrend" tag would steamroll every bearish intraday setup, which is exactly the calibration failure we are trying to avoid.
-- **UI**: optional widget inside the start-monitoring form. Timeframe select (Daily/Weekly) + Generate button → captures the active tab → calls `generateLongTermContext` → renders trend/stage/support/resistance/summary back into the form. Once monitoring is RUNNING the long-term read is read-only; refresh = Exit + new session.
-  - **Pivot history**: originally implemented with TWO entry points (start form + a running-card widget that allowed mid-session re-generate / clear). User then reconsidered and asked to remove the running-card entry — kept only the form entry. Cleanup removed: HTML section, ~10 DOM refs, renderer, event handlers, the `clearLongTermContext` handler + message route, and 5 i18n keys (`longTermCopy`, `longTermRegenerateButton`, `longTermClearButton`, `longTermStaleWarning`, `longTermNotEditableWhilePaused`). The simpler "frozen per session" semantics is the intended end state — do not re-add the running-card entry without a clear reason.
-- **i18n**: en + zh keys for: `longTermTitle`, `longTermFormCopy`, `longTermTimeframeLabel`, `longTermTimeframe_daily/_weekly`, `longTermGenerateButton`, `longTermGenerating`, `longTermFieldTrend/Stage/Support/Resistance/Summary`, `longTermGeneratedAt`, `longTermGenerateFailed`, `longTermTrend_up/down/range/unclear`, `longTermStage_base/breakout/extended/pullback/topping/reversal/unclear`.
-- **Tests**: 6 new cases in `test/llm.test.js` covering injection in entry/exit/force_exit, omission when null/empty, 24h staleness warning, no warning when fresh, and the ordering invariant (was `USER_CONTEXT < LONG_TERM_CONTEXT < LAST_SIGNAL_AND_ORDER`; simplified to `LONG_TERM_CONTEXT < LAST_SIGNAL_AND_ORDER` after the user-context removal). Suite: 79/79 green at the time.
-- **Design note**: Daily + Weekly only — no Monthly. Rationale: day trader's planning horizon rarely extends past 1–3 weeks of structure; Monthly would mostly add noise + token cost. If a swing-trading mode is ever added, revisit then.
+Completed (mandatory Market Context Scan):
+- **Problem**: pure 5-minute execution was too trend-following around EMA/VWAP and weak at dip-buying fast drops into older support / taking profit into older resistance. The 5-minute chart often cannot show key levels from weeks/months ago.
+- **Design**: after the session form, Start enters `AWAITING_CONTEXT` and requires two screenshots before any 5-minute round can run: Daily / 1D (3-6 months, hide VWAP, hide visible-range High/Low labels) and 1H / 60m (5-20 trading days, VWAP optional, hide visible-range High/Low labels).
+- **State**: new `state.marketContext` tracks `{ status, symbol, tradingDay, dailyScan, hourlyScan, summary }`. Validity requires `status=complete`, same ticker, and same US trading day. Missing/stale context forces `AWAITING_CONTEXT`.
+- **Prompt**: `analyzeMarketContextScan()` extracts `regime`, up to 10 typed/strength-classified key levels, and risk notes. `lib/market-context.js` merges Daily + 1H into `summary` with `aggression`, `dipBuyPolicy`, and `profitTakingStyle`. Main 5-minute analysis and Signal Review both receive `[MARKET_CONTEXT]`.
+- **Execution guardrail**: `runMonitoringRound()` refuses to analyze if Market Context is invalid. `Start Monitoring` never fires a 5-minute round directly. `Continue` runs immediately only if context is still valid; otherwise it returns to the Market Context Scan UI. `Stop` preserves context; `Exit` clears it with the rest of active session state.
+- **Migration**: `STATE_VERSION = 5`; v4 and earlier states reset `marketContext` so stale or differently-shaped context cannot leak into a new prompt.
+- **Tests**: Market Context helper tests, prompt assembly tests for scan + `[MARKET_CONTEXT]`, storage migration v5, and side-panel routing fallback for the mandatory setup path.
+
+Removed (long-term context — fully deleted):
+- **Original idea**: optional Daily / Weekly chart scan before Start, stored as `longTermContextDraft`, copied into `monitoringProfile.longTermContext`, and injected as `[LONG_TERM_CONTEXT]` into every 5-minute execution prompt.
+- **Why removed**: user decided the product should stay focused on day-trading execution. Mixing higher-timeframe swing context into a strict 5-minute intraday prompt made the strategy less coherent and could weaken stop discipline.
+- **Deleted**: start-form widget, long-term CSS, i18n keys, `generate-long-term-context` background route, `generateLongTermContext()` / long-term schema / `LONG_TERM_PROMPT_CONFIG`, `[LONG_TERM_CONTEXT]` prompt injection, and the old long-term injection tests.
+- **Historical migration**: v4 stripped legacy `monitoringProfile.longTermContext`, `lastMonitoringProfile.longTermContext`, and root `longTermContextDraft`; current `STATE_VERSION = 5` keeps that cleanup and also resets stale pre-v5 `marketContext`.
+- **Design note**: do not re-add the old optional Daily / Weekly swing-style context. The replacement is the mandatory structured Daily + 1H Market Context Scan above: regime and key levels only, used as an intraday map rather than a long-term thesis.
 
 Completed (Side panel content per-tab — supersedes Batch 1 #14):
 - **Problem**: with the original "enabled on every tab" behavior, switching to a non-TradingView tab (news article, email, broker) kept the recommendation card visible — implying the analysis still applied to whatever tab was on top.
@@ -142,7 +158,7 @@ Completed (Side panel content per-tab — supersedes Batch 1 #14):
   - Non-bound tabs → `sidepanel-other-tab.html` (minimal placeholder: title, "monitored tab: AAPL · TradingView", "Switch to monitored tab" button → `chrome.tabs.update(boundTabId, { active: true })` + `chrome.windows.update(boundWindowId, { focused: true })`)
 - **Effect**: panel column always visible (we can't hide it), but content makes the binding obvious. User clicks the button → jumps to bound tab → Chrome's per-tab path updates → full UI re-appears automatically (this part of Chrome's behavior **does** work cleanly).
 - **API shape**: new `getSidePanelConfigForTab(state, tabId, validation)` returns `{ enabled, path? }`. Old `shouldEnableSidePanelForTab` retained as a thin shim returning `.enabled` for any callers that only need the boolean. Note: with the new design the boolean is `true` for *both* bound and non-bound tabs during a live session — only the path differs. So if anything checks `enabled` to mean "should I render the full UI", it will be wrong; use `path === SIDEPANEL_PATH` instead.
-- **Files added**: `sidepanel-other-tab.html`, `sidepanel-other-tab.js`. CSS rules (`.other-tab-shell`, `.other-tab-card`, etc.) appended to `sidepanel.css`. New `enableSidePanelForWindow` delegates to per-tab `setSidePanelAvailabilityForTab` so all tabs in the window get the right path immediately after Start / Continue / Restart, not just on subsequent activations.
+- **Files added**: `sidepanel-other-tab.html`, `sidepanel-other-tab.js`. CSS rules (`.other-tab-shell`, `.other-tab-card`, etc.) appended to `sidepanel.css`. New `enableSidePanelForWindow` delegates to per-tab `setSidePanelAvailabilityForTab` so all tabs in the window get the right path immediately after Start / Continue, not just on subsequent activations.
 - **i18n**: 5 new keys per language: `otherTabTitle`, `otherTabCopy`, `otherTabBoundLabel`, `otherTabSwitchButton`, `otherTabSwitchFailed`.
 - **Defensive default**: if `boundTabId` is missing on both profiles (corrupted state), `getSidePanelConfigForTab` returns `{ enabled: false }` for every tab. Hidden panel is a discoverable bug; an "other tab" placeholder leaking onto every tab would be confusing.
 - **Tests**: `test/side-panel.test.js` rewritten to assert on the full `{enabled, path}` config. 12 cases covering IDLE/VALIDATING (always disabled), AWAITING_CONTEXT (validated TV tab → full UI), RUNNING/PAUSED bound vs non-bound (full UI vs other-tab placeholder), `lastMonitoringProfile` fallback, defensive default, profile precedence, and back-compat shim agreement. Suite: 96/96.
@@ -156,49 +172,61 @@ Completed (Batch 5 — structural cleanup + tests):
 - B4 Removed unused `confidence` field from `lib/chart-validator.js`
 - B5 Added `node:test` unit tests under `test/` (29 tests: symbol, chart-validator, market-hours, llm). Run via `npm test`.
 
-Completed (Limit-only action vocabulary — BUY_NOW removed, SELL_NOW restricted to FORCE_EXIT):
-- **Trigger**: real-trade testing showed market orders (`BUY_NOW` / `SELL_NOW` in normal exit) caused recurring slippage / bad-fill problems. User decision: ALL entries and normal exits via limit orders only.
-- **Schema change**: `ALLOWED_ACTIONS` is now `["BUY_LIMIT", "SELL_NOW", "SELL_LIMIT", "HOLD", "WAIT"]` (was 6, now 5). `ENTRY_MODE_ACTIONS` = `["BUY_LIMIT", "WAIT"]` (was 3). `EXIT_MODE_ACTIONS` = `["SELL_LIMIT", "HOLD"]` (was 3). `FORCE_EXIT_ACTIONS` unchanged at `["SELL_NOW"]`.
-- **Why SELL_NOW survives in FORCE_EXIT only**: the day-trading must-be-flat-by-close rule outweighs the slippage concern in the final 10 minutes. Limit orders carry too much fill-risk so close to the bell. The overnight-gap auto-abandon mechanism (Stage B follow-up) remains as the second-line safety net if a force-exit somehow doesn't fill.
-- **Prompt rewrites in `lib/prompt-config.js`**: `actionRules` rewritten — for setups that would have warranted BUY_NOW under a market-order regime (hot breakout, reclaim already triggered), the AI now issues `BUY_LIMIT` with `limitPrice` at or fractionally below current price (within ~0.1–0.3%) — a "marketable limit" that fills on the next tick but with price protection. Same for stop-out exits: `SELL_LIMIT` with `limitPrice` at or just below current bid. `entryModeRules` / `exitModeRules` updated with the "never SELL_NOW in normal mode" guardrail. `forceExitRules` adds an explicit note that this mode overrides the limit-only principle. `executionRules` Volume-gating + VWAP-gating wording updated to use BUY_LIMIT / SELL_LIMIT throughout.
+Completed (action vocabulary — BUY_NOW removed, SELL_NOW restored for exits):
+- **Current schema**: `ALLOWED_ACTIONS` is `["BUY_LIMIT", "SELL_NOW", "SELL_LIMIT", "HOLD", "WAIT"]`. `ENTRY_MODE_ACTIONS` = `["BUY_LIMIT", "WAIT"]`. `EXIT_MODE_ACTIONS` = `["SELL_NOW", "SELL_LIMIT", "HOLD"]`. `FORCE_EXIT_ACTIONS` = `["SELL_NOW"]`.
+- **Entry rule**: all entries remain limit-only via `BUY_LIMIT`; no `BUY_NOW`.
+- **Exit rule**: `SELL_NOW` is allowed in normal exit mode for quick scalp profit, stop-loss, weakening small losses, or capital protection. `SELL_LIMIT` is only for a take-profit limit above current price.
+- **Prompt rewrites in `lib/prompt-config.js`**: `actionRules` reserve `SELL_LIMIT` for higher take-profit prices and forbid defensive SELL_LIMIT at/below current price; immediate exits must be `SELL_NOW` with `orderPrice=null`.
 - **UI removed**: the entire `markBoughtSection` card (`<section id="markBoughtSection">` in HTML, ~7 DOM refs in sidepanel.js, `markBoughtButton` event handler, the `lastAction === "BUY_NOW"` branch in `renderPositionPanels`). No "manual mark bought" path anymore — entries always flow through `AI BUY_LIMIT → Mark limit placed → Limit filled` (the "Limit filled" button calls `markBought` internally with `pending.limitPrice`). i18n keys `markBoughtTitle / markBoughtCopy / markBoughtButton` deleted (en + zh).
 - **UI kept**: `positionActions` card with `exitPriceInput` and "Mark sold at this price" — needed as manual-override exit path (panic close, broker rejected limit, etc.). Pre-filled with `currentPrice` for the convenience case.
 - **Backend untouched**: `markBought` and `markSold` handlers in `background.js` are still wired — they're reused by the "Limit filled" button to promote a pending limit into a real position / close. `entryPriceInvalid` and `couldNotMarkBought` i18n keys retained for those paths.
 - **Legacy journal data**: pre-refactor `tradeHistory` entries may carry `entryAction: "BUY_NOW"`. The `action_BUY_NOW` i18n key is intentionally retained so historical entries still render correctly in the trade journal.
-- **Tests**: `ALLOWED_ACTIONS` / `getAllowedActions` test cases rewritten to assert the new vocabulary, with explicit assertions that `BUY_NOW` is **not** in any allowed list and `SELL_NOW` is **not** in normal exit. RECENT_LESSONS test updated to use `BUY_LIMIT` (legacy journals can still hold older labels). Suite: 92/92 green.
+- **Tests**: `ALLOWED_ACTIONS` / `getAllowedActions` test cases assert the current vocabulary, with explicit assertions that `BUY_NOW` is **not** in any allowed list and `SELL_NOW` is available in normal exit.
 - **Why the user pushed for this**: market orders during fast intraday moves frequently filled 1-3 cents off the chart price the user was reading, and stop-loss "panic" SELL_NOW exits were even worse. A marketable limit at the same price fills slightly slower (0–1 ticks) but with bounded slippage. For a strategy that depends on the AI's price levels being right, bounded slippage is non-negotiable.
 
 Completed (analysis-output validation + continuity prompt cleanup):
-- **Problem**: after the limit-only refactor, `LAST_SIGNAL_AND_ORDER` still had stale examples saying WAIT/BUY_LIMIT could become `BUY_NOW` and HOLD/SELL_LIMIT could become `SELL_NOW`. That contradicted the current mode-specific action schema.
-- **Prompt fix**: continuity text now says upgrades must stay inside the current allowed vocabulary: entry `WAIT -> BUY_LIMIT`; exit `HOLD -> SELL_LIMIT`. Regression tests assert the prompt no longer contains `becomes BUY_NOW` / `becomes SELL_NOW`.
-- **Validation layer**: `validateAnalysisResult()` checks that the returned action is allowed in the current mode, all price fields are single positive decimal strings, and entry-mode long setups have `stopLossPrice < entryPrice < targetPrice` with at least 1:1 reward-to-risk.
+- **Problem**: after action-vocabulary changes, `LAST_SIGNAL_AND_ORDER` can become stale if examples name removed actions.
+- **Prompt fix**: continuity text now says upgrades must stay inside the current allowed vocabulary: entry `WAIT -> BUY_LIMIT`; exit `HOLD -> SELL_NOW` or `SELL_LIMIT`.
+- **Validation layer**: `validateAnalysisResult()` checks that the returned action is allowed in the current mode, `BUY_LIMIT` / `SELL_LIMIT` include a positive decimal `orderPrice`, `WAIT` / `HOLD` keep `orderPrice` empty, and entry-mode long setups have `stopLossPrice < orderPrice < targetPrice` with at least 1:1 reward-to-risk.
 - **Retry behavior**: invalid structured analysis output gets one fresh model retry (`ANALYSIS_VALIDATION_MAX_ATTEMPTS = 2`). If the second output is still invalid, the round fails and monitoring pauses with the validation error.
-- **Tests**: 6 validation tests plus the continuity prompt regression. Suite: 98/98 green when run file-by-file with `node test/*.test.js`.
+- **Tests**: 6 validation tests plus the continuity prompt regression.
+
+Completed (Signal Review / user challenge loop):
+- Added a separate `buildSignalReviewPrompt()` / `analyzeSignalReview()` path in `lib/llm.js`. It receives the current screenshot, original signal, current mode/position, and `USER_CHALLENGE`, then returns structured review JSON.
+- Review prompt explicitly treats the user's challenge as a hypothesis, not a fact, and says not to flatter or blindly agree. It does not feed the challenge into future main prompts.
+- `background.js` adds `review-signal` and `accept-reviewed-signal` messages. `review-signal` saves only `lastSignalReview`; it does not mutate `lastResult`, `results`, `virtualPosition`, or `pendingLimitOrder`. Accepting a reviewed BUY_LIMIT / SELL_LIMIT creates a normal `pendingLimitOrder` with `source: "review"`.
+- `sidepanel.html` / `sidepanel.js` / `sidepanel.css` add the Signal Review UI under the latest recommendation. Accepted reviewed limit signals flow into the existing "Limit filled" path and then into `virtualPosition`.
+- New main analysis rounds clear `lastSignalReview`, and accepted fills clear it as well.
+- Tests cover review prompt anti-blind-agreement wording, review validation, and v4 migration.
 
 Completed (stateVersion migration layer):
-- `STATE_VERSION = 1` is now part of `createDefaultState()`, and every saved monitor state is normalized through `migrateState()` in `lib/storage.js`.
-- Migration v1 handles legacy local state from before the user-context removal: it strips `userContext` from `monitoringProfile` / `lastMonitoringProfile`, restores missing default fields, and caps `results` / `tradeHistory` to `MAX_RESULTS` / `MAX_TRADE_HISTORY`.
-- Design note: migration is intentionally pure and exported so future shape changes can be unit-tested without a Chrome runtime. When adding `STATE_VERSION = 2`, add the new version branch inside `migrateState()` and a focused regression test in `test/storage.test.js`.
-- Tests: `test/storage.test.js` covers invalid input, legacy state preservation, malformed legacy profiles, legacy userContext stripping, and array capping.
+- `STATE_VERSION = 5` is now part of `createDefaultState()`, and every saved monitor state is normalized through `migrateState()` in `lib/storage.js`.
+- Migration strips removed prompt-context fields (`userContext`, `longTermContext`, root `longTermContextDraft`), clears old session signal state that predates `orderPrice`, clears stale pre-v4 signal reviews, resets pre-v5 `marketContext`, restores missing defaults, and caps `results` / `tradeHistory` to `MAX_RESULTS` / `MAX_TRADE_HISTORY`.
+- Design note: migration is intentionally pure and exported so future shape changes can be unit-tested without a Chrome runtime. Add a version branch or field cleanup inside `migrateState()` and a focused regression test in `test/storage.test.js` whenever the stored shape changes.
+- Tests: `test/storage.test.js` covers invalid input, legacy state preservation, malformed legacy profiles, removed prompt-context stripping, and array capping.
 
 Completed (CI + dependency-free lint/check):
 - `npm test` now runs `node scripts/run-tests.mjs`, which imports all `node:test` files in a single process. This avoids the Windows sandbox `spawn EPERM` failure seen with `node --test "test/*.test.js"` while still using the same test framework.
 - `npm run lint` runs `node --check` against every `.js` / `.mjs` file (excluding `.git`, `.claude`, `.github`, and `node_modules`). No ESLint dependency by design.
 - `npm run check` runs lint + tests.
 - `.github/workflows/ci.yml` runs lint and tests on every push and pull request using Node 22.
-- Suite after this change: 103/103 tests green via `npm test`.
+- Current suite after continuous regular-session monitoring work: 144/144 tests green via `npm run check`.
 
 Completed (recommendation confidence color coding):
 - `sidepanel.js` maps `analysis.confidence` to `data-tone="confidence-high|confidence-medium|confidence-low"` on the recommendation metric card. Unknown / malformed confidence stays neutral.
 - `sidepanel.css` renders high confidence green, medium amber, and low red so signal quality is visible without reading the full rationale.
 - UI-only change: prompt schema and stats aggregation remain unchanged (`confidence` is still `high | medium | low`).
 
+Completed (performance stats action breakdown removal):
+- Removed the Performance Stats "By Action" section because the limit-only action vocabulary leaves `BUY_LIMIT` as the only current entry action. Keeping `BUY_NOW` vs `BUY_LIMIT` buckets only surfaced legacy history and no longer helped calibration.
+- `computeTradeStats()` now returns only `{ overall, byConfidence }`; the UI keeps the overall summary and confidence calibration table.
+
 ## Future work / not planned
 
 ### Known risks / follow-ups (small)
-- `state.tradeHistory` now uses its own `MAX_TRADE_HISTORY = 500` (previously reused `MAX_RESULTS = 20`, which silently dropped journal entries after ~20 trades). Decoupled so months of history survive for the RECENT_LESSONS loop + real-trade stats. 500 is not unbounded — if a user ever runs for multiple years, consider export-to-CSV + purge, or a separate `journalArchive`.
+- `state.tradeHistory` now uses its own `MAX_TRADE_HISTORY = 500` (previously reused `MAX_RESULTS = 20`, which silently dropped journal entries after ~20 trades). Decoupled so months of history survive for human review + real-trade stats. 500 is not unbounded — if a user ever runs for multiple years, consider export-to-CSV + purge, or a separate `journalArchive`.
 - `generateTradeLesson` is fire-and-forget with a swallowed catch. If the call fails (network / rate limit), the trade's `lesson` stays `null` forever — no retry, no backfill. Fine for now; revisit if many lessons end up stuck at null.
-- `tradeHistory` is now preserved across every state reset via `buildResetStatePreservingHistory()` helper. Previously 6 code paths silently wiped the journal: `onInstalled` (reload/update), `exitMonitoring` (Exit button), `restartMonitoring` (Restart button), and 3 branches inside `runValidationPreflight` (fires on every Start click). That's why a fresh Start cleared months of journal. Other state fields (virtualPosition, pendingLimitOrder, monitoringProfile, results, …) still reset to defaults in all those paths — only tradeHistory is protected. If the shape of `tradeHistory` entries ever changes, add a one-off migration inside the helper — it's the single chokepoint for cross-version journal preservation. The only remaining raw `createDefaultState()` use is `onStartup`, guarded by `!state.updatedAt` (fires only on empty storage, nothing to preserve).
+- `tradeHistory` is now preserved across every state reset via `buildResetStatePreservingHistory()` helper. Reset paths include `onInstalled` (reload/update), `onStartup` when active session state exists, `exitMonitoring` (Exit button), monitored-tab close, and `runValidationPreflight` (fires on every Start Monitoring click). Other state fields (virtualPosition, pendingLimitOrder, monitoringProfile, results, Market Context, …) intentionally reset to defaults in those paths — only tradeHistory is protected. If the shape of `tradeHistory` entries ever changes, add a one-off migration inside the helper; it's the single chokepoint for cross-version journal preservation.
 - No tab-activity freshness check: if user leaves the tab backgrounded for 30+ min, the screenshot still fires on schedule but the chart data may be stale. Currently ignored because users actively watching wouldn't hit this; worth revisiting if false signals correlate with tab-switch patterns.
 
 ### Hard-locked to TradingView (do not relax)
@@ -213,7 +241,7 @@ Completed (recommendation confidence color coding):
 - **One trade per day, manual Continue to start a second**: chosen over auto-resume because the manual click is a natural cool-off period. Do not add an "allow multi-trade per day" toggle without first getting real evidence that multi-trading does not dilute edge; otherwise the toggle will become a foot-gun.
 - **Overnight positions auto-abandoned without asking**: day-trading by definition cannot hold overnight, so resurrecting a cross-day position is never the right answer. No confirmation dialog — the `status: "abandoned"` journal entry preserves the audit trail.
 - **No ad-hoc STATUS flags**: mode (entry/exit/force_exit) is derived from `virtualPosition` presence + `isNearUsMarketClose()`, not stored. This keeps the STATUS state machine (`IDLE`/`VALIDATING`/`AWAITING_CONTEXT`/`RUNNING`/`PAUSED`) as the single source of truth per original design.
-- **Exit and Restart are blocked while `virtualPosition` or `pendingLimitOrder` is non-null**: tearing down the session would clear those fields, but the user still has a real position / resting order at the broker. The next AI round would (incorrectly) treat the user as flat and could issue another BUY. Blocking the button forces the user to resolve via Mark sold / Cancel limit first. Stop is still allowed — it preserves all state for Continue. UI greys out the buttons with a tooltip; backend `exitMonitoring` and `restartMonitoring` also throw if either field is non-null (defense in depth). Considered a confirmation dialog instead but rejected — destructive-confirmation dialogs trained users to click through them; a hard block is the only thing that reliably prevents the double-position bug.
+- **Broker state is explicit after any reset**: Exit, monitored-tab close, Chrome startup, and extension reload clear active plugin state even if `virtualPosition` or `pendingLimitOrder` existed. This is intentional simplification: the broker is the source of truth, and the next session asks the user to explicitly declare whether they already hold the stock after completing Market Context Scan. Do not re-add automatic recovery/rebind without first revisiting the product complexity tradeoff.
 
 ## Rejected (do not re-propose)
 - #1 Changing the model name — `gpt-5.4` is verified to work; user uses it intentionally

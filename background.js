@@ -2,17 +2,46 @@
   ALARM_NAME,
   ANALYSIS_INTERVAL_OPTIONS,
   DEFAULT_ANALYSIS_INTERVAL,
-  DEFAULT_TOTAL_ROUNDS,
   MAX_RESULTS,
   MAX_TRADE_HISTORY,
   STATUS,
-  TOTAL_ROUNDS_OPTIONS,
   createDefaultState
 } from "./lib/constants.js";
+import {
+  getActiveAnalysisIntervalRule,
+  isValidAnalysisInterval,
+  normalizeAnalysisInterval,
+  normalizeAnalysisIntervalRules
+} from "./lib/analysis-intervals.js";
 import { validateChartTab } from "./lib/chart-validator.js";
+import { getDiscordNotificationReason } from "./lib/discord-signal.js";
 import { getLanguage, t } from "./lib/i18n.js";
-import { analyzeChartCapture, generateLongTermContext, generateTradeLesson, LONG_TERM_TIMEFRAMES } from "./lib/llm.js";
-import { getUsTradingDay, isNearUsMarketClose, isWithinUsMarketHours } from "./lib/market-hours.js";
+import {
+  analyzeChartCapture,
+  analyzeMarketContextScan,
+  analyzeSignalReview,
+  generatePremarketDipPlan,
+  generateTradeLesson
+} from "./lib/llm.js";
+import {
+  MARKET_CONTEXT_STATUS,
+  createMarketContextForProfile,
+  isMarketContextValidForProfile,
+  mergeMarketContextScans,
+  normalizeMarketContext
+} from "./lib/market-context.js";
+import { getUsMarketSessionPhase, getUsTradingDay, isNearUsMarketClose } from "./lib/market-hours.js";
+import {
+  buildPendingLimitOrderFromPremarketPlan,
+  isWithinPremarketDipWindow,
+  normalizePositiveDecimal
+} from "./lib/premarket-dip.js";
+import {
+  buildSellStrategyContext,
+  isValidSellDelta,
+  normalizeSellDelta,
+  normalizeSellStrategyRules
+} from "./lib/sell-strategy.js";
 import {
   SIDEPANEL_PATH,
   enableSidePanelForWindow,
@@ -24,9 +53,6 @@ import { getSettings, getState, patchState, saveState } from "./lib/storage.js";
 const ICON_PATH = "assets/icon-128.png";
 const OFFSCREEN_DOCUMENT_PATH = "offscreen.html";
 const ANALYSIS_INTERVAL_MINUTES = new Map(ANALYSIS_INTERVAL_OPTIONS.map((option) => [option.value, option.minutes]));
-const VALID_ANALYSIS_INTERVALS = new Set(ANALYSIS_INTERVAL_OPTIONS.map((option) => option.value));
-const TOTAL_ROUNDS_MAP = new Map(TOTAL_ROUNDS_OPTIONS.map((option) => [option.value, option.rounds]));
-const VALID_TOTAL_ROUNDS = new Set(TOTAL_ROUNDS_OPTIONS.map((option) => option.value));
 let creatingOffscreenDocument = null;
 
 function createId() {
@@ -146,7 +172,7 @@ function getDiscordColor(action) {
 }
 
 
-function buildDiscordAnalysisPayloadV4(result, state, language) {
+function buildDiscordAnalysisPayloadV4(result, state, language, notificationReason = null) {
   const analysis = result?.analysis || {};
   const fallback = getSafeDiscordFallback(language);
   const symbol = analysis.symbol || result?.validation?.symbolGuess || fallback;
@@ -155,6 +181,15 @@ function buildDiscordAnalysisPayloadV4(result, state, language) {
       || (language === "zh" ? "新的图表分析结果已经生成。" : "A new chart analysis result is ready."),
     350
   );
+  const updateFields = notificationReason
+    ? [
+        {
+          name: t(language, "discordUpdateReasonLabel"),
+          value: truncateText(t(language, `discordUpdateReason_${notificationReason}`), 120),
+          inline: false
+        }
+      ]
+    : [];
 
   return {
     username: t(language, "appTitle"),
@@ -166,6 +201,7 @@ function buildDiscordAnalysisPayloadV4(result, state, language) {
         description,
         color: getDiscordColor(analysis.action),
         fields: [
+          ...updateFields,
           {
             name: t(language, "actionNow"),
             value: truncateText(getSafeDiscordActionLabel(language, analysis.action), 100),
@@ -182,8 +218,8 @@ function buildDiscordAnalysisPayloadV4(result, state, language) {
             inline: true
           },
           {
-            name: t(language, "entryPriceLabel"),
-            value: truncateText(analysis.entryPrice || fallback, 120),
+            name: t(language, "orderPriceLabel"),
+            value: truncateText(analysis.orderPrice || fallback, 120),
             inline: true
           },
           {
@@ -195,11 +231,6 @@ function buildDiscordAnalysisPayloadV4(result, state, language) {
             name: t(language, "targetPriceLabel"),
             value: truncateText(analysis.targetPrice || fallback, 120),
             inline: true
-          },
-          {
-            name: t(language, "triggerConditionLabel"),
-            value: truncateText(analysis.triggerCondition || fallback, 300),
-            inline: false
           }
         ],
         footer: {
@@ -213,7 +244,7 @@ function buildDiscordAnalysisPayloadV4(result, state, language) {
   };
 }
 
-async function notifyDiscordAnalysisResult(result, state, language) {
+async function notifyDiscordAnalysisResult(result, state, language, notificationReason = null) {
   const settings = await getSettings();
   const webhookUrl = settings.discordWebhookUrl?.trim();
 
@@ -227,7 +258,7 @@ async function notifyDiscordAnalysisResult(result, state, language) {
       headers: {
         "Content-Type": "application/json"
       },
-      body: JSON.stringify(buildDiscordAnalysisPayloadV4(result, state, language))
+      body: JSON.stringify(buildDiscordAnalysisPayloadV4(result, state, language, notificationReason))
     });
 
     if (!response.ok) {
@@ -310,6 +341,69 @@ function bindMonitoringProfileToTab(monitoringProfile, tab) {
   };
 }
 
+function rebindProfileWindow(profile, tab) {
+  if (!profile || !tab || profile.boundTabId !== tab.id) {
+    return profile;
+  }
+
+  const nextWindowId = tab.windowId ?? profile.boundWindowId ?? null;
+  const nextTitle = tab.title || profile.boundTabTitle || "";
+  const nextUrl = tab.url || profile.boundTabUrl || "";
+  if (
+    profile.boundWindowId === nextWindowId
+    && profile.boundTabTitle === nextTitle
+    && profile.boundTabUrl === nextUrl
+  ) {
+    return profile;
+  }
+
+  return {
+    ...profile,
+    boundWindowId: nextWindowId,
+    boundTabTitle: nextTitle,
+    boundTabUrl: nextUrl
+  };
+}
+
+async function syncBoundTabWindowIfNeeded(currentState = null) {
+  const state = currentState || await getState();
+  const monitoringProfile = state.monitoringProfile || null;
+  const lastMonitoringProfile = state.lastMonitoringProfile || null;
+  const boundTabId = monitoringProfile?.boundTabId || lastMonitoringProfile?.boundTabId || null;
+
+  if (!boundTabId) {
+    return state;
+  }
+
+  const boundTab = await getTabById(boundTabId);
+  if (!boundTab) {
+    return state;
+  }
+
+  const nextMonitoringProfile = rebindProfileWindow(monitoringProfile, boundTab);
+  const nextLastMonitoringProfile = rebindProfileWindow(lastMonitoringProfile, boundTab);
+  const changed = nextMonitoringProfile !== monitoringProfile
+    || nextLastMonitoringProfile !== lastMonitoringProfile
+    || state.lastValidation?.tabId === boundTab.id && state.lastValidation?.windowId !== boundTab.windowId;
+
+  if (!changed) {
+    return state;
+  }
+
+  return patchState({
+    monitoringProfile: nextMonitoringProfile,
+    lastMonitoringProfile: nextLastMonitoringProfile,
+    lastValidation: state.lastValidation?.tabId === boundTab.id
+      ? {
+          ...state.lastValidation,
+          windowId: boundTab.windowId,
+          pageTitle: boundTab.title || state.lastValidation.pageTitle || "",
+          pageUrl: boundTab.url || state.lastValidation.pageUrl || ""
+        }
+      : state.lastValidation
+  });
+}
+
 
 async function getTabById(tabId) {
   if (!tabId) {
@@ -355,13 +449,15 @@ async function pauseMonitoring(reason, currentState = null, lastError = null) {
 }
 
 async function ensureMonitoringTabActive(monitoringProfile, language) {
-  const boundTab = await getTabById(monitoringProfile?.boundTabId);
+  const syncedState = await syncBoundTabWindowIfNeeded();
+  const syncedProfile = syncedState.monitoringProfile || syncedState.lastMonitoringProfile || monitoringProfile;
+  const boundTab = await getTabById(syncedProfile?.boundTabId);
 
   if (!boundTab) {
     throw new Error(t(language, "resumeTabMissing"));
   }
 
-  const activeTab = await getActiveTab(monitoringProfile?.boundWindowId || null);
+  const activeTab = await getActiveTab(boundTab.windowId || syncedProfile?.boundWindowId || null);
 
   if (activeTab.id !== boundTab.id) {
     throw new Error(t(language, "resumeTabMismatch"));
@@ -382,42 +478,125 @@ function getAnalysisIntervalMinutes(rule) {
   return ANALYSIS_INTERVAL_MINUTES.get(rule) ?? DEFAULT_ANALYSIS_INTERVAL;
 }
 
-function normalizeAnalysisInterval(rule) {
-  return VALID_ANALYSIS_INTERVALS.has(rule) ? rule : "5m";
-}
-
-function getTotalRoundsValue(rule) {
-  return TOTAL_ROUNDS_MAP.get(`${rule}`) ?? DEFAULT_TOTAL_ROUNDS;
-}
-
-function normalizeTotalRounds(rule) {
-  return VALID_TOTAL_ROUNDS.has(`${rule}`) ? `${rule}` : `${DEFAULT_TOTAL_ROUNDS}`;
-}
-
 function normalizeMonitoringProfileRules(monitoringProfile) {
   if (!monitoringProfile) {
     return null;
   }
 
+  const {
+    analysisInterval,
+    entryInterval,
+    pendingInterval,
+    positionInterval,
+    quickProfitDelta,
+    maxLossDelta,
+    totalRounds,
+    ...restRules
+  } = monitoringProfile.rules || {};
+  void analysisInterval;
+  void entryInterval;
+  void pendingInterval;
+  void positionInterval;
+  void quickProfitDelta;
+  void maxLossDelta;
+  void totalRounds;
   return {
     ...monitoringProfile,
     rules: {
-      analysisInterval: normalizeAnalysisInterval(monitoringProfile.rules?.analysisInterval),
-      totalRounds: normalizeTotalRounds(monitoringProfile.rules?.totalRounds)
+      ...restRules,
+      ...normalizeAnalysisIntervalRules(monitoringProfile.rules),
+      ...normalizeSellStrategyRules(monitoringProfile.rules)
     }
   };
 }
 
+function getActiveIntervalRuleForState(state, monitoringProfile = null) {
+  const profile = monitoringProfile || state.monitoringProfile || state.lastMonitoringProfile || null;
+  return getActiveAnalysisIntervalRule(state, profile?.rules || {});
+}
+
+function scheduleMonitoringAlarmForState(state, monitoringProfile = null) {
+  scheduleMonitoringAlarm(getAnalysisIntervalMinutes(getActiveIntervalRuleForState(state, monitoringProfile)));
+}
+
+function getSellStrategyForState(state, monitoringProfile = null) {
+  const profile = monitoringProfile || state.monitoringProfile || state.lastMonitoringProfile || null;
+  return buildSellStrategyContext(state.virtualPosition, profile?.rules || {});
+}
+
+async function rescheduleMonitoringAlarmIfRunning(state) {
+  if (state?.status !== STATUS.RUNNING) {
+    return;
+  }
+
+  scheduleMonitoringAlarmForState(state);
+}
+
+function getMarketContextForProfile(state, monitoringProfile) {
+  const current = normalizeMarketContext(state.marketContext);
+  if (isMarketContextValidForProfile(current, monitoringProfile)) {
+    return current;
+  }
+
+  if (
+    current.symbol === `${monitoringProfile?.symbolOverride || ""}`.trim().toUpperCase()
+    && current.tradingDay === getUsTradingDay()
+  ) {
+    return current;
+  }
+
+  return createMarketContextForProfile(monitoringProfile);
+}
+
+async function setAwaitingMarketContext(monitoringProfile, currentState, reason = null, overrides = {}) {
+  await clearMonitoringAlarm();
+
+  const marketContext = getMarketContextForProfile(currentState, monitoringProfile);
+  const state = await patchState({
+    status: STATUS.AWAITING_CONTEXT,
+    isRoundInFlight: false,
+    roundStartedAt: null,
+    monitoringProfile,
+    lastMonitoringProfile: monitoringProfile,
+    marketContext,
+    premarketDipPlan: null,
+    lastSignalReview: null,
+    stopReason: reason,
+    lastError: null,
+    ...overrides
+  });
+
+  await enableSidePanelForWindow(monitoringProfile.boundWindowId);
+  return state;
+}
+
+async function beginMonitoringRounds(monitoringProfile, currentState, overrides = {}) {
+  const state = await patchState({
+    status: STATUS.RUNNING,
+    isRoundInFlight: false,
+    roundStartedAt: null,
+    monitoringProfile,
+    lastMonitoringProfile: monitoringProfile,
+    marketContext: normalizeMarketContext(currentState.marketContext),
+    premarketDipPlan: currentState.pendingLimitOrder?.source === "premarket_dip_plan"
+      ? currentState.premarketDipPlan
+      : null,
+    lastSignalReview: null,
+    stopReason: null,
+    lastError: null,
+    ...overrides
+  });
+
+  await enableSidePanelForWindow(monitoringProfile.boundWindowId);
+
+  scheduleMonitoringAlarmForState(state, monitoringProfile);
+  void runMonitoringRound();
+
+  return state;
+}
+
 function getAnalysisIntervalLabel(language, rule) {
   return t(language, `analysisInterval_${normalizeAnalysisInterval(rule)}`);
-}
-
-function getTotalRoundsLabel(language, rule) {
-  return t(language, `totalRounds_${normalizeTotalRounds(rule)}`);
-}
-
-function getCompletedRoundsReason(language, totalRounds) {
-  return t(language, "completedRounds", { rounds: getTotalRoundsLabel(language, totalRounds) });
 }
 
 async function buildMonitoringProfile(payload) {
@@ -428,56 +607,194 @@ async function buildMonitoringProfile(payload) {
     throw new Error(t(language, "symbolRequired"));
   }
 
-  const analysisInterval = `${payload.analysisInterval || "5m"}`.trim();
+  const entryInterval = `${payload.entryInterval || payload.analysisInterval || "5m"}`.trim();
+  const pendingInterval = `${payload.pendingInterval || "2m"}`.trim();
+  const positionInterval = `${payload.positionInterval || "1m"}`.trim();
+  const quickProfitDeltaRaw = `${payload.quickProfitDelta || "0.20"}`.trim();
+  const maxLossDeltaRaw = `${payload.maxLossDelta || "0.30"}`.trim();
 
-  if (!VALID_ANALYSIS_INTERVALS.has(analysisInterval)) {
+  if (
+    !isValidAnalysisInterval(entryInterval)
+    || !isValidAnalysisInterval(pendingInterval)
+    || !isValidAnalysisInterval(positionInterval)
+  ) {
     throw new Error(t(language, "chooseValidAnalysisInterval"));
   }
 
-  const totalRounds = `${payload.totalRounds || `${DEFAULT_TOTAL_ROUNDS}`}`.trim();
-
-  if (!VALID_TOTAL_ROUNDS.has(totalRounds)) {
-    throw new Error(t(language, "chooseValidTotalRounds"));
+  if (!isValidSellDelta(quickProfitDeltaRaw) || !isValidSellDelta(maxLossDeltaRaw)) {
+    throw new Error(t(language, "chooseValidSellStrategy"));
   }
+
+  const quickProfitDelta = normalizeSellDelta(quickProfitDeltaRaw, "0.20");
+  const maxLossDelta = normalizeSellDelta(maxLossDeltaRaw, "0.30");
 
   return {
     symbolOverride,
     rules: {
-      analysisInterval,
-      totalRounds
+      entryInterval,
+      pendingInterval,
+      positionInterval,
+      quickProfitDelta,
+      maxLossDelta
     }
   };
 }
 
-async function stopMonitoring(reason = null) {
-  await clearMonitoringAlarm();
+function getCurrentAnalysisMode(state) {
+  if (!state.virtualPosition) {
+    return "entry";
+  }
 
+  return isNearUsMarketClose() ? "force_exit" : "exit";
+}
+
+async function reviewSignal(payload) {
+  const language = await getUiLanguage();
   const currentState = await getState();
-  const tabIds = getSessionTabIds(currentState);
+  const monitoringProfile = currentState.monitoringProfile;
+  const lastResult = currentState.lastResult;
+  const originalAnalysis = lastResult?.analysis;
+  const userChallenge = `${payload?.userChallenge || ""}`.trim().slice(0, 1000);
 
-  const nextState = await patchState({
-    status: STATUS.IDLE,
-    isRoundInFlight: false,
-    monitoringProfile: null,
-    lastMonitoringProfile: currentState.monitoringProfile || currentState.lastMonitoringProfile,
-    stopReason: reason,
+  if (currentState.status !== STATUS.RUNNING || !monitoringProfile || !originalAnalysis) {
+    throw new Error(t(language, "reviewUnavailable"));
+  }
+  if (!userChallenge) {
+    throw new Error(t(language, "reviewInputRequired"));
+  }
+
+  if (monitoringProfile.boundTabId) {
+    const activeTab = await getActiveTab(monitoringProfile.boundWindowId || null);
+    if (activeTab.id !== monitoringProfile.boundTabId) {
+      throw new Error(t(language, "resumeTabMismatch"));
+    }
+  }
+
+  const capture = await captureActiveTab(monitoringProfile.boundWindowId || null);
+  const validation = validateChartTab({
+    ...capture,
+    language
+  });
+
+  if (!validation.isTradingView) {
+    throw new Error(t(language, "validationFailedChart"));
+  }
+
+  const mode = getCurrentAnalysisMode(currentState);
+  const review = await analyzeSignalReview({
+    ...capture,
+    symbolHint: monitoringProfile.symbolOverride || originalAnalysis.symbol || null,
+    mode,
+    virtualPosition: currentState.virtualPosition || null,
+    sellStrategy: getSellStrategyForState(currentState, monitoringProfile),
+    pendingLimitOrder: currentState.pendingLimitOrder || null,
+    marketContext: currentState.marketContext?.summary || null,
+    originalAnalysis,
+    userChallenge
+  });
+
+  const lastSignalReview = {
+    id: createId(),
+    sourceResultId: lastResult.id || null,
+    sourceRound: lastResult.round ?? currentState.roundCount ?? 0,
+    mode,
+    createdAt: new Date().toISOString(),
+    userChallenge,
+    originalAnalysis,
+    review
+  };
+
+  const state = await patchState({
+    lastSignalReview,
+    lastError: null
+  });
+  return { ok: true, state, review: lastSignalReview };
+}
+
+async function acceptReviewedSignal() {
+  const language = await getUiLanguage();
+  const currentState = await getState();
+  const reviewRecord = currentState.lastSignalReview;
+  const review = reviewRecord?.review;
+
+  if (currentState.status !== STATUS.RUNNING || !reviewRecord || !review) {
+    throw new Error(t(language, "reviewUnavailable"));
+  }
+
+  const action = review.action;
+  if (action !== "BUY_LIMIT" && action !== "SELL_LIMIT") {
+    const state = await patchState({
+      lastSignalReview: {
+        ...reviewRecord,
+        acceptedAt: new Date().toISOString()
+      },
+      lastError: null
+    });
+    return { ok: true, state };
+  }
+
+  if (action === "BUY_LIMIT" && currentState.virtualPosition) {
+    throw new Error(t(language, "limitBuyWhileHolding"));
+  }
+  if (action === "SELL_LIMIT" && !currentState.virtualPosition) {
+    throw new Error(t(language, "limitSellWithoutPosition"));
+  }
+  if (currentState.pendingLimitOrder) {
+    throw new Error(t(language, "limitAlreadyPending"));
+  }
+
+  const limitPriceRaw = `${review.orderPrice ?? ""}`.trim();
+  const limitPrice = Number(limitPriceRaw);
+  if (!Number.isFinite(limitPrice) || limitPrice <= 0) {
+    throw new Error(t(language, "limitPriceInvalid"));
+  }
+
+  const pendingLimitOrder = {
+    action,
+    limitPrice: limitPriceRaw,
+    stopLossPrice: review.stopLossPrice || null,
+    targetPrice: review.targetPrice || null,
+    reasoning: review.explanation || null,
+    confidence: review.confidence || null,
+    symbol: currentState.monitoringProfile?.symbolOverride || reviewRecord.originalAnalysis?.symbol || null,
+    placedAt: new Date().toISOString(),
+    sourceRound: reviewRecord.sourceRound ?? currentState.roundCount ?? 0,
+    source: "review",
+    sourceReviewId: reviewRecord.id,
+    sourceResultId: reviewRecord.sourceResultId || null
+  };
+
+  const state = await patchState({
+    pendingLimitOrder,
+    lastSignalReview: {
+      ...reviewRecord,
+      acceptedAt: new Date().toISOString()
+    },
     lastError: null
   });
 
-  for (const tabId of tabIds) {
-    await chrome.sidePanel.setOptions({
-      tabId,
-      enabled: false
-    }).catch(() => {});
-  }
+  await rescheduleMonitoringAlarmIfRunning(state);
 
-  return nextState;
+  return { ok: true, state };
+}
+
+async function dismissSignalReview() {
+  const state = await patchState({
+    lastSignalReview: null,
+    lastError: null
+  });
+
+  return { ok: true, state };
 }
 
 async function markBought(payload) {
   const language = await getUiLanguage();
   const currentState = await getState();
-  if (currentState.status !== STATUS.RUNNING) {
+  const pending = currentState.pendingLimitOrder;
+  const isPremarketAwaitingFill = currentState.status === STATUS.AWAITING_CONTEXT
+    && pending?.source === "premarket_dip_plan"
+    && pending?.action === "BUY_LIMIT";
+  if (currentState.status !== STATUS.RUNNING && !isPremarketAwaitingFill) {
     throw new Error(t(language, "markBoughtNotRunning"));
   }
   if (currentState.virtualPosition) {
@@ -492,7 +809,6 @@ async function markBought(payload) {
 
   // Prefer the pending limit order's captured snapshot over lastResult — lastResult may have
   // moved on to a different signal by the time the limit fills several rounds later.
-  const pending = currentState.pendingLimitOrder;
   const suggestion = currentState.lastResult?.analysis || {};
   const source = pending || suggestion;
   const now = new Date();
@@ -502,9 +818,11 @@ async function markBought(payload) {
     tradingDay: getUsTradingDay(now),
     stopLossPrice: source.stopLossPrice || suggestion.stopLossPrice || null,
     targetPrice: source.targetPrice || suggestion.targetPrice || null,
-    reason: source.reasoning || source.reason || suggestion.reasoning || suggestion.triggerCondition || null,
+    reason: source.reasoning || source.reason || suggestion.reasoning || null,
     symbol: currentState.monitoringProfile?.symbolOverride || source.symbol || suggestion.symbol || null,
     sourceRound: pending?.sourceRound ?? currentState.roundCount ?? 0,
+    source: pending?.source || "signal",
+    sourceReviewId: pending?.sourceReviewId || null,
     entryAction: pending?.action || suggestion.action || null,
     entryConfidence: pending?.confidence || suggestion.confidence || null
   };
@@ -512,8 +830,10 @@ async function markBought(payload) {
   const state = await patchState({
     virtualPosition,
     pendingLimitOrder: null,
+    lastSignalReview: null,
     lastError: null
   });
+  await rescheduleMonitoringAlarmIfRunning(state);
   return { ok: true, state };
 }
 
@@ -540,13 +860,7 @@ async function markLimitPlaced(payload) {
     throw new Error(t(language, "limitAlreadyPending"));
   }
 
-  // Action-specific fallback when the user submits without an explicit price:
-  // BUY_LIMIT  → entryPrice (where to buy below current)
-  // SELL_LIMIT → targetPrice (where to take profit above current; in EXIT mode
-  //              the prompt convention is entryPrice echoes the original buy
-  //              price, while targetPrice carries the actionable sell level).
-  const fallbackPrice = action === "SELL_LIMIT" ? suggestion.targetPrice : suggestion.entryPrice;
-  const limitPriceRaw = `${payload?.limitPrice ?? fallbackPrice ?? ""}`.trim();
+  const limitPriceRaw = `${payload?.limitPrice ?? suggestion.orderPrice ?? ""}`.trim();
   const limitPrice = Number(limitPriceRaw);
   if (!Number.isFinite(limitPrice) || limitPrice <= 0) {
     throw new Error(t(language, "limitPriceInvalid"));
@@ -557,42 +871,16 @@ async function markLimitPlaced(payload) {
     limitPrice: limitPriceRaw,
     stopLossPrice: suggestion.stopLossPrice || null,
     targetPrice: suggestion.targetPrice || null,
-    reasoning: suggestion.reasoning || suggestion.triggerCondition || null,
+    reasoning: suggestion.reasoning || null,
     confidence: suggestion.confidence || null,
     symbol: currentState.monitoringProfile?.symbolOverride || suggestion.symbol || null,
     placedAt: new Date().toISOString(),
     sourceRound: currentState.roundCount || 0
   };
 
-  const state = await patchState({ pendingLimitOrder, lastError: null });
+  const state = await patchState({ pendingLimitOrder, lastSignalReview: null, lastError: null });
+  await rescheduleMonitoringAlarmIfRunning(state);
   return { ok: true, state };
-}
-
-// Pre-session entry point: capture the active tab, ask the LLM for a higher-timeframe
-// structural read, and stash the result in `state.longTermContextDraft`. The draft is
-// copied into the new monitoringProfile on Start, then cleared. Live-session regeneration
-// is intentionally NOT supported — once a session starts, the long-term anchor is frozen
-// for that session. To refresh, exit and start a new session.
-async function generateLongTermContextHandler(payload) {
-  await ensureApiKeyConfigured();
-
-  const timeframe = LONG_TERM_TIMEFRAMES.includes(payload?.timeframe) ? payload.timeframe : "daily";
-  const currentState = await getState();
-  const capture = await captureActiveTab();
-
-  const longTermContext = await generateLongTermContext({
-    ...capture,
-    timeframe,
-    symbolHint: currentState.monitoringProfile?.symbolOverride
-      || currentState.lastMonitoringProfile?.symbolOverride
-      || null
-  });
-
-  const state = await patchState({
-    longTermContextDraft: longTermContext,
-    lastError: null
-  });
-  return { ok: true, state, longTermContext };
 }
 
 async function markLimitCancelled() {
@@ -602,6 +890,7 @@ async function markLimitCancelled() {
     return { ok: true, state: currentState };
   }
   const state = await patchState({ pendingLimitOrder: null });
+  await rescheduleMonitoringAlarmIfRunning(state);
   return { ok: true, state };
 }
 
@@ -653,6 +942,7 @@ async function markSold(payload) {
   await patchState({
     virtualPosition: null,
     pendingLimitOrder: null,
+    lastSignalReview: null,
     tradeHistory
   });
 
@@ -676,12 +966,9 @@ async function markSold(payload) {
   return { ok: true, state };
 }
 
-// Build a fresh default state that PRESERVES the user's trade journal across a reset.
-// Used anywhere we'd otherwise call saveState(createDefaultState()) — which silently
-// wiped months of trade history. tradeHistory is the only field worth preserving:
-// virtualPosition / pendingLimitOrder are live-trade state (not meaningful after a reset),
-// monitoringProfile / results are session scoped. Callers that genuinely want a clean
-// wipe (e.g. emergency reset) can still use createDefaultState() directly.
+// Build a fresh default state that preserves the user's trade journal across a reset.
+// Session-scoped tracking state is intentionally cleared; the broker account is
+// the source of truth for any real position/order.
 async function buildResetStatePreservingHistory(overrides = {}) {
   const prior = await getState();
   return {
@@ -691,24 +978,16 @@ async function buildResetStatePreservingHistory(overrides = {}) {
   };
 }
 
-async function exitMonitoring() {
+async function exitMonitoring(reason = null) {
   await clearMonitoringAlarm();
 
   const currentState = await getState();
-
-  // Defense in depth: UI greys out the button, but reject here too so a
-  // hostile message bypass / out-of-sync UI cannot silently strand a real
-  // broker position or pending order.
-  if (currentState.virtualPosition) {
-    throw new Error(t(await getUiLanguage(), "sessionEndBlockedByPosition"));
-  }
-  if (currentState.pendingLimitOrder) {
-    throw new Error(t(await getUiLanguage(), "sessionEndBlockedByPending"));
-  }
-
   const tabIds = getSessionTabIds(currentState);
 
-  await saveState(await buildResetStatePreservingHistory());
+  await saveState(await buildResetStatePreservingHistory({
+    stopReason: reason,
+    lastError: null
+  }));
 
   // Reset the GLOBAL default panel path back to sidepanel.html. While a
   // session was live, enableSidePanelForWindow set the default to the "switch
@@ -815,15 +1094,25 @@ async function runValidationPreflight() {
 async function runMonitoringRound() {
   const language = await getUiLanguage();
   await abandonStaleVirtualPositionIfNeeded();
-  const currentState = await getState();
+  const currentState = await syncBoundTabWindowIfNeeded();
   const monitoringProfile = currentState.monitoringProfile;
 
   if (!monitoringProfile) {
     throw new Error(t(language, "fillFormFirst"));
   }
 
+  if (!isMarketContextValidForProfile(currentState.marketContext, monitoringProfile)) {
+    const state = await setAwaitingMarketContext(
+      monitoringProfile,
+      currentState,
+      t(language, "marketContextRequired")
+    );
+    return { ok: false, error: t(language, "marketContextRequired"), state };
+  }
+
   if (monitoringProfile.boundTabId) {
-    const activeTab = await getActiveTab(monitoringProfile.boundWindowId || null).catch(() => null);
+    const boundTab = await getTabById(monitoringProfile.boundTabId);
+    const activeTab = await getActiveTab(boundTab?.windowId || monitoringProfile.boundWindowId || null).catch(() => null);
 
     if (!activeTab || activeTab.id !== monitoringProfile.boundTabId) {
       const state = await pauseMonitoring(t(language, "pauseLeftTab"), currentState);
@@ -831,17 +1120,23 @@ async function runMonitoringRound() {
     }
   }
 
-  const settings = await getSettings();
-  if (settings.marketHoursOnly && !isWithinUsMarketHours()) {
-    await patchState({
-      ...currentState,
-      status: STATUS.RUNNING,
-      isRoundInFlight: false,
-      stopReason: t(language, "marketClosedSkip"),
-      lastError: null
-    });
+  const marketSessionPhase = getUsMarketSessionPhase();
+  if (marketSessionPhase !== "open") {
+    if (marketSessionPhase === "before_open") {
+      const state = await patchState({
+        ...currentState,
+        status: STATUS.RUNNING,
+        isRoundInFlight: false,
+        stopReason: t(language, "marketBeforeOpenSkip"),
+        lastError: null
+      });
+      scheduleMonitoringAlarmForState(state, monitoringProfile);
 
-    return { ok: true, skipped: "market-closed" };
+      return { ok: true, state, skipped: "before-open" };
+    }
+
+    const state = await pauseMonitoring(t(language, "marketClosedPause"), currentState);
+    return { ok: true, state, skipped: "market-closed" };
   }
 
   await patchState({
@@ -887,20 +1182,6 @@ async function runMonitoringRound() {
       ? (nearClose ? "force_exit" : "exit")
       : "entry";
 
-    const recentLessons = mode === "entry"
-      ? (currentState.tradeHistory || [])
-          .filter((t) => t && typeof t.lesson === "string" && t.lesson.trim())
-          .slice(0, 10)
-          .map((t) => ({
-            symbol: t.symbol,
-            pnlPercent: t.pnlPercent,
-            exitTime: t.exitTime,
-            entryAction: t.entryAction || null,
-            entryConfidence: t.entryConfidence || null,
-            lesson: t.lesson
-          }))
-      : null;
-
     const lastSignal = currentState.lastResult?.analysis || null;
     const pendingLimitOrder = currentState.pendingLimitOrder || null;
 
@@ -909,10 +1190,10 @@ async function runMonitoringRound() {
       symbolHint: monitoringProfile.symbolOverride || null,
       mode,
       virtualPosition,
-      recentLessons,
+      sellStrategy: getSellStrategyForState(currentState, monitoringProfile),
       lastSignal,
       pendingLimitOrder,
-      longTermContext: monitoringProfile.longTermContext || null
+      marketContext: currentState.marketContext?.summary || null
     });
 
     const round = currentState.roundCount + 1;
@@ -936,33 +1217,23 @@ async function runMonitoringRound() {
       roundCount: round,
       lastValidation: validationRecord,
       lastResult: result,
+      lastSignalReview: null,
       results: [result, ...currentState.results].slice(0, MAX_RESULTS),
       stopReason: null,
       lastError: null
     });
 
-    const previousAction = currentState.lastResult?.analysis?.action ?? null;
-    const actionChanged = previousAction !== analysis.action;
+    const notificationReason = getDiscordNotificationReason(
+      currentState.lastResult?.analysis || null,
+      analysis
+    );
 
-    if (actionChanged) {
-      await notifyDiscordAnalysisResult(result, state, language);
+    if (notificationReason) {
+      await notifyDiscordAnalysisResult(result, state, language, notificationReason);
     }
     await playResultSound();
 
-    const totalRounds = getTotalRoundsValue(monitoringProfile.rules?.totalRounds);
-
-    if (round >= totalRounds) {
-      state = await pauseMonitoring(
-        getCompletedRoundsReason(language, monitoringProfile.rules?.totalRounds),
-        state
-      );
-
-      return {
-        ok: true,
-        state,
-        result
-      };
-    }
+    scheduleMonitoringAlarmForState(state, monitoringProfile);
 
     return {
       ok: true,
@@ -986,8 +1257,283 @@ async function runMonitoringRound() {
   }
 }
 
+function getMarketContextSetupProfile(state, language) {
+  const monitoringProfile = normalizeMonitoringProfileRules(state.monitoringProfile || state.lastMonitoringProfile);
+  if (!monitoringProfile) {
+    throw new Error(t(language, "fillFormFirst"));
+  }
+  return monitoringProfile;
+}
+
+async function scanMarketContext(payload) {
+  await ensureApiKeyConfigured();
+
+  const language = await getUiLanguage();
+  const currentState = await getState();
+  const monitoringProfile = getMarketContextSetupProfile(currentState, language);
+  const timeframe = payload?.timeframe === "1h" ? "1h" : "daily";
+
+  if (timeframe === "1h") {
+    const currentContext = getMarketContextForProfile(currentState, monitoringProfile);
+    if (!currentContext.dailyScan) {
+      throw new Error(t(language, "marketContextDailyRequired"));
+    }
+  }
+
+  await ensureMonitoringTabActive(monitoringProfile, language);
+
+  try {
+    const capture = await captureActiveTab(monitoringProfile.boundWindowId || null);
+    const validation = validateChartTab({
+      ...capture,
+      language
+    });
+    const validationRecord = buildValidationRecord(validation, capture);
+
+    if (!validation.isTradingView) {
+      const state = await patchState({
+        status: STATUS.AWAITING_CONTEXT,
+        isRoundInFlight: false,
+        monitoringProfile,
+        lastMonitoringProfile: monitoringProfile,
+        lastValidation: validationRecord,
+        lastError: t(language, "validationFailedChart")
+      });
+      return { ok: false, error: t(language, "validationFailedChart"), state };
+    }
+
+    const scan = await analyzeMarketContextScan({
+      ...capture,
+      timeframe,
+      symbolHint: monitoringProfile.symbolOverride || null
+    });
+    const scanRecord = {
+      ...scan,
+      capturedAt: new Date().toISOString(),
+      pageTitle: capture.pageTitle,
+      pageUrl: capture.pageUrl
+    };
+    const baseContext = getMarketContextForProfile(currentState, monitoringProfile);
+    const symbol = monitoringProfile.symbolOverride || baseContext.symbol || null;
+    const tradingDay = baseContext.tradingDay || getUsTradingDay();
+
+    const marketContext = timeframe === "daily"
+      ? {
+          ...baseContext,
+          status: MARKET_CONTEXT_STATUS.DAILY_SCANNED,
+          symbol,
+          tradingDay,
+          dailyScan: scanRecord,
+          hourlyScan: null,
+          summary: null,
+          lastError: null,
+          updatedAt: new Date().toISOString()
+        }
+      : mergeMarketContextScans({
+          dailyScan: baseContext.dailyScan,
+          hourlyScan: scanRecord,
+          symbol,
+          tradingDay
+        });
+
+    const state = await patchState({
+      status: STATUS.AWAITING_CONTEXT,
+      isRoundInFlight: false,
+      roundStartedAt: null,
+      monitoringProfile,
+      lastMonitoringProfile: monitoringProfile,
+      lastValidation: validationRecord,
+      marketContext,
+      premarketDipPlan: null,
+      stopReason: null,
+      lastError: null
+    });
+
+    return { ok: true, state, marketContext };
+  } catch (error) {
+    const marketContext = {
+      ...getMarketContextForProfile(currentState, monitoringProfile),
+      lastError: error.message,
+      updatedAt: new Date().toISOString()
+    };
+    const state = await patchState({
+      status: STATUS.AWAITING_CONTEXT,
+      isRoundInFlight: false,
+      monitoringProfile,
+      lastMonitoringProfile: monitoringProfile,
+      marketContext,
+      lastError: error.message
+    });
+    return { ok: false, error: error.message, state };
+  }
+}
+
+function buildInitialVirtualPositionFromPayload(payload, monitoringProfile, language) {
+  if (payload?.initialPositionMode !== "holding") {
+    return null;
+  }
+
+  const entryPriceRaw = `${payload?.initialEntryPrice || ""}`.trim();
+  const entryPrice = Number(entryPriceRaw);
+  if (!Number.isFinite(entryPrice) || entryPrice <= 0) {
+    throw new Error(t(language, "initialEntryPriceInvalid"));
+  }
+
+  const now = new Date();
+  return {
+    entryPrice: entryPriceRaw,
+    entryTime: now.toISOString(),
+    tradingDay: getUsTradingDay(now),
+    stopLossPrice: null,
+    targetPrice: null,
+    reason: "User declared an existing broker position before monitoring started.",
+    symbol: monitoringProfile.symbolOverride || null,
+    sourceRound: 0,
+    source: "manual_existing_position",
+    sourceReviewId: null,
+    entryAction: "manual_existing_position",
+    entryConfidence: null
+  };
+}
+
+async function confirmMarketContextAndStart(payload = {}) {
+  await ensureApiKeyConfigured();
+
+  const language = await getUiLanguage();
+  const currentState = await getState();
+  const monitoringProfile = getMarketContextSetupProfile(currentState, language);
+
+  await ensureMonitoringTabActive(monitoringProfile, language);
+
+  if (!isMarketContextValidForProfile(currentState.marketContext, monitoringProfile)) {
+    const state = await setAwaitingMarketContext(
+      monitoringProfile,
+      currentState,
+      t(language, "marketContextRequired")
+    );
+    return { ok: false, error: t(language, "marketContextNotComplete"), state };
+  }
+
+  const initialVirtualPosition = buildInitialVirtualPositionFromPayload(payload, monitoringProfile, language);
+  const state = await beginMonitoringRounds(
+    monitoringProfile,
+    currentState,
+    initialVirtualPosition
+      ? {
+          virtualPosition: initialVirtualPosition,
+          pendingLimitOrder: null,
+          premarketDipPlan: null
+        }
+      : {}
+  );
+  return { ok: true, state };
+}
+
+async function createPremarketDipPlan(payload) {
+  await ensureApiKeyConfigured();
+
+  const language = await getUiLanguage();
+  const currentState = await getState();
+  const monitoringProfile = getMarketContextSetupProfile(currentState, language);
+
+  if (currentState.status !== STATUS.AWAITING_CONTEXT) {
+    throw new Error(t(language, "premarketDipSetupOnly"));
+  }
+  if (currentState.virtualPosition) {
+    throw new Error(t(language, "limitBuyWhileHolding"));
+  }
+  if (currentState.pendingLimitOrder) {
+    throw new Error(t(language, "limitAlreadyPending"));
+  }
+  if (!isWithinPremarketDipWindow()) {
+    throw new Error(t(language, "premarketDipUnavailable"));
+  }
+  if (!isMarketContextValidForProfile(currentState.marketContext, monitoringProfile)) {
+    throw new Error(t(language, "marketContextNotComplete"));
+  }
+
+  let referenceClose;
+  try {
+    referenceClose = normalizePositiveDecimal(payload?.referenceClose, "referenceClose");
+  } catch {
+    throw new Error(t(language, "premarketReferenceCloseInvalid"));
+  }
+
+  const plan = await generatePremarketDipPlan({
+    symbol: monitoringProfile.symbolOverride,
+    referenceClose,
+    marketContext: currentState.marketContext
+  });
+  const now = new Date();
+  const premarketDipPlan = {
+    ...plan,
+    id: createId(),
+    status: "draft",
+    source: "premarket_dip_plan",
+    symbol: monitoringProfile.symbolOverride,
+    referenceClose,
+    tradingDay: getUsTradingDay(now),
+    createdAt: now.toISOString()
+  };
+
+  const state = await patchState({
+    premarketDipPlan,
+    lastError: null
+  });
+
+  return { ok: true, state, plan: premarketDipPlan };
+}
+
+async function adoptPremarketDipPlan() {
+  const language = await getUiLanguage();
+  const currentState = await getState();
+  const monitoringProfile = getMarketContextSetupProfile(currentState, language);
+  const plan = currentState.premarketDipPlan;
+
+  if (currentState.status !== STATUS.AWAITING_CONTEXT) {
+    throw new Error(t(language, "premarketDipSetupOnly"));
+  }
+  if (!plan) {
+    throw new Error(t(language, "premarketNoPlan"));
+  }
+  if (currentState.virtualPosition) {
+    throw new Error(t(language, "limitBuyWhileHolding"));
+  }
+  if (currentState.pendingLimitOrder) {
+    throw new Error(t(language, "limitAlreadyPending"));
+  }
+  if (!isWithinPremarketDipWindow()) {
+    throw new Error(t(language, "premarketDipUnavailable"));
+  }
+  if (!isMarketContextValidForProfile(currentState.marketContext, monitoringProfile)) {
+    throw new Error(t(language, "marketContextNotComplete"));
+  }
+
+  const now = new Date();
+  const pendingLimitOrder = buildPendingLimitOrderFromPremarketPlan(plan, {
+    now,
+    sourceRound: currentState.roundCount || 0,
+    sourcePlanId: plan.id || null,
+    symbol: monitoringProfile.symbolOverride
+  });
+
+  const state = await patchState({
+    pendingLimitOrder,
+    premarketDipPlan: {
+      ...plan,
+      status: "accepted",
+      acceptedAt: now.toISOString()
+    },
+    lastSignalReview: null,
+    lastError: null
+  });
+
+  return { ok: true, state, pendingLimitOrder };
+}
+
 async function startMonitoring(payload) {
   await ensureApiKeyConfigured();
+  await clearMonitoringAlarm();
 
   const activeTab = await getActiveTab();
   const baseProfile = normalizeMonitoringProfileRules(
@@ -996,35 +1542,33 @@ async function startMonitoring(payload) {
       activeTab
     )
   );
+  const currentState = await getState();
+  const marketContext = createMarketContextForProfile(baseProfile);
 
-  // Pull the optional pre-session long-term draft into the live profile, then clear it
-  // so a stale draft from a previous attempt can never leak into a future session.
-  const priorState = await getState();
-  const monitoringProfile = priorState.longTermContextDraft
-    ? { ...baseProfile, longTermContext: priorState.longTermContextDraft }
-    : baseProfile;
-
-  await patchState({
-    status: STATUS.RUNNING,
+  const state = await patchState({
+    status: STATUS.AWAITING_CONTEXT,
     isRoundInFlight: false,
-    monitoringProfile,
-    lastMonitoringProfile: monitoringProfile,
-    longTermContextDraft: null,
+    roundStartedAt: null,
+    monitoringProfile: baseProfile,
+    lastMonitoringProfile: baseProfile,
+    roundCount: 0,
+    lastResult: null,
+    lastSignalReview: null,
+    marketContext,
+    results: [],
+    virtualPosition: null,
+    pendingLimitOrder: null,
+    premarketDipPlan: null,
     stopReason: null,
-    lastError: null
+    lastError: null,
+    tradeHistory: currentState.tradeHistory || []
   });
 
-  await enableSidePanelForWindow(monitoringProfile.boundWindowId);
-
-  scheduleMonitoringAlarm(getAnalysisIntervalMinutes(monitoringProfile.rules?.analysisInterval));
-
-  // Kick off the first round without blocking the message response.
-  // runMonitoringRound is self-contained (catches errors → pauseMonitoring).
-  void runMonitoringRound();
+  await enableSidePanelForWindow(baseProfile.boundWindowId);
 
   return {
     ok: true,
-    state: await getState()
+    state
   };
 }
 
@@ -1050,76 +1594,127 @@ async function continueMonitoring() {
   });
 
   await ensureMonitoringTabActive(savedMonitoringProfile, language);
-  const monitoringProfile = normalizeMonitoringProfileRules(savedMonitoringProfile);
+  const syncedState = await getState();
+  const monitoringProfile = normalizeMonitoringProfileRules(
+    syncedState.monitoringProfile || syncedState.lastMonitoringProfile || savedMonitoringProfile
+  );
 
-  await patchState({
-    status: STATUS.RUNNING,
-    isRoundInFlight: false,
-    monitoringProfile,
-    lastMonitoringProfile: monitoringProfile,
-    stopReason: null,
-    lastError: null
-  });
-
-  await enableSidePanelForWindow(monitoringProfile.boundWindowId);
-
-  scheduleMonitoringAlarm(getAnalysisIntervalMinutes(monitoringProfile.rules?.analysisInterval));
-
-  void runMonitoringRound();
+  const state = isMarketContextValidForProfile(syncedState.marketContext, monitoringProfile)
+    ? await beginMonitoringRounds(monitoringProfile, syncedState)
+    : await setAwaitingMarketContext(
+        monitoringProfile,
+        syncedState,
+        t(language, "marketContextRequired")
+      );
 
   return {
     ok: true,
-    state: await getState()
+    state
   };
 }
 
-async function restartMonitoring() {
-  await ensureApiKeyConfigured();
-  await clearMonitoringAlarm();
+function updateProfileAnalysisIntervals(profile, intervalRules) {
+  if (!profile) {
+    return null;
+  }
 
-  const currentState = await getState();
+  const { analysisInterval, entryInterval, pendingInterval, positionInterval, totalRounds, ...restRules } = profile.rules || {};
+  void analysisInterval;
+  void entryInterval;
+  void pendingInterval;
+  void positionInterval;
+  void totalRounds;
+  return {
+    ...profile,
+    rules: {
+      ...restRules,
+      ...intervalRules
+    }
+  };
+}
+
+async function updateAnalysisIntervals(payload) {
   const language = await getUiLanguage();
+  const currentState = await getState();
+  const profile = currentState.monitoringProfile || currentState.lastMonitoringProfile;
 
-  // Same defense as exitMonitoring: restart wipes virtualPosition /
-  // pendingLimitOrder, leaving real broker state untracked. UI already
-  // disables the button, but block at the handler too.
-  if (currentState.virtualPosition) {
-    throw new Error(t(language, "sessionEndBlockedByPosition"));
-  }
-  if (currentState.pendingLimitOrder) {
-    throw new Error(t(language, "sessionEndBlockedByPending"));
+  if (!profile) {
+    throw new Error(t(language, "noPreviousSession"));
   }
 
-  const { monitoringProfile: savedMonitoringProfile } = getResumeSession({
-    ...currentState,
-    __languageForError: language
+  const entryInterval = `${payload?.entryInterval || ""}`.trim();
+  const pendingInterval = `${payload?.pendingInterval || ""}`.trim();
+  const positionInterval = `${payload?.positionInterval || ""}`.trim();
+
+  if (
+    !isValidAnalysisInterval(entryInterval)
+    || !isValidAnalysisInterval(pendingInterval)
+    || !isValidAnalysisInterval(positionInterval)
+  ) {
+    throw new Error(t(language, "chooseValidAnalysisInterval"));
+  }
+
+  const intervalRules = { entryInterval, pendingInterval, positionInterval };
+  const state = await patchState({
+    monitoringProfile: updateProfileAnalysisIntervals(currentState.monitoringProfile, intervalRules),
+    lastMonitoringProfile: updateProfileAnalysisIntervals(currentState.lastMonitoringProfile || profile, intervalRules),
+    lastError: null
   });
 
-  await ensureMonitoringTabActive(savedMonitoringProfile, language);
-  const monitoringProfile = normalizeMonitoringProfileRules(savedMonitoringProfile);
+  await rescheduleMonitoringAlarmIfRunning(state);
 
-  await saveState(await buildResetStatePreservingHistory({
-    status: STATUS.RUNNING,
-    isRoundInFlight: false,
-    monitoringProfile,
-    lastMonitoringProfile: monitoringProfile
-  }));
+  return { ok: true, state };
+}
 
-  await enableSidePanelForWindow(monitoringProfile.boundWindowId);
+function updateProfileSellStrategy(profile, sellRules) {
+  if (!profile) {
+    return null;
+  }
 
-  scheduleMonitoringAlarm(getAnalysisIntervalMinutes(monitoringProfile.rules?.analysisInterval));
-
-  void runMonitoringRound();
-
+  const { quickProfitDelta, maxLossDelta, ...restRules } = profile.rules || {};
+  void quickProfitDelta;
+  void maxLossDelta;
   return {
-    ok: true,
-    state: await getState()
+    ...profile,
+    rules: {
+      ...restRules,
+      ...sellRules
+    }
   };
+}
+
+async function updateSellStrategy(payload) {
+  const language = await getUiLanguage();
+  const currentState = await getState();
+  const profile = currentState.monitoringProfile || currentState.lastMonitoringProfile;
+
+  if (!profile) {
+    throw new Error(t(language, "noPreviousSession"));
+  }
+
+  const quickProfitDeltaRaw = `${payload?.quickProfitDelta || ""}`.trim();
+  const maxLossDeltaRaw = `${payload?.maxLossDelta || ""}`.trim();
+
+  if (!isValidSellDelta(quickProfitDeltaRaw) || !isValidSellDelta(maxLossDeltaRaw)) {
+    throw new Error(t(language, "chooseValidSellStrategy"));
+  }
+
+  const sellRules = {
+    quickProfitDelta: normalizeSellDelta(quickProfitDeltaRaw, "0.20"),
+    maxLossDelta: normalizeSellDelta(maxLossDeltaRaw, "0.30")
+  };
+  const state = await patchState({
+    monitoringProfile: updateProfileSellStrategy(currentState.monitoringProfile, sellRules),
+    lastMonitoringProfile: updateProfileSellStrategy(currentState.lastMonitoringProfile || profile, sellRules),
+    lastError: null
+  });
+
+  return { ok: true, state };
 }
 
 // onInstalled fires on first install, version update, AND every chrome://extensions reload.
 // Wiping the entire state on every reload used to nuke the trade journal — unacceptable now
-// that it feeds RECENT_LESSONS and the stats card. Preserve tradeHistory only; other fields
+// that it feeds human review and the stats card. Preserve tradeHistory only; other fields
 // (virtualPosition, pendingLimitOrder, monitoringProfile, results, …) reset to defaults because
 // their shape may have changed across versions and a manual reload is an explicit intervention.
 chrome.runtime.onInstalled.addListener(async () => {
@@ -1162,39 +1757,22 @@ async function abandonStaleVirtualPositionIfNeeded() {
   await pauseMonitoring(t(language, "sessionAbandonedOvernight"));
 }
 
-async function recoverMonitoringAfterStartup() {
-  const state = await getState();
-
-  if (state.status !== STATUS.RUNNING || !state.monitoringProfile) {
-    return;
-  }
-
-  const boundTab = await getTabById(state.monitoringProfile.boundTabId);
-
-  if (!boundTab) {
-    await stopMonitoring(t(await getUiLanguage(), "closedTab"));
-    return;
-  }
-
-  // Stale in-flight flag from a service-worker eviction during the last round.
-  if (state.isRoundInFlight) {
-    await patchState({ isRoundInFlight: false });
-  }
-
-  await clearMonitoringAlarm();
-  scheduleMonitoringAlarm(getAnalysisIntervalMinutes(state.monitoringProfile.rules?.analysisInterval));
-  await enableSidePanelForWindow(state.monitoringProfile.boundWindowId);
-}
-
 chrome.runtime.onStartup.addListener(async () => {
   const state = await getState();
 
   if (!state.updatedAt) {
     await saveState(createDefaultState());
+  } else if (
+    state.status !== STATUS.IDLE
+    || state.virtualPosition
+    || state.pendingLimitOrder
+    || state.monitoringProfile
+    || state.lastMonitoringProfile
+  ) {
+    await clearMonitoringAlarm();
+    await saveState(await buildResetStatePreservingHistory());
+    await resetSidePanelDefaultsToFullUi();
   }
-
-  await abandonStaleVirtualPositionIfNeeded();
-  await recoverMonitoringAfterStartup();
 
   const [activeTab] = await chrome.tabs.query({
     active: true,
@@ -1257,6 +1835,41 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   await setSidePanelAvailabilityForTab(tabId, tab);
 });
 
+chrome.tabs.onAttached.addListener(async (tabId, attachInfo) => {
+  const state = await getState();
+  const monitoringProfile = state.monitoringProfile || null;
+  const lastMonitoringProfile = state.lastMonitoringProfile || null;
+  const boundTabId = monitoringProfile?.boundTabId || lastMonitoringProfile?.boundTabId || null;
+
+  if (!boundTabId || tabId !== boundTabId) {
+    return;
+  }
+
+  const tab = await getTabById(tabId);
+  const fallbackTab = tab || {
+    id: tabId,
+    windowId: attachInfo?.newWindowId ?? monitoringProfile?.boundWindowId ?? lastMonitoringProfile?.boundWindowId ?? null
+  };
+  const nextMonitoringProfile = rebindProfileWindow(monitoringProfile, fallbackTab);
+  const nextLastMonitoringProfile = rebindProfileWindow(lastMonitoringProfile, fallbackTab);
+  const nextLastValidation = state.lastValidation?.tabId === tabId
+    ? {
+        ...state.lastValidation,
+        windowId: fallbackTab.windowId,
+        pageTitle: fallbackTab.title || state.lastValidation.pageTitle || "",
+        pageUrl: fallbackTab.url || state.lastValidation.pageUrl || ""
+      }
+    : state.lastValidation;
+  const nextState = await patchState({
+    monitoringProfile: nextMonitoringProfile,
+    lastMonitoringProfile: nextLastMonitoringProfile,
+    lastValidation: nextLastValidation
+  });
+  const windowId = fallbackTab.windowId || nextState.monitoringProfile?.boundWindowId || nextState.lastMonitoringProfile?.boundWindowId;
+  await enableSidePanelForWindow(windowId);
+  await setSidePanelAvailabilityForTab(tabId, fallbackTab);
+});
+
 chrome.tabs.onRemoved.addListener(async (tabId) => {
   const state = await getState();
   const monitoringProfile = state.monitoringProfile || state.lastMonitoringProfile;
@@ -1265,8 +1878,8 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
     return;
   }
 
-  if (state.status === STATUS.RUNNING || state.status === STATUS.PAUSED) {
-    await stopMonitoring(t(await getUiLanguage(), "closedTab"));
+  if (state.status !== STATUS.IDLE || state.virtualPosition || state.pendingLimitOrder) {
+    await exitMonitoring(t(await getUiLanguage(), "closedTab"));
   }
 });
 
@@ -1284,7 +1897,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 
     if (message?.type === "check-stale-position") {
-      // Tertiary safety net for the abandon check, in addition to onStartup + runMonitoringRound.
+      // Secondary safety net for the abandon check, in addition to runMonitoringRound.
       // Covers the edge case where Chrome stays open across trading days with no new monitoring round.
       await abandonStaleVirtualPositionIfNeeded();
       sendResponse({ ok: true, state: await getState() });
@@ -1298,6 +1911,26 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     if (message?.type === "start-monitoring") {
       sendResponse(await startMonitoring(message));
+      return;
+    }
+
+    if (message?.type === "scan-market-context") {
+      sendResponse(await scanMarketContext(message));
+      return;
+    }
+
+    if (message?.type === "confirm-market-context") {
+      sendResponse(await confirmMarketContextAndStart(message));
+      return;
+    }
+
+    if (message?.type === "generate-premarket-dip-plan") {
+      sendResponse(await createPremarketDipPlan(message));
+      return;
+    }
+
+    if (message?.type === "adopt-premarket-dip-plan") {
+      sendResponse(await adoptPremarketDipPlan());
       return;
     }
 
@@ -1323,8 +1956,28 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return;
     }
 
-    if (message?.type === "restart-monitoring") {
-      sendResponse(await restartMonitoring());
+    if (message?.type === "update-analysis-intervals") {
+      sendResponse(await updateAnalysisIntervals(message));
+      return;
+    }
+
+    if (message?.type === "update-sell-strategy") {
+      sendResponse(await updateSellStrategy(message));
+      return;
+    }
+
+    if (message?.type === "review-signal") {
+      sendResponse(await reviewSignal(message));
+      return;
+    }
+
+    if (message?.type === "accept-reviewed-signal") {
+      sendResponse(await acceptReviewedSignal());
+      return;
+    }
+
+    if (message?.type === "dismiss-signal-review") {
+      sendResponse(await dismissSignalReview());
       return;
     }
 
@@ -1345,11 +1998,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     if (message?.type === "mark-limit-cancelled") {
       sendResponse(await markLimitCancelled());
-      return;
-    }
-
-    if (message?.type === "generate-long-term-context") {
-      sendResponse(await generateLongTermContextHandler(message));
       return;
     }
 

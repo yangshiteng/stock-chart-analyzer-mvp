@@ -87,6 +87,18 @@ test("side-panel: AWAITING_CONTEXT with no lastValidation disables panel everywh
 
 // ---- RUNNING / PAUSED — bound tab gets full UI; non-bound gets placeholder
 
+test("side-panel: AWAITING_CONTEXT can route from monitoringProfile during mandatory Market Context setup", () => {
+  const state = {
+    status: STATUS.AWAITING_CONTEXT,
+    lastValidation: null,
+    monitoringProfile: { boundTabId: BOUND_TAB_ID }
+  };
+  assert.deepEqual(
+    getSidePanelConfigForTab(state, BOUND_TAB_ID, tradingViewValidation),
+    { enabled: true, path: SIDEPANEL_PATH }
+  );
+});
+
 test("side-panel: RUNNING — bound tab serves full sidepanel.html", () => {
   const state = {
     status: STATUS.RUNNING,

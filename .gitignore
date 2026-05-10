@@ -27,3 +27,6 @@ node_modules/
 # Python cache
 __pycache__/
 *.pyc
+
+# Claude Code local config / worktrees
+.claude/

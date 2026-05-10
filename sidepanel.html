@@ -16,7 +16,6 @@
         <div class="hero-actions">
           <button id="stopMonitorButton" class="hero-button hero-button-stop" type="button">Stop</button>
           <button id="continueMonitorButton" class="hero-button" type="button">Continue</button>
-          <button id="restartMonitorButton" class="hero-button" type="button">Restart</button>
           <button id="exitMonitorButton" class="hero-button hero-button-exit" type="button">Exit</button>
         </div>
       </header>
@@ -47,7 +46,7 @@
           <section class="form-section">
             <div class="form-section-header">
               <h3 id="positionSectionTitle" class="form-section-title">Session Setup</h3>
-              <p id="positionSectionCopy" class="form-section-copy">Enter the ticker you are watching, then pick how often and how long the assistant should analyze the chart.</p>
+              <p id="positionSectionCopy" class="form-section-copy">Enter the ticker you are watching, then pick how often the assistant should analyze each trading state.</p>
             </div>
 
             <label class="field">
@@ -55,28 +54,33 @@
               <input id="symbolOverrideInput" type="text" autocomplete="off" maxlength="10" placeholder="AAPL" required>
             </label>
 
-            <label class="field">
-              <span id="analysisIntervalLabel">Analysis Interval</span>
-              <select id="analysisIntervalSelect"></select>
-            </label>
+            <div class="field-grid">
+              <label class="field">
+                <span id="entryIntervalLabel">Entry Scan</span>
+                <select id="entryIntervalSelect"></select>
+              </label>
 
-            <label class="field">
-              <span id="totalRoundsLabel">Total Rounds</span>
-              <select id="totalRoundsSelect"></select>
-            </label>
+              <label class="field">
+                <span id="pendingIntervalLabel">Pending Scan</span>
+                <select id="pendingIntervalSelect"></select>
+              </label>
 
-            <div class="field" id="longTermFormSection">
-              <span id="longTermFormLabel">Long-term Context (optional)</span>
-              <small id="longTermFormCopy" class="form-hint"></small>
-              <div class="long-term-controls">
-                <label class="field inline">
-                  <span id="longTermFormTimeframeLabel">Timeframe</span>
-                  <select id="longTermFormTimeframeSelect"></select>
-                </label>
-                <button id="longTermFormGenerateButton" class="ghost-button" type="button">Generate from current chart</button>
-              </div>
-              <div id="longTermFormSummary" class="long-term-summary hidden"></div>
-              <p id="longTermFormError" class="form-error hidden"></p>
+              <label class="field">
+                <span id="positionIntervalLabel">Position Scan</span>
+                <select id="positionIntervalSelect"></select>
+              </label>
+            </div>
+
+            <div class="field-grid two-up">
+              <label class="field">
+                <span id="quickProfitDeltaLabel">Quick Profit Delta</span>
+                <input id="quickProfitDeltaInput" type="number" step="0.01" min="0.01" placeholder="0.20" required>
+              </label>
+
+              <label class="field">
+                <span id="maxLossDeltaLabel">Max Loss Delta</span>
+                <input id="maxLossDeltaInput" type="number" step="0.01" min="0.01" placeholder="0.30" required>
+              </label>
             </div>
           </section>
 
@@ -86,6 +90,115 @@
             <button id="confirmButton" class="mode-button buy-button" type="submit">Start Monitoring</button>
           </div>
         </form>
+      </section>
+
+      <section id="runtimeIntervalSection" class="card hidden">
+        <h2 id="runtimeIntervalTitle">Analysis Frequency</h2>
+        <p id="runtimeIntervalCopy" class="form-section-copy"></p>
+        <div id="runtimeIntervalStatus" class="runtime-interval-status"></div>
+        <div class="field-grid">
+          <label class="field">
+            <span id="runtimeEntryIntervalLabel">Entry Scan</span>
+            <select id="runtimeEntryIntervalSelect"></select>
+          </label>
+
+          <label class="field">
+            <span id="runtimePendingIntervalLabel">Pending Scan</span>
+            <select id="runtimePendingIntervalSelect"></select>
+          </label>
+
+          <label class="field">
+            <span id="runtimePositionIntervalLabel">Position Scan</span>
+            <select id="runtimePositionIntervalSelect"></select>
+          </label>
+        </div>
+        <p id="runtimeIntervalRecommendation" class="context-requirements"></p>
+        <p id="runtimeIntervalError" class="form-error hidden"></p>
+      </section>
+
+      <section id="runtimeSellStrategySection" class="card hidden">
+        <h2 id="runtimeSellStrategyTitle">Sell Strategy</h2>
+        <p id="runtimeSellStrategyCopy" class="form-section-copy"></p>
+        <div id="runtimeSellStrategyStatus" class="runtime-interval-status"></div>
+        <div class="field-grid two-up">
+          <label class="field">
+            <span id="runtimeQuickProfitDeltaLabel">Quick Profit Delta</span>
+            <input id="runtimeQuickProfitDeltaInput" type="number" step="0.01" min="0.01" placeholder="0.20">
+          </label>
+
+          <label class="field">
+            <span id="runtimeMaxLossDeltaLabel">Max Loss Delta</span>
+            <input id="runtimeMaxLossDeltaInput" type="number" step="0.01" min="0.01" placeholder="0.30">
+          </label>
+        </div>
+        <p id="runtimeSellStrategyError" class="form-error hidden"></p>
+      </section>
+
+      <section id="marketContextSection" class="card hidden">
+        <h2 id="marketContextTitle">Market Context Scan</h2>
+        <p id="marketContextCopy" class="form-section-copy">Scan Daily and 1H context before 5-minute monitoring starts.</p>
+        <div class="market-context-steps">
+          <article id="dailyContextStep" class="market-context-step">
+            <div>
+              <h3 id="dailyContextTitle">Daily Scan</h3>
+              <p id="dailyContextInstructions" class="form-section-copy"></p>
+            </div>
+            <button id="scanDailyContextButton" class="mode-button buy-button" type="button">Scan Daily</button>
+          </article>
+
+          <article id="hourlyContextStep" class="market-context-step">
+            <div>
+              <h3 id="hourlyContextTitle">1H Scan</h3>
+              <p id="hourlyContextInstructions" class="form-section-copy"></p>
+            </div>
+            <button id="scanHourlyContextButton" class="mode-button buy-button" type="button">Scan 1H</button>
+          </article>
+        </div>
+
+        <div id="marketContextSummary" class="market-context-summary hidden"></div>
+        <div id="initialPositionPanel" class="initial-position-panel hidden">
+          <div class="form-section-header">
+            <h3 id="initialPositionTitle" class="form-section-title">Current Position Status</h3>
+            <p id="initialPositionCopy" class="form-section-copy"></p>
+          </div>
+          <div class="initial-position-options">
+            <label class="choice-field">
+              <input id="initialPositionFlatRadio" name="initialPositionMode" type="radio" value="flat" checked>
+              <span id="initialPositionFlatLabel">No current position</span>
+            </label>
+            <label class="choice-field">
+              <input id="initialPositionHoldingRadio" name="initialPositionMode" type="radio" value="holding">
+              <span id="initialPositionHoldingLabel">Already holding</span>
+            </label>
+          </div>
+          <label id="initialEntryPriceField" class="field hidden">
+            <span id="initialEntryPriceLabel">Entry Price</span>
+            <input id="initialEntryPriceInput" type="number" step="0.01" min="0" placeholder="27.80">
+          </label>
+          <p id="initialPositionHint" class="context-requirements"></p>
+        </div>
+        <div id="premarketDipPanel" class="premarket-dip-panel hidden">
+          <div class="form-section-header">
+            <h3 id="premarketDipTitle" class="form-section-title">Premarket Dip Plan</h3>
+            <p id="premarketDipCopy" class="form-section-copy"></p>
+          </div>
+          <label class="field">
+            <span id="premarketReferenceCloseLabel">Yesterday Close</span>
+            <input id="premarketReferenceCloseInput" type="number" step="0.01" min="0" placeholder="27.42">
+          </label>
+          <div class="form-actions">
+            <button id="generatePremarketDipButton" class="mode-button buy-button" type="button">Generate plan</button>
+          </div>
+          <p id="premarketDipAvailability" class="form-hint"></p>
+          <div id="premarketDipResult" class="premarket-dip-result hidden"></div>
+          <p id="premarketDipError" class="form-error hidden"></p>
+        </div>
+        <p id="marketContextFiveMinuteReminder" class="context-requirements hidden"></p>
+        <p id="marketContextError" class="form-error hidden"></p>
+
+        <div class="form-actions">
+          <button id="confirmMarketContextButton" class="mode-button buy-button" type="button">Start Monitoring</button>
+        </div>
       </section>
 
       <section id="positionSection" class="card hidden">
@@ -135,6 +248,32 @@
         <h2 id="recommendationTitle">Latest Recommendation</h2>
         <div id="analysisCard" class="analysis-card empty-analysis">
           <p class="empty-state">Run a chart analysis to see the latest recommendation.</p>
+        </div>
+        <div id="signalReviewPanel" class="signal-review-panel hidden">
+          <div class="review-panel-header">
+            <div>
+              <h3 id="signalReviewTitle">Signal Review</h3>
+              <p id="signalReviewCopy" class="form-section-copy">Challenge this signal without changing future automatic prompts.</p>
+            </div>
+            <div class="review-header-actions">
+              <button id="reviewSignalButton" class="ghost-button" type="button">Review Signal</button>
+              <button id="ignoreReviewButton" class="ghost-button hidden" type="button">Ignore review</button>
+            </div>
+          </div>
+
+          <form id="signalReviewForm" class="review-form hidden">
+            <label class="field">
+              <span id="reviewChallengeLabel">Your challenge</span>
+              <textarea id="reviewChallengeInput" rows="4" maxlength="1000"></textarea>
+            </label>
+            <div class="form-actions">
+              <button id="submitReviewSignalButton" class="mode-button buy-button" type="submit">Run review</button>
+              <button id="cancelReviewSignalButton" class="ghost-button" type="button">Cancel</button>
+            </div>
+          </form>
+          <p id="signalReviewError" class="form-error hidden"></p>
+
+          <div id="signalReviewResult" class="review-result hidden"></div>
         </div>
       </section>
 

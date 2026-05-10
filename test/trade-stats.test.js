@@ -70,18 +70,6 @@ test("trade-stats: avgHeldMinutes ignores non-finite values", () => {
   assert.equal(stats.overall.avgHeldMinutes, 60);
 });
 
-test("trade-stats: breakdown by action", () => {
-  const stats = computeTradeStats([
-    T({ pnlPercent: 2, entryAction: "BUY_NOW" }),
-    T({ pnlPercent: -1, entryAction: "BUY_NOW" }),
-    T({ pnlPercent: 1.5, entryAction: "BUY_LIMIT" })
-  ]);
-  assert.equal(stats.byAction.BUY_NOW.n, 2);
-  assert.equal(stats.byAction.BUY_NOW.winRate, 0.5);
-  assert.equal(stats.byAction.BUY_LIMIT.n, 1);
-  assert.equal(stats.byAction.BUY_LIMIT.winRate, 1);
-});
-
 test("trade-stats: breakdown by confidence", () => {
   const stats = computeTradeStats([
     T({ pnlPercent: 2, entryConfidence: "high" }),
@@ -96,13 +84,11 @@ test("trade-stats: breakdown by confidence", () => {
   assert.equal(stats.byConfidence.low.n, 1);
 });
 
-test("trade-stats: legacy trades with null action bucket under 'unknown'", () => {
+test("trade-stats: legacy trades with null confidence bucket under 'unknown'", () => {
   const stats = computeTradeStats([
     T({ pnlPercent: 1, entryAction: null, entryConfidence: null }),
     T({ pnlPercent: -1, entryAction: "BUY_NOW", entryConfidence: "high" })
   ]);
-  assert.equal(stats.byAction.unknown.n, 1);
-  assert.equal(stats.byAction.BUY_NOW.n, 1);
   assert.equal(stats.byConfidence.unknown.n, 1);
   assert.equal(stats.byConfidence.high.n, 1);
 });
@@ -111,8 +97,7 @@ test("trade-stats: known buckets always present even when empty", () => {
   const stats = computeTradeStats([
     T({ pnlPercent: 1, entryAction: "BUY_NOW", entryConfidence: "high" })
   ]);
-  // BUY_LIMIT, medium, low should exist with n=0 for stable UI rendering
-  assert.equal(stats.byAction.BUY_LIMIT.n, 0);
+  // medium, low should exist with n=0 for stable UI rendering
   assert.equal(stats.byConfidence.medium.n, 0);
   assert.equal(stats.byConfidence.low.n, 0);
 });

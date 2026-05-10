@@ -1,7 +1,21 @@
-import { ANALYSIS_INTERVAL_OPTIONS, DEFAULT_TOTAL_ROUNDS, STATUS, TOTAL_ROUNDS_OPTIONS } from "./lib/constants.js";
+import { ANALYSIS_INTERVAL_OPTIONS, STATUS } from "./lib/constants.js";
+import {
+  getActiveAnalysisIntervalRule,
+  getAnalysisPhase,
+  getIntervalRecommendationKey,
+  normalizeAnalysisInterval,
+  normalizeAnalysisIntervalRules
+} from "./lib/analysis-intervals.js";
 import { getLanguage, t } from "./lib/i18n.js";
+import { MARKET_CONTEXT_STATUS } from "./lib/market-context.js";
+import { PREMARKET_DIP_DISCOUNT_PERCENT, isWithinPremarketDipWindow } from "./lib/premarket-dip.js";
+import {
+  buildSellStrategyContext,
+  normalizeSellDelta,
+  normalizeSellStrategyRules
+} from "./lib/sell-strategy.js";
 import { getSettings, getState, patchSettings } from "./lib/storage.js";
-import { ACTION_BUCKETS, CONFIDENCE_BUCKETS, computeTradeStats } from "./lib/trade-stats.js";
+import { CONFIDENCE_BUCKETS, computeTradeStats } from "./lib/trade-stats.js";
 
 const SMALL_SAMPLE_THRESHOLD = 5;
 
@@ -12,7 +26,6 @@ const summaryText = document.getElementById("summaryText");
 const apiSetupSection = document.getElementById("apiSetupSection");
 const stopMonitorButton = document.getElementById("stopMonitorButton");
 const continueMonitorButton = document.getElementById("continueMonitorButton");
-const restartMonitorButton = document.getElementById("restartMonitorButton");
 const exitMonitorButton = document.getElementById("exitMonitorButton");
 const apiSetupTitle = document.getElementById("apiSetupTitle");
 const apiSetupCopy = document.getElementById("apiSetupCopy");
@@ -30,14 +43,88 @@ const positionSectionTitle = document.getElementById("positionSectionTitle");
 const positionSectionCopy = document.getElementById("positionSectionCopy");
 const symbolOverrideLabel = document.getElementById("symbolOverrideLabel");
 const symbolOverrideInput = document.getElementById("symbolOverrideInput");
-const analysisIntervalLabel = document.getElementById("analysisIntervalLabel");
-const totalRoundsLabel = document.getElementById("totalRoundsLabel");
-const analysisIntervalSelect = document.getElementById("analysisIntervalSelect");
-const totalRoundsSelect = document.getElementById("totalRoundsSelect");
+const entryIntervalLabel = document.getElementById("entryIntervalLabel");
+const pendingIntervalLabel = document.getElementById("pendingIntervalLabel");
+const positionIntervalLabel = document.getElementById("positionIntervalLabel");
+const quickProfitDeltaLabel = document.getElementById("quickProfitDeltaLabel");
+const maxLossDeltaLabel = document.getElementById("maxLossDeltaLabel");
+const entryIntervalSelect = document.getElementById("entryIntervalSelect");
+const pendingIntervalSelect = document.getElementById("pendingIntervalSelect");
+const positionIntervalSelect = document.getElementById("positionIntervalSelect");
+const quickProfitDeltaInput = document.getElementById("quickProfitDeltaInput");
+const maxLossDeltaInput = document.getElementById("maxLossDeltaInput");
 const formError = document.getElementById("formError");
 const confirmButton = document.getElementById("confirmButton");
+const runtimeIntervalSection = document.getElementById("runtimeIntervalSection");
+const runtimeIntervalTitle = document.getElementById("runtimeIntervalTitle");
+const runtimeIntervalCopy = document.getElementById("runtimeIntervalCopy");
+const runtimeIntervalStatus = document.getElementById("runtimeIntervalStatus");
+const runtimeEntryIntervalLabel = document.getElementById("runtimeEntryIntervalLabel");
+const runtimePendingIntervalLabel = document.getElementById("runtimePendingIntervalLabel");
+const runtimePositionIntervalLabel = document.getElementById("runtimePositionIntervalLabel");
+const runtimeEntryIntervalSelect = document.getElementById("runtimeEntryIntervalSelect");
+const runtimePendingIntervalSelect = document.getElementById("runtimePendingIntervalSelect");
+const runtimePositionIntervalSelect = document.getElementById("runtimePositionIntervalSelect");
+const runtimeIntervalRecommendation = document.getElementById("runtimeIntervalRecommendation");
+const runtimeIntervalError = document.getElementById("runtimeIntervalError");
+const runtimeSellStrategySection = document.getElementById("runtimeSellStrategySection");
+const runtimeSellStrategyTitle = document.getElementById("runtimeSellStrategyTitle");
+const runtimeSellStrategyCopy = document.getElementById("runtimeSellStrategyCopy");
+const runtimeSellStrategyStatus = document.getElementById("runtimeSellStrategyStatus");
+const runtimeQuickProfitDeltaLabel = document.getElementById("runtimeQuickProfitDeltaLabel");
+const runtimeMaxLossDeltaLabel = document.getElementById("runtimeMaxLossDeltaLabel");
+const runtimeQuickProfitDeltaInput = document.getElementById("runtimeQuickProfitDeltaInput");
+const runtimeMaxLossDeltaInput = document.getElementById("runtimeMaxLossDeltaInput");
+const runtimeSellStrategyError = document.getElementById("runtimeSellStrategyError");
+const marketContextSection = document.getElementById("marketContextSection");
+const marketContextTitle = document.getElementById("marketContextTitle");
+const marketContextCopy = document.getElementById("marketContextCopy");
+const dailyContextStep = document.getElementById("dailyContextStep");
+const dailyContextTitle = document.getElementById("dailyContextTitle");
+const dailyContextInstructions = document.getElementById("dailyContextInstructions");
+const scanDailyContextButton = document.getElementById("scanDailyContextButton");
+const hourlyContextStep = document.getElementById("hourlyContextStep");
+const hourlyContextTitle = document.getElementById("hourlyContextTitle");
+const hourlyContextInstructions = document.getElementById("hourlyContextInstructions");
+const scanHourlyContextButton = document.getElementById("scanHourlyContextButton");
+const marketContextSummary = document.getElementById("marketContextSummary");
+const initialPositionPanel = document.getElementById("initialPositionPanel");
+const initialPositionTitle = document.getElementById("initialPositionTitle");
+const initialPositionCopy = document.getElementById("initialPositionCopy");
+const initialPositionFlatRadio = document.getElementById("initialPositionFlatRadio");
+const initialPositionHoldingRadio = document.getElementById("initialPositionHoldingRadio");
+const initialPositionFlatLabel = document.getElementById("initialPositionFlatLabel");
+const initialPositionHoldingLabel = document.getElementById("initialPositionHoldingLabel");
+const initialEntryPriceField = document.getElementById("initialEntryPriceField");
+const initialEntryPriceLabel = document.getElementById("initialEntryPriceLabel");
+const initialEntryPriceInput = document.getElementById("initialEntryPriceInput");
+const initialPositionHint = document.getElementById("initialPositionHint");
+const premarketDipPanel = document.getElementById("premarketDipPanel");
+const premarketDipTitle = document.getElementById("premarketDipTitle");
+const premarketDipCopy = document.getElementById("premarketDipCopy");
+const premarketReferenceCloseLabel = document.getElementById("premarketReferenceCloseLabel");
+const premarketReferenceCloseInput = document.getElementById("premarketReferenceCloseInput");
+const generatePremarketDipButton = document.getElementById("generatePremarketDipButton");
+const premarketDipAvailability = document.getElementById("premarketDipAvailability");
+const premarketDipResult = document.getElementById("premarketDipResult");
+const premarketDipError = document.getElementById("premarketDipError");
+const marketContextFiveMinuteReminder = document.getElementById("marketContextFiveMinuteReminder");
+const marketContextError = document.getElementById("marketContextError");
+const confirmMarketContextButton = document.getElementById("confirmMarketContextButton");
 const recommendationTitle = document.getElementById("recommendationTitle");
 const analysisCard = document.getElementById("analysisCard");
+const signalReviewPanel = document.getElementById("signalReviewPanel");
+const signalReviewTitle = document.getElementById("signalReviewTitle");
+const signalReviewCopy = document.getElementById("signalReviewCopy");
+const reviewSignalButton = document.getElementById("reviewSignalButton");
+const ignoreReviewButton = document.getElementById("ignoreReviewButton");
+const signalReviewForm = document.getElementById("signalReviewForm");
+const reviewChallengeLabel = document.getElementById("reviewChallengeLabel");
+const reviewChallengeInput = document.getElementById("reviewChallengeInput");
+const submitReviewSignalButton = document.getElementById("submitReviewSignalButton");
+const cancelReviewSignalButton = document.getElementById("cancelReviewSignalButton");
+const signalReviewError = document.getElementById("signalReviewError");
+const signalReviewResult = document.getElementById("signalReviewResult");
 const recentRoundsTitle = document.getElementById("recentRoundsTitle");
 const recentRoundsList = document.getElementById("recentRoundsList");
 const statsSection = document.getElementById("statsSection");
@@ -72,21 +159,21 @@ const pendingLimitSignalChanged = document.getElementById("pendingLimitSignalCha
 const pendingLimitFilledButton = document.getElementById("pendingLimitFilledButton");
 const pendingLimitCancelButton = document.getElementById("pendingLimitCancelButton");
 const pendingLimitError = document.getElementById("pendingLimitError");
-// Long-term context form widget (visible inside the start form)
-const longTermFormSection = document.getElementById("longTermFormSection");
-const longTermFormLabel = document.getElementById("longTermFormLabel");
-const longTermFormCopy = document.getElementById("longTermFormCopy");
-const longTermFormTimeframeLabel = document.getElementById("longTermFormTimeframeLabel");
-const longTermFormTimeframeSelect = document.getElementById("longTermFormTimeframeSelect");
-const longTermFormGenerateButton = document.getElementById("longTermFormGenerateButton");
-const longTermFormSummary = document.getElementById("longTermFormSummary");
-const longTermFormError = document.getElementById("longTermFormError");
-const LONG_TERM_TIMEFRAME_OPTIONS = ["daily", "weekly"];
-let isGeneratingLongTerm = false;
 
 const STALE_LIMIT_THRESHOLD_MINUTES = 10;
 
 let isStartingMonitoring = false;
+let isReviewFormOpen = false;
+let isReviewingSignal = false;
+let isAcceptingReviewedSignal = false;
+let scanningMarketContextTimeframe = null;
+let isConfirmingMarketContext = false;
+let isGeneratingPremarketDipPlan = false;
+let isAdoptingPremarketDipPlan = false;
+let premarketReferenceCloseTouched = false;
+let initialPositionMode = "flat";
+let isUpdatingRuntimeIntervals = false;
+let isUpdatingSellStrategy = false;
 
 function escapeHtml(value) {
   return `${value}`
@@ -101,6 +188,35 @@ function formatActionLabel(language, action) {
   return action ? t(language, `action_${action}`) : t(language, "unknown");
 }
 
+function getSellLimitIntentFromPrices(action, orderPrice, currentPrice) {
+  if (action !== "SELL_LIMIT") {
+    return null;
+  }
+
+  const order = parsePositivePrice(orderPrice);
+  const current = parsePositivePrice(currentPrice);
+  if (!order || !current) {
+    return null;
+  }
+
+  return order <= current ? "defensive" : "profit";
+}
+
+function getSellLimitIntent(analysis) {
+  return getSellLimitIntentFromPrices(analysis?.action, analysis?.orderPrice, analysis?.currentPrice);
+}
+
+function formatAnalysisActionLabel(language, analysis) {
+  const sellLimitIntent = getSellLimitIntent(analysis);
+  if (sellLimitIntent === "defensive") {
+    return t(language, "sellLimitDefensiveAction");
+  }
+  if (sellLimitIntent === "profit") {
+    return t(language, "sellLimitProfitAction");
+  }
+  return formatActionLabel(language, analysis?.action);
+}
+
 function formatConfidenceLabel(language, confidence) {
   if (!confidence) return t(language, "unknown");
   const key = `confidence_${confidence}`;
@@ -112,20 +228,8 @@ function getConfidenceTone(confidence) {
   return ["high", "medium", "low"].includes(confidence) ? confidence : "unknown";
 }
 
-function normalizeAnalysisInterval(value) {
-  return ANALYSIS_INTERVAL_OPTIONS.some((option) => option.value === value) ? value : "5m";
-}
-
-function normalizeTotalRounds(value) {
-  return TOTAL_ROUNDS_OPTIONS.some((option) => option.value === `${value}`) ? `${value}` : `${DEFAULT_TOTAL_ROUNDS}`;
-}
-
 function formatAnalysisIntervalLabel(language, value) {
   return t(language, `analysisInterval_${normalizeAnalysisInterval(value)}`);
-}
-
-function formatTotalRoundsLabel(language, value) {
-  return t(language, `totalRounds_${normalizeTotalRounds(value)}`);
 }
 
 function getActionTone(action) {
@@ -160,6 +264,187 @@ function renderGuidanceCard(label, value) {
       <p class="metric-label">${escapeHtml(label)}</p>
       <p class="guidance-value">${escapeHtml(value)}</p>
     </article>
+  `;
+}
+
+function getOrderGuidanceValue(language, analysis) {
+  if (analysis.action === "WAIT") {
+    return t(language, "noOrderNow");
+  }
+
+  if (analysis.action === "HOLD") {
+    return t(language, "holdNoOrderNow");
+  }
+
+  if (analysis.action === "SELL_NOW") {
+    return analysis.currentPrice || t(language, "nA");
+  }
+
+  return analysis.orderPrice || t(language, "nA");
+}
+
+function getOrderGuidanceLabel(language, analysis) {
+  const sellLimitIntent = getSellLimitIntent(analysis);
+  if (sellLimitIntent === "defensive") {
+    return t(language, "sellLimitFloorPriceLabel");
+  }
+  if (sellLimitIntent === "profit") {
+    return t(language, "sellLimitTakeProfitPriceLabel");
+  }
+  return analysis.action === "SELL_NOW" ? t(language, "currentPrice") : t(language, "orderPriceLabel");
+}
+
+function getDisplayAnalysis(state) {
+  const original = state.lastResult?.analysis || null;
+  const review = state.lastSignalReview?.review || null;
+  if (!original || !review) {
+    return { analysis: original, originalAnalysis: original, isReviewed: false };
+  }
+
+  return {
+    analysis: {
+      action: review.action,
+      orderPrice: review.orderPrice,
+      entryPrice: original.entryPrice ?? null,
+      stopLossPrice: review.stopLossPrice,
+      targetPrice: review.targetPrice,
+      confidence: review.confidence,
+      reasoning: review.explanation,
+      symbol: original.symbol ?? null,
+      currentPrice: original.currentPrice
+    },
+    originalAnalysis: original,
+    isReviewed: true
+  };
+}
+
+function renderOriginalSignalNote(language, originalAnalysis) {
+  if (!originalAnalysis) {
+    return "";
+  }
+
+  const action = formatAnalysisActionLabel(language, originalAnalysis);
+  const price = getOrderGuidanceValue(language, originalAnalysis);
+  const confidence = formatConfidenceLabel(language, originalAnalysis.confidence);
+  return `
+    <section class="review-original-note">
+      <p>${escapeHtml(t(language, "reviewOverrideNotice"))}</p>
+      <p><strong>${escapeHtml(t(language, "originalSignalLabel"))}:</strong> ${escapeHtml(action)} @ ${escapeHtml(price)} · ${escapeHtml(confidence)}</p>
+    </section>
+  `;
+}
+
+function parsePositivePrice(value) {
+  const price = Number(`${value ?? ""}`.trim());
+  return Number.isFinite(price) && price > 0 ? price : null;
+}
+
+function formatDollar(value) {
+  const price = Number(`${value ?? ""}`.trim());
+  return Number.isFinite(price) ? price.toFixed(2) : "";
+}
+
+function formatDollarSigned(value) {
+  const price = Number(`${value ?? ""}`.trim());
+  if (!Number.isFinite(price)) return "";
+  const sign = price >= 0 ? "+" : "";
+  return `${sign}${price.toFixed(2)}`;
+}
+
+function getNearbyMarketLevels(summary, currentPrice) {
+  const levels = Array.isArray(summary?.keyLevels) ? summary.keyLevels : [];
+  const price = parsePositivePrice(currentPrice);
+  if (!price || levels.length === 0) {
+    return { support: null, resistance: null };
+  }
+
+  const supportTypes = new Set(["support", "pivot", "gap", "prior_low"]);
+  const resistanceTypes = new Set(["resistance", "pivot", "gap", "prior_high"]);
+  const parsed = levels
+    .map((level) => ({ ...level, numericPrice: parsePositivePrice(level.price) }))
+    .filter((level) => level.numericPrice);
+
+  const support = parsed
+    .filter((level) => level.numericPrice <= price && supportTypes.has(level.type))
+    .sort((a, b) => b.numericPrice - a.numericPrice)[0] || null;
+  const resistance = parsed
+    .filter((level) => level.numericPrice >= price && resistanceTypes.has(level.type))
+    .sort((a, b) => a.numericPrice - b.numericPrice)[0] || null;
+
+  return { support, resistance };
+}
+
+function formatDistanceFromCurrent(level, currentPrice) {
+  const price = parsePositivePrice(currentPrice);
+  const levelPrice = parsePositivePrice(level?.price);
+  if (!price || !levelPrice) {
+    return "";
+  }
+
+  const pct = ((levelPrice - price) / price) * 100;
+  const sign = pct >= 0 ? "+" : "";
+  return `${sign}${pct.toFixed(2)}%`;
+}
+
+function renderNearbyLevel(language, titleKey, level, currentPrice, tone) {
+  if (!level) {
+    return `
+      <article class="nearby-level" data-tone="empty">
+        <p class="nearby-level-label">${escapeHtml(t(language, titleKey))}</p>
+        <p class="nearby-level-price">${escapeHtml(t(language, "nA"))}</p>
+      </article>
+    `;
+  }
+
+  const type = formatMarketContextValue(language, level.type, "levelType");
+  const strength = formatMarketContextValue(language, level.strength, "levelStrength");
+  const distance = formatDistanceFromCurrent(level, currentPrice);
+  const meta = [distance, strength, type, level.timeframe].filter(Boolean).join(" · ");
+
+  return `
+    <article class="nearby-level" data-tone="${escapeHtml(tone)}">
+      <p class="nearby-level-label">${escapeHtml(t(language, titleKey))}</p>
+      <p class="nearby-level-price">${escapeHtml(level.price || t(language, "nA"))}</p>
+      <p class="nearby-level-meta">${escapeHtml(meta)}</p>
+      <p class="nearby-level-reason">${escapeHtml(level.reason || level.label || "")}</p>
+    </article>
+  `;
+}
+
+function renderNearbyMarketLevels(state, analysis, language) {
+  const summary = state.marketContext?.summary;
+  const levels = getNearbyMarketLevels(summary, analysis.currentPrice);
+  if (!levels.support && !levels.resistance) {
+    return "";
+  }
+
+  return `
+    <section class="nearby-levels-panel">
+      <div class="nearby-levels-header">
+        <h3>${escapeHtml(t(language, "nearbyLevelsTitle"))}</h3>
+        <p>${escapeHtml(t(language, "nearbyLevelsCopy"))}</p>
+      </div>
+      <div class="nearby-levels-grid">
+        ${renderNearbyLevel(language, "nearestSupport", levels.support, analysis.currentPrice, "support")}
+        ${renderNearbyLevel(language, "nearestResistance", levels.resistance, analysis.currentPrice, "resistance")}
+      </div>
+    </section>
+  `;
+}
+
+function renderSellLimitIntentNotice(language, analysis) {
+  const intent = getSellLimitIntent(analysis);
+  if (!intent) {
+    return "";
+  }
+
+  const textKey = intent === "defensive"
+    ? "sellLimitDefensiveNotice"
+    : "sellLimitProfitNotice";
+  return `
+    <section class="sell-limit-intent-note" data-tone="${escapeHtml(intent)}">
+      ${escapeHtml(t(language, textKey))}
+    </section>
   `;
 }
 
@@ -202,8 +487,7 @@ function renderRecentRounds(state, language) {
 }
 
 function renderAnalysisCard(state, language) {
-  const result = state.lastResult;
-  const analysis = result?.analysis;
+  const { analysis, originalAnalysis, isReviewed } = getDisplayAnalysis(state);
 
   if (isStartingMonitoring || state.isRoundInFlight || (state.status === STATUS.RUNNING && state.roundCount === 0 && !analysis)) {
     analysisCard.className = "analysis-card";
@@ -224,7 +508,7 @@ function renderAnalysisCard(state, language) {
   }
 
   const tone = getActionTone(analysis.action);
-  const action = formatActionLabel(language, analysis.action);
+  const action = formatAnalysisActionLabel(language, analysis);
   const nA = t(language, "nA");
 
   analysisCard.className = "analysis-card";
@@ -232,27 +516,138 @@ function renderAnalysisCard(state, language) {
     <section class="signal-banner ${tone}">
       <div class="signal-topline">
         <div>
-          <p class="signal-label">${escapeHtml(t(language, "actionNow"))}</p>
+          <p class="signal-label">${escapeHtml(t(language, isReviewed ? "reviewedActionNow" : "actionNow"))}</p>
           <h3 class="signal-value">${escapeHtml(action)}</h3>
         </div>
       </div>
       <div class="guidance-grid">
-        ${renderGuidanceCard(t(language, "triggerConditionLabel"), analysis.triggerCondition || nA)}
+        ${renderGuidanceCard(getOrderGuidanceLabel(language, analysis), getOrderGuidanceValue(language, analysis))}
       </div>
     </section>
+    ${renderSellLimitIntentNotice(language, analysis)}
     <div class="analysis-grid">
       ${renderMetricCard(language, t(language, "currentPrice"), analysis.currentPrice || nA)}
-      ${renderMetricCard(language, t(language, "entryPriceLabel"), analysis.entryPrice || nA)}
       ${renderMetricCard(language, t(language, "stopLossPriceLabel"), analysis.stopLossPrice || nA)}
       ${renderMetricCard(language, t(language, "targetPriceLabel"), analysis.targetPrice || nA)}
       ${renderMetricCard(language, t(language, "confidenceLabel"), formatConfidenceLabel(language, analysis.confidence), { tone: `confidence-${getConfidenceTone(analysis.confidence)}` })}
       ${renderMetricCard(language, t(language, "reasoningLabel"), analysis.reasoning || nA, { fullSpan: true })}
     </div>
+    ${renderNearbyMarketLevels(state, analysis, language)}
+    ${isReviewed ? renderOriginalSignalNote(language, originalAnalysis) : ""}
   `;
 }
 
-function getMonitoringDetailCopy(language, round, interval, totalRounds) {
-  return t(language, "monitoringDetail", { round, interval, totalRounds });
+function formatReviewDecisionLabel(language, decision) {
+  const key = `reviewDecision_${decision}`;
+  const label = t(language, key);
+  return label === key ? (decision || t(language, "unknown")) : label;
+}
+
+function canAcceptReviewSignal(state, review) {
+  if (state.status !== STATUS.RUNNING || state.pendingLimitOrder) {
+    return false;
+  }
+
+  if (review?.action === "BUY_LIMIT") {
+    return !state.virtualPosition && !!review.orderPrice;
+  }
+
+  if (review?.action === "SELL_LIMIT") {
+    return !!state.virtualPosition && !!review.orderPrice;
+  }
+
+  if (review?.action === "SELL_NOW") {
+    return !!state.virtualPosition;
+  }
+
+  return false;
+}
+
+function getReviewUnavailableReason(language, state, reviewRecord, accepted) {
+  if (accepted) {
+    return t(language, "reviewAccepted");
+  }
+
+  if (state.pendingLimitOrder) {
+    return t(language, "reviewPendingLimitHint");
+  }
+
+  if (reviewRecord?.review?.action === "SELL_NOW") {
+    return t(language, "reviewSellNowHint");
+  }
+
+  if (reviewRecord?.review?.action === "WAIT" || reviewRecord?.review?.action === "HOLD") {
+    return t(language, "reviewNoExecutableOrder");
+  }
+
+  return t(language, "reviewNoExecutableOrder");
+}
+
+function renderSignalReviewPanel(state, language) {
+  const analysis = state.lastResult?.analysis;
+  const reviewRecord = state.lastSignalReview;
+  const review = reviewRecord?.review;
+  const shouldShow = !!analysis && state.status === STATUS.RUNNING && !state.isRoundInFlight;
+
+  signalReviewTitle.textContent = t(language, "reviewSignalTitle");
+  signalReviewCopy.textContent = t(language, "reviewSignalCopy");
+  reviewSignalButton.textContent = t(language, "reviewSignalButton");
+  ignoreReviewButton.textContent = t(language, "ignoreReviewButton");
+  reviewChallengeLabel.textContent = t(language, "reviewChallengeLabel");
+  reviewChallengeInput.placeholder = t(language, "reviewChallengePlaceholder");
+  submitReviewSignalButton.textContent = isReviewingSignal ? t(language, "reviewingSignal") : t(language, "submitReviewSignal");
+  cancelReviewSignalButton.textContent = t(language, "cancelReviewSignal");
+
+  signalReviewPanel.classList.toggle("hidden", !shouldShow);
+  if (!shouldShow) {
+    isReviewFormOpen = false;
+    signalReviewForm.classList.add("hidden");
+    signalReviewResult.classList.add("hidden");
+    signalReviewError.textContent = "";
+    signalReviewError.classList.add("hidden");
+    return;
+  }
+
+  reviewSignalButton.disabled = isReviewingSignal || isAcceptingReviewedSignal;
+  ignoreReviewButton.classList.toggle("hidden", !review);
+  ignoreReviewButton.disabled = isReviewingSignal || isAcceptingReviewedSignal;
+  signalReviewForm.classList.toggle("hidden", !isReviewFormOpen);
+  submitReviewSignalButton.disabled = isReviewingSignal;
+  cancelReviewSignalButton.disabled = isReviewingSignal;
+
+  if (!review) {
+    signalReviewResult.innerHTML = "";
+    signalReviewResult.classList.add("hidden");
+    return;
+  }
+
+  const nA = t(language, "nA");
+  const canAccept = canAcceptReviewSignal(state, review);
+  const accepted = !!reviewRecord.acceptedAt;
+  const acceptButton = canAccept && !accepted
+    ? `<button id="acceptReviewedSignalButton" class="mode-button ${review.action === "BUY_LIMIT" ? "buy-button" : "sell-button"}" type="button">${escapeHtml(isAcceptingReviewedSignal ? t(language, "acceptingReviewedSignal") : t(language, "acceptReviewedSignal"))}</button>`
+    : `<p class="form-hint">${escapeHtml(getReviewUnavailableReason(language, state, reviewRecord, accepted))}</p>`;
+
+  signalReviewResult.innerHTML = `
+    <div class="review-result-grid">
+      ${renderMetricCard(language, t(language, "reviewDecisionLabel"), formatReviewDecisionLabel(language, review.reviewDecision))}
+      ${renderMetricCard(language, t(language, "actionNow"), formatActionLabel(language, review.action))}
+      ${renderMetricCard(language, t(language, "orderPriceLabel"), review.orderPrice || nA)}
+      ${renderMetricCard(language, t(language, "stopLossPriceLabel"), review.stopLossPrice || nA)}
+      ${renderMetricCard(language, t(language, "targetPriceLabel"), review.targetPrice || nA)}
+      ${renderMetricCard(language, t(language, "confidenceLabel"), formatConfidenceLabel(language, review.confidence), { tone: `confidence-${getConfidenceTone(review.confidence)}` })}
+      ${renderMetricCard(language, t(language, "reviewExplanationLabel"), review.explanation || nA, { fullSpan: true })}
+      ${renderMetricCard(language, t(language, "reviewUserChallengeLabel"), reviewRecord.userChallenge || nA, { fullSpan: true })}
+    </div>
+    <div class="form-actions review-accept-actions">
+      ${acceptButton}
+    </div>
+  `;
+  signalReviewResult.classList.remove("hidden");
+}
+
+function getMonitoringDetailCopy(language, round, interval) {
+  return t(language, "monitoringDetail", { round, interval });
 }
 
 function getPanelSectionTitle(language, section) {
@@ -357,13 +752,6 @@ function renderStatsCard(state, language) {
   }
   statsSection.classList.remove("hidden");
 
-  const actionRows = ACTION_BUCKETS
-    .map((key) => renderStatBucket(language, formatActionLabel(language, key), stats.byAction[key]))
-    .join("");
-  const actionUnknown = stats.byAction.unknown && stats.byAction.unknown.n > 0
-    ? renderStatBucket(language, t(language, "unknown"), stats.byAction.unknown)
-    : "";
-
   const confidenceRows = CONFIDENCE_BUCKETS
     .map((key) => renderStatBucket(language, formatConfidenceLabel(language, key), stats.byConfidence[key]))
     .join("");
@@ -374,8 +762,6 @@ function renderStatsCard(state, language) {
   statsContent.innerHTML = `
     <h3 class="stats-heading">${escapeHtml(t(language, "statsOverallHeading"))}</h3>
     ${renderStatsOverall(language, stats.overall)}
-    <h3 class="stats-heading">${escapeHtml(t(language, "statsByActionHeading"))}</h3>
-    <div class="stats-table">${actionRows}${actionUnknown}</div>
     <h3 class="stats-heading">${escapeHtml(t(language, "statsByConfidenceHeading"))}</h3>
     <div class="stats-table">${confidenceRows}${confidenceUnknown}</div>
   `;
@@ -440,16 +826,31 @@ function renderPendingLimitCard(state, language, pending) {
   pendingLimitCancelButton.textContent = t(language, "limitCancelButton");
 
   const nA = t(language, "nA");
-  const actionLabel = formatActionLabel(language, pending.action);
+  const pendingAnalysisView = {
+    action: pending.action,
+    orderPrice: pending.limitPrice,
+    currentPrice: state.lastResult?.analysis?.currentPrice || null
+  };
+  const actionLabel = formatAnalysisActionLabel(language, pendingAnalysisView);
+  const sellLimitIntent = getSellLimitIntent(pendingAnalysisView);
+  const limitPriceLabel = sellLimitIntent === "defensive"
+    ? t(language, "sellLimitFloorPriceLabel")
+    : sellLimitIntent === "profit"
+      ? t(language, "sellLimitTakeProfitPriceLabel")
+      : t(language, "limitPriceLabel");
+  const intentNote = sellLimitIntent === "defensive"
+    ? `<p class="position-line limit-intent-inline">${escapeHtml(t(language, "sellLimitDefensiveNotice"))}</p>`
+    : "";
   const held = minutesSinceIso(pending.placedAt);
   const heldText = Number.isFinite(held) ? `${held}m` : nA;
   pendingLimitSummary.innerHTML = `
     <p class="position-line"><strong>${escapeHtml(t(language, "actionNow"))}:</strong> ${escapeHtml(actionLabel)}</p>
     <p class="position-line"><strong>${escapeHtml(t(language, "symbolOverride"))}:</strong> ${escapeHtml(pending.symbol || nA)}</p>
-    <p class="position-line"><strong>${escapeHtml(t(language, "limitPriceLabel"))}:</strong> ${escapeHtml(pending.limitPrice || nA)}</p>
+    <p class="position-line"><strong>${escapeHtml(limitPriceLabel)}:</strong> ${escapeHtml(pending.limitPrice || nA)}</p>
     <p class="position-line"><strong>${escapeHtml(t(language, "stopLossPriceLabel"))}:</strong> ${escapeHtml(pending.stopLossPrice || nA)}</p>
     <p class="position-line"><strong>${escapeHtml(t(language, "targetPriceLabel"))}:</strong> ${escapeHtml(pending.targetPrice || nA)}</p>
     <p class="position-line"><strong>${escapeHtml(t(language, "statsAvgHeld"))}:</strong> ${escapeHtml(heldText)}</p>
+    ${intentNote}
   `;
 
   if (Number.isFinite(held) && held >= STALE_LIMIT_THRESHOLD_MINUTES) {
@@ -467,11 +868,11 @@ function renderPendingLimitCard(state, language, pending) {
   // Banner is suppressed only when action matches AND price is still close.
   const PRICE_DRIFT_THRESHOLD = 0.003; // 0.3% — ignores sub-tick noise, catches real re-leveling
   const currentAction = state.lastResult?.analysis?.action;
-  const currentEntry = Number(state.lastResult?.analysis?.entryPrice);
+  const currentOrderPrice = Number(state.lastResult?.analysis?.orderPrice);
   const pendingPriceNum = Number(pending.limitPrice);
   const priceDrift =
-    Number.isFinite(pendingPriceNum) && pendingPriceNum > 0 && Number.isFinite(currentEntry)
-      ? Math.abs(currentEntry - pendingPriceNum) / pendingPriceNum
+    Number.isFinite(pendingPriceNum) && pendingPriceNum > 0 && Number.isFinite(currentOrderPrice)
+      ? Math.abs(currentOrderPrice - pendingPriceNum) / pendingPriceNum
       : 0;
 
   let warningKey = null;
@@ -489,7 +890,7 @@ function renderPendingLimitCard(state, language, pending) {
       prevAction: pending.action,
       prevPrice: pending.limitPrice || nA,
       currAction: currentAction || nA,
-      currPrice: Number.isFinite(currentEntry) ? currentEntry.toFixed(2) : nA,
+      currPrice: Number.isFinite(currentOrderPrice) ? currentOrderPrice.toFixed(2) : nA,
       driftPct: (priceDrift * 100).toFixed(2)
     });
     pendingLimitSignalChanged.classList.remove("hidden");
@@ -505,18 +906,27 @@ function renderPendingLimitCard(state, language, pending) {
 function renderMarkLimitPlacedCard(state, language, action) {
   markLimitPlacedSection.classList.remove("hidden");
   const isBuy = action === "BUY_LIMIT";
-  markLimitPlacedTitle.textContent = t(language, isBuy ? "markLimitPlacedTitle_buy" : "markLimitPlacedTitle_sell");
-  markLimitPlacedCopy.textContent = t(language, "markLimitPlacedCopy");
-  limitPlacedPriceLabel.textContent = t(language, "limitPriceLabel");
-  markLimitPlacedButton.textContent = t(language, isBuy ? "markLimitPlacedButton_buy" : "markLimitPlacedButton_sell");
+  const analysis = state.lastResult?.analysis;
+  const sellLimitIntent = getSellLimitIntent(analysis);
+  const sellTitleKey = sellLimitIntent === "defensive"
+    ? "markLimitPlacedTitle_sellDefensive"
+    : sellLimitIntent === "profit"
+      ? "markLimitPlacedTitle_sellProfit"
+      : "markLimitPlacedTitle_sell";
+  const sellButtonKey = sellLimitIntent === "defensive"
+    ? "markLimitPlacedButton_sellDefensive"
+    : "markLimitPlacedButton_sell";
+  markLimitPlacedTitle.textContent = t(language, isBuy ? "markLimitPlacedTitle_buy" : sellTitleKey);
+  markLimitPlacedCopy.textContent = sellLimitIntent === "defensive"
+    ? t(language, "markLimitPlacedCopy_sellDefensive")
+    : t(language, "markLimitPlacedCopy");
+  limitPlacedPriceLabel.textContent = sellLimitIntent === "defensive"
+    ? t(language, "sellLimitFloorPriceLabel")
+    : t(language, "limitPriceLabel");
+  markLimitPlacedButton.textContent = t(language, isBuy ? "markLimitPlacedButton_buy" : sellButtonKey);
   markLimitPlacedButton.className = `mode-button ${isBuy ? "buy-button" : "sell-button"}`;
 
-  // BUY_LIMIT: limit price = entryPrice (where user will buy below current).
-  // SELL_LIMIT: limit price = targetPrice (where user takes profit above current).
-  //   In EXIT mode the prompt convention is entryPrice echoes the user's
-  //   original buy price, while targetPrice carries the actionable sell level.
-  const analysis = state.lastResult?.analysis;
-  const suggested = (isBuy ? analysis?.entryPrice : analysis?.targetPrice) || "";
+  const suggested = analysis?.orderPrice || "";
   if (suggested && !limitPlacedPriceInput.value) {
     limitPlacedPriceInput.value = suggested;
   }
@@ -544,9 +954,18 @@ function renderPositionPanels(state, language) {
     positionSection.classList.remove("hidden");
     positionActions.classList.remove("hidden");
     const nA = t(language, "nA");
+    const profile = state.monitoringProfile || state.lastMonitoringProfile || {};
+    const sellLevels = buildSellStrategyContext(position, profile.rules || {});
+    const currentPrice = parsePositivePrice(state.lastResult?.analysis?.currentPrice);
+    const entryPrice = parsePositivePrice(position.entryPrice);
+    const floatingDelta = currentPrice && entryPrice ? formatDollarSigned(currentPrice - entryPrice) : nA;
     positionSummary.innerHTML = `
       <p class="position-line"><strong>${escapeHtml(t(language, "symbolOverride"))}:</strong> ${escapeHtml(position.symbol || nA)}</p>
       <p class="position-line"><strong>${escapeHtml(t(language, "entryPriceLabel"))}:</strong> ${escapeHtml(position.entryPrice || nA)}</p>
+      <p class="position-line"><strong>${escapeHtml(t(language, "currentPrice"))}:</strong> ${escapeHtml(state.lastResult?.analysis?.currentPrice || nA)}</p>
+      <p class="position-line"><strong>${escapeHtml(t(language, "floatingDelta"))}:</strong> ${escapeHtml(floatingDelta)}</p>
+      <p class="position-line"><strong>${escapeHtml(t(language, "quickProfitTrigger"))}:</strong> ${escapeHtml(sellLevels?.quickProfitPrice || nA)}</p>
+      <p class="position-line"><strong>${escapeHtml(t(language, "maxLossTrigger"))}:</strong> ${escapeHtml(sellLevels?.maxLossPrice || nA)}</p>
       <p class="position-line"><strong>${escapeHtml(t(language, "stopLossPriceLabel"))}:</strong> ${escapeHtml(position.stopLossPrice || nA)}</p>
       <p class="position-line"><strong>${escapeHtml(t(language, "targetPriceLabel"))}:</strong> ${escapeHtml(position.targetPrice || nA)}</p>
     `;
@@ -587,85 +1006,6 @@ function renderPositionPanels(state, language) {
   }
 }
 
-function populateLongTermTimeframeOptions(selectEl, language, selectedValue = "daily") {
-  selectEl.innerHTML = LONG_TERM_TIMEFRAME_OPTIONS
-    .map((tf) => `<option value="${tf}">${escapeHtml(t(language, `longTermTimeframe_${tf}`))}</option>`)
-    .join("");
-  selectEl.value = LONG_TERM_TIMEFRAME_OPTIONS.includes(selectedValue) ? selectedValue : "daily";
-}
-
-function formatLongTermTimestamp(iso, language) {
-  if (!iso) return t(language, "nA");
-  try {
-    return new Date(iso).toLocaleString(language === "zh" ? "zh-CN" : "en-US", {
-      month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false
-    });
-  } catch {
-    return iso;
-  }
-}
-
-function renderLongTermSummaryInto(containerEl, ctx, language, { isLoading = false } = {}) {
-  if (isLoading) {
-    containerEl.classList.remove("hidden");
-    containerEl.classList.add("is-loading");
-    containerEl.textContent = t(language, "longTermGenerating");
-    return;
-  }
-  containerEl.classList.remove("is-loading");
-  if (!ctx) {
-    containerEl.classList.add("hidden");
-    containerEl.innerHTML = "";
-    return;
-  }
-  containerEl.classList.remove("hidden");
-  const trendKey = `longTermTrend_${ctx.trend || "unclear"}`;
-  const stageKey = `longTermStage_${ctx.stage || "unclear"}`;
-  const trendLabel = t(language, trendKey);
-  const stageLabel = t(language, stageKey);
-  const support = (ctx.keySupport || "").trim() || t(language, "nA");
-  const resistance = (ctx.keyResistance || "").trim() || t(language, "nA");
-  const summary = (ctx.summary || "").trim() || t(language, "nA");
-  const tfLabel = t(language, `longTermTimeframe_${ctx.timeframe || "daily"}`);
-  const generated = t(language, "longTermGeneratedAt", { when: formatLongTermTimestamp(ctx.generatedAt, language) });
-
-  containerEl.innerHTML = `
-    <div class="meta">${escapeHtml(tfLabel)} · ${escapeHtml(generated)}</div>
-    <div class="row"><span class="label">${escapeHtml(t(language, "longTermFieldTrend"))}</span><span class="value">${escapeHtml(trendLabel)}</span></div>
-    <div class="row"><span class="label">${escapeHtml(t(language, "longTermFieldStage"))}</span><span class="value">${escapeHtml(stageLabel)}</span></div>
-    <div class="row"><span class="label">${escapeHtml(t(language, "longTermFieldSupport"))}</span><span class="value">${escapeHtml(support)}</span></div>
-    <div class="row"><span class="label">${escapeHtml(t(language, "longTermFieldResistance"))}</span><span class="value">${escapeHtml(resistance)}</span></div>
-    <div class="row"><span class="label">${escapeHtml(t(language, "longTermFieldSummary"))}</span><span class="value">${escapeHtml(summary)}</span></div>
-  `;
-}
-
-function renderLongTermFormWidget(state, language) {
-  // Visible only during the AWAITING_CONTEXT phase (the start form).
-  if (state.status !== STATUS.AWAITING_CONTEXT) {
-    longTermFormSection.classList.add("hidden");
-    return;
-  }
-  longTermFormSection.classList.remove("hidden");
-  longTermFormLabel.textContent = t(language, "longTermTitle");
-  longTermFormCopy.textContent = t(language, "longTermFormCopy");
-  longTermFormTimeframeLabel.textContent = t(language, "longTermTimeframeLabel");
-  longTermFormGenerateButton.textContent = isGeneratingLongTerm
-    ? t(language, "longTermGenerating")
-    : t(language, "longTermGenerateButton");
-  longTermFormGenerateButton.disabled = isGeneratingLongTerm;
-
-  if (!longTermFormTimeframeSelect.options.length) {
-    populateLongTermTimeframeOptions(longTermFormTimeframeSelect, language, "daily");
-  }
-
-  const draft = state.longTermContextDraft || null;
-  renderLongTermSummaryInto(longTermFormSummary, draft, language, { isLoading: isGeneratingLongTerm });
-  // If there's a draft, sync the timeframe selector to it so a Regenerate keeps it aligned.
-  if (draft?.timeframe) {
-    longTermFormTimeframeSelect.value = draft.timeframe;
-  }
-}
-
 function updateStaticText(language, settings) {
   heroEyebrow.textContent = t(language, "liveAnalysis");
   heroTitle.textContent = t(language, "appTitle");
@@ -673,7 +1013,6 @@ function updateStaticText(language, settings) {
   clearApiKeyButton.textContent = t(language, "clearKey");
   stopMonitorButton.textContent = t(language, "stop");
   continueMonitorButton.textContent = t(language, "continue");
-  restartMonitorButton.textContent = t(language, "restart");
   exitMonitorButton.textContent = t(language, "exit");
   apiSetupTitle.textContent = t(language, "openAiSetup");
   apiSetupCopy.innerHTML = `${escapeHtml(t(language, "setupCopy"))}`;
@@ -685,8 +1024,20 @@ function updateStaticText(language, settings) {
   positionSectionCopy.textContent = getPanelSectionCopy(language, "position");
   symbolOverrideLabel.textContent = t(language, "symbolOverride");
   symbolOverrideInput.placeholder = t(language, "symbolOverridePlaceholder");
-  analysisIntervalLabel.textContent = t(language, "analysisInterval");
-  totalRoundsLabel.textContent = t(language, "totalRounds");
+  entryIntervalLabel.textContent = t(language, "entryInterval");
+  pendingIntervalLabel.textContent = t(language, "pendingInterval");
+  positionIntervalLabel.textContent = t(language, "positionInterval");
+  quickProfitDeltaLabel.textContent = t(language, "quickProfitDelta");
+  maxLossDeltaLabel.textContent = t(language, "maxLossDelta");
+  runtimeIntervalTitle.textContent = t(language, "runtimeIntervalTitle");
+  runtimeIntervalCopy.textContent = t(language, "runtimeIntervalCopy");
+  runtimeEntryIntervalLabel.textContent = t(language, "entryInterval");
+  runtimePendingIntervalLabel.textContent = t(language, "pendingInterval");
+  runtimePositionIntervalLabel.textContent = t(language, "positionInterval");
+  runtimeSellStrategyTitle.textContent = t(language, "runtimeSellStrategyTitle");
+  runtimeSellStrategyCopy.textContent = t(language, "runtimeSellStrategyCopy");
+  runtimeQuickProfitDeltaLabel.textContent = t(language, "quickProfitDelta");
+  runtimeMaxLossDeltaLabel.textContent = t(language, "maxLossDelta");
   confirmButton.textContent = t(language, "start");
   recommendationTitle.textContent = t(language, "latestRecommendation");
   apiKeyStatus.textContent = settings.openaiApiKey
@@ -700,6 +1051,9 @@ function getSummary(state, language) {
   }
 
   if (state.status === STATUS.AWAITING_CONTEXT) {
+    if ((state.monitoringProfile || state.lastMonitoringProfile) && state.marketContext?.symbol) {
+      return t(language, "marketContextRequiredDetail");
+    }
     return t(language, "fillSetupDetail");
   }
 
@@ -712,18 +1066,13 @@ function getSummary(state, language) {
   }
 
   if (state.status === STATUS.RUNNING) {
-    const intervalRule = normalizeAnalysisInterval(
-      state.monitoringProfile?.rules?.analysisInterval || state.lastMonitoringProfile?.rules?.analysisInterval
-    );
-    const totalRounds = normalizeTotalRounds(
-      state.monitoringProfile?.rules?.totalRounds || state.lastMonitoringProfile?.rules?.totalRounds
-    );
+    const profile = state.monitoringProfile || state.lastMonitoringProfile || {};
+    const intervalRule = getActiveAnalysisIntervalRule(state, profile.rules || {});
 
     return getMonitoringDetailCopy(
       language,
       state.roundCount,
-      formatAnalysisIntervalLabel(language, intervalRule),
-      formatTotalRoundsLabel(language, totalRounds)
+      formatAnalysisIntervalLabel(language, intervalRule)
     );
   }
 
@@ -745,25 +1094,366 @@ function getStatusBadgeLabel(language, status) {
   return t(language, `status_${status}`);
 }
 
-function populateAnalysisIntervalOptions(language, selectedValue = "5m") {
-  analysisIntervalSelect.innerHTML = ANALYSIS_INTERVAL_OPTIONS
+function buildAnalysisIntervalOptions(language) {
+  return ANALYSIS_INTERVAL_OPTIONS
     .map((option) => `<option value="${option.value}">${escapeHtml(t(language, `analysisInterval_${option.value}`))}</option>`)
     .join("");
-  analysisIntervalSelect.value = normalizeAnalysisInterval(selectedValue);
 }
 
-function populateTotalRoundsOptions(language, selectedValue = `${DEFAULT_TOTAL_ROUNDS}`) {
-  totalRoundsSelect.innerHTML = TOTAL_ROUNDS_OPTIONS
-    .map((option) => `<option value="${option.value}">${escapeHtml(t(language, `totalRounds_${option.value}`))}</option>`)
-    .join("");
-  totalRoundsSelect.value = normalizeTotalRounds(selectedValue);
+function populateAnalysisIntervalSelect(select, language, selectedValue = "5m") {
+  select.innerHTML = buildAnalysisIntervalOptions(language);
+  select.value = normalizeAnalysisInterval(selectedValue);
+}
+
+function populateIntervalSelects({ entrySelect, pendingSelect, positionSelect }, language, rules = {}) {
+  const intervals = normalizeAnalysisIntervalRules(rules);
+  populateAnalysisIntervalSelect(entrySelect, language, intervals.entryInterval);
+  populateAnalysisIntervalSelect(pendingSelect, language, intervals.pendingInterval);
+  populateAnalysisIntervalSelect(positionSelect, language, intervals.positionInterval);
+}
+
+function populateSellStrategyInputs({ quickProfitInput, maxLossInput }, rules = {}) {
+  const sellRules = normalizeSellStrategyRules(rules);
+  quickProfitInput.value = sellRules.quickProfitDelta;
+  maxLossInput.value = sellRules.maxLossDelta;
 }
 
 function populateContextForm(state, language) {
   const profile = state.monitoringProfile || state.lastMonitoringProfile;
   symbolOverrideInput.value = profile?.symbolOverride ?? "";
-  populateAnalysisIntervalOptions(language, normalizeAnalysisInterval(profile?.rules?.analysisInterval));
-  populateTotalRoundsOptions(language, normalizeTotalRounds(profile?.rules?.totalRounds));
+  populateIntervalSelects({
+    entrySelect: entryIntervalSelect,
+    pendingSelect: pendingIntervalSelect,
+    positionSelect: positionIntervalSelect
+  }, language, profile?.rules);
+  populateSellStrategyInputs({
+    quickProfitInput: quickProfitDeltaInput,
+    maxLossInput: maxLossDeltaInput
+  }, profile?.rules);
+}
+
+function isMarketContextSetupActive(state) {
+  return state.status === STATUS.AWAITING_CONTEXT
+    && Boolean(state.monitoringProfile || state.lastMonitoringProfile)
+    && Boolean(state.marketContext?.symbol);
+}
+
+function formatMarketContextValue(language, value, prefix) {
+  const key = `${prefix}_${value}`;
+  const label = t(language, key);
+  return label === key ? (value || t(language, "unknown")) : label;
+}
+
+function renderKeyLevelList(language, keyLevels) {
+  if (!Array.isArray(keyLevels) || keyLevels.length === 0) {
+    return `<p class="form-hint">${escapeHtml(t(language, "marketContextNoKeyLevels"))}</p>`;
+  }
+
+  return `<ol class="market-context-levels">
+    ${keyLevels.map((level) => {
+      const zone = level.zoneLow && level.zoneHigh
+        ? ` (${level.zoneLow}-${level.zoneHigh})`
+        : "";
+      return `<li>
+        <span class="level-price">${escapeHtml(level.price || t(language, "nA"))}${escapeHtml(zone)}</span>
+        <span class="level-meta">${escapeHtml(formatMarketContextValue(language, level.strength, "levelStrength"))} · ${escapeHtml(formatMarketContextValue(language, level.type, "levelType"))} · ${escapeHtml(level.timeframe || "")}</span>
+        <span class="level-reason">${escapeHtml(level.reason || "")}</span>
+      </li>`;
+    }).join("")}
+  </ol>`;
+}
+
+function renderMarketContextSummary(state, language) {
+  const summary = state.marketContext?.summary;
+  if (!summary) {
+    marketContextSummary.innerHTML = "";
+    marketContextSummary.classList.add("hidden");
+    return;
+  }
+
+  marketContextSummary.innerHTML = `
+    <h3>${escapeHtml(t(language, "marketContextSummaryTitle"))}</h3>
+    <div class="analysis-grid">
+      ${renderMetricCard(language, t(language, "marketContextRegime"), formatMarketContextValue(language, summary.regime, "marketRegime"))}
+      ${renderMetricCard(language, t(language, "marketContextAggression"), formatMarketContextValue(language, summary.aggression, "marketAggression"))}
+      ${renderMetricCard(language, t(language, "marketContextDipBuyPolicy"), formatMarketContextValue(language, summary.dipBuyPolicy, "marketDipBuyPolicy"))}
+      ${renderMetricCard(language, t(language, "marketContextProfitTakingStyle"), formatMarketContextValue(language, summary.profitTakingStyle, "marketProfitTakingStyle"))}
+      ${renderMetricCard(language, t(language, "marketContextRiskNotes"), summary.riskNotes || t(language, "nA"), { fullSpan: true })}
+    </div>
+    <h3>${escapeHtml(t(language, "marketContextKeyLevels"))}</h3>
+    ${renderKeyLevelList(language, summary.keyLevels)}
+  `;
+  marketContextSummary.classList.remove("hidden");
+}
+
+function getInitialPositionSelection() {
+  const mode = initialPositionMode === "holding" ? "holding" : "flat";
+  return {
+    mode,
+    entryPrice: initialEntryPriceInput.value.trim(),
+    entryPriceValid: mode !== "holding" || parsePositivePrice(initialEntryPriceInput.value) !== null
+  };
+}
+
+function renderInitialPositionPanel(language, complete) {
+  initialPositionPanel.classList.toggle("hidden", !complete);
+  if (!complete) {
+    initialPositionMode = "flat";
+    initialEntryPriceInput.value = "";
+    return { mode: "flat", entryPrice: "", entryPriceValid: true };
+  }
+
+  const selected = getInitialPositionSelection();
+  initialPositionTitle.textContent = t(language, "initialPositionTitle");
+  initialPositionCopy.textContent = t(language, "initialPositionCopy");
+  initialPositionFlatLabel.textContent = t(language, "initialPositionFlat");
+  initialPositionHoldingLabel.textContent = t(language, "initialPositionHolding");
+  initialEntryPriceLabel.textContent = t(language, "initialEntryPriceLabel");
+  initialPositionFlatRadio.checked = selected.mode === "flat";
+  initialPositionHoldingRadio.checked = selected.mode === "holding";
+  initialEntryPriceField.classList.toggle("hidden", selected.mode !== "holding");
+  initialPositionHint.textContent = selected.mode === "holding"
+    ? t(language, "initialPositionHoldingHint")
+    : t(language, "initialPositionFlatHint");
+
+  return selected;
+}
+
+function renderPremarketDipPlanResult(state, language, canAdopt) {
+  const plan = state.premarketDipPlan;
+  if (!plan) {
+    premarketDipResult.innerHTML = "";
+    premarketDipResult.classList.add("hidden");
+    return;
+  }
+
+  const support = plan.nearestSupport
+    ? `${plan.nearestSupport} / ${formatMarketContextValue(language, plan.supportStrength, "levelStrength")}`
+    : t(language, "nA");
+  const adoptDisabled = !canAdopt || isAdoptingPremarketDipPlan;
+  const adoptText = isAdoptingPremarketDipPlan
+    ? t(language, "premarketAdopting")
+    : t(language, "premarketAdoptButton");
+
+  premarketDipResult.innerHTML = `
+    <div class="analysis-grid">
+      ${renderMetricCard(language, t(language, "premarketAction"), formatActionLabel(language, plan.action), { tone: "buy" })}
+      ${renderMetricCard(language, t(language, "orderPriceLabel"), plan.orderPrice)}
+      ${renderMetricCard(language, t(language, "stopLossPriceLabel"), plan.stopLossPrice)}
+      ${renderMetricCard(language, t(language, "targetPriceLabel"), plan.targetPrice)}
+      ${renderMetricCard(language, t(language, "confidenceLabel"), formatConfidenceLabel(language, plan.confidence), { tone: `confidence-${getConfidenceTone(plan.confidence)}` })}
+      ${renderMetricCard(language, t(language, "premarketDiscount"), plan.discountPercent || `${PREMARKET_DIP_DISCOUNT_PERCENT}%`)}
+      ${renderMetricCard(language, t(language, "premarketNearestSupport"), support, { fullSpan: true })}
+      ${renderMetricCard(language, t(language, "premarketReasoning"), plan.reasoning, { fullSpan: true })}
+    </div>
+    <div class="form-actions">
+      <button id="adoptPremarketDipButton" class="mode-button buy-button" type="button" ${adoptDisabled ? "disabled" : ""}>
+        ${escapeHtml(adoptText)}
+      </button>
+    </div>
+  `;
+  premarketDipResult.classList.remove("hidden");
+}
+
+function renderPremarketDipPlanPanel(state, language, apiReady, complete) {
+  const shouldShow = complete;
+  premarketDipPanel.classList.toggle("hidden", !shouldShow);
+  if (!shouldShow) {
+    premarketDipResult.innerHTML = "";
+    premarketDipResult.classList.add("hidden");
+    premarketDipError.textContent = "";
+    premarketDipError.classList.add("hidden");
+    return;
+  }
+
+  const inWindow = isWithinPremarketDipWindow(new Date());
+  const hasPendingLimit = Boolean(state.pendingLimitOrder);
+  const hasOpenPosition = Boolean(state.virtualPosition);
+  const plan = state.premarketDipPlan;
+
+  if (plan?.referenceClose && !premarketReferenceCloseTouched && !premarketReferenceCloseInput.value) {
+    premarketReferenceCloseInput.value = plan.referenceClose;
+  }
+  const referenceCloseValid = parsePositivePrice(premarketReferenceCloseInput.value) !== null;
+
+  premarketDipTitle.textContent = t(language, "premarketDipTitle");
+  premarketDipCopy.textContent = t(language, "premarketDipCopy", {
+    discount: PREMARKET_DIP_DISCOUNT_PERCENT
+  });
+  premarketReferenceCloseLabel.textContent = t(language, "premarketReferenceCloseLabel");
+  generatePremarketDipButton.textContent = isGeneratingPremarketDipPlan
+    ? t(language, "premarketGenerating")
+    : t(language, "premarketGenerateButton");
+
+  let hint = inWindow ? t(language, "premarketDipAvailable") : t(language, "premarketDipUnavailable");
+  if (!inWindow) {
+    hint = t(language, "premarketDipUnavailable");
+  } else if (hasPendingLimit) {
+    hint = t(language, "limitAlreadyPending");
+  } else if (hasOpenPosition) {
+    hint = t(language, "limitBuyWhileHolding");
+  } else if (!referenceCloseValid) {
+    hint = t(language, "premarketReferenceCloseInvalid");
+  }
+  premarketDipAvailability.textContent = hint;
+
+  generatePremarketDipButton.disabled = !apiReady
+    || !inWindow
+    || !referenceCloseValid
+    || hasPendingLimit
+    || hasOpenPosition
+    || isGeneratingPremarketDipPlan
+    || isAdoptingPremarketDipPlan;
+
+  const canAdopt = apiReady && inWindow && !hasPendingLimit && !hasOpenPosition && Boolean(plan);
+  renderPremarketDipPlanResult(state, language, canAdopt);
+
+  if (!premarketDipError.textContent) {
+    premarketDipError.classList.add("hidden");
+  }
+}
+
+function renderMarketContextSection(state, language, apiReady) {
+  const shouldShow = isMarketContextSetupActive(state);
+  marketContextSection.classList.toggle("hidden", !shouldShow);
+  if (!shouldShow) {
+    initialPositionMode = "flat";
+    initialEntryPriceInput.value = "";
+    initialPositionPanel.classList.add("hidden");
+    renderPremarketDipPlanPanel(state, language, apiReady, false);
+    marketContextFiveMinuteReminder.textContent = "";
+    marketContextFiveMinuteReminder.classList.add("hidden");
+    marketContextError.textContent = "";
+    marketContextError.classList.add("hidden");
+    return;
+  }
+
+  const marketContext = state.marketContext || {};
+  const dailyDone = Boolean(marketContext.dailyScan);
+  const hourlyDone = Boolean(marketContext.hourlyScan);
+  const complete = marketContext.status === MARKET_CONTEXT_STATUS.COMPLETE && Boolean(marketContext.summary);
+
+  marketContextTitle.textContent = t(language, "marketContextTitle");
+  marketContextCopy.textContent = t(language, "marketContextCopy", {
+    symbol: marketContext.symbol || state.monitoringProfile?.symbolOverride || t(language, "unknown")
+  });
+  dailyContextTitle.textContent = t(language, "marketContextDailyTitle");
+  dailyContextInstructions.textContent = t(language, "marketContextDailyInstructions");
+  hourlyContextTitle.textContent = t(language, "marketContextHourlyTitle");
+  hourlyContextInstructions.textContent = t(language, "marketContextHourlyInstructions");
+  scanDailyContextButton.textContent = scanningMarketContextTimeframe === "daily"
+    ? t(language, "marketContextScanning")
+    : (dailyDone ? t(language, "rescanDailyContext") : t(language, "scanDailyContext"));
+  scanHourlyContextButton.textContent = scanningMarketContextTimeframe === "1h"
+    ? t(language, "marketContextScanning")
+    : (hourlyDone ? t(language, "rescanHourlyContext") : t(language, "scanHourlyContext"));
+  confirmMarketContextButton.textContent = isConfirmingMarketContext
+    ? t(language, "startMonitoringProgress")
+    : t(language, "confirmMarketContext");
+
+  dailyContextStep.dataset.status = dailyDone ? "done" : "pending";
+  hourlyContextStep.dataset.status = hourlyDone ? "done" : "pending";
+  scanDailyContextButton.disabled = !apiReady || scanningMarketContextTimeframe !== null || isConfirmingMarketContext;
+  scanHourlyContextButton.disabled = !apiReady || !dailyDone || scanningMarketContextTimeframe !== null || isConfirmingMarketContext;
+  const initialPosition = renderInitialPositionPanel(language, complete);
+  const initialPositionInvalid = complete && !initialPosition.entryPriceValid;
+  confirmMarketContextButton.disabled = !apiReady
+    || !complete
+    || initialPositionInvalid
+    || scanningMarketContextTimeframe !== null
+    || isConfirmingMarketContext;
+  scanHourlyContextButton.title = dailyDone ? "" : t(language, "marketContextDailyRequired");
+  confirmMarketContextButton.title = initialPositionInvalid
+    ? t(language, "initialEntryPriceInvalid")
+    : (complete ? "" : t(language, "marketContextNotComplete"));
+  marketContextFiveMinuteReminder.textContent = t(language, "marketContextFiveMinuteReminder");
+  marketContextFiveMinuteReminder.classList.toggle("hidden", !complete);
+
+  renderMarketContextSummary(state, language);
+  renderPremarketDipPlanPanel(state, language, apiReady, complete && initialPosition.mode !== "holding");
+
+  const error = marketContext.lastError || "";
+  if (error) {
+    marketContextError.textContent = error;
+    marketContextError.classList.remove("hidden");
+  } else {
+    marketContextError.textContent = "";
+    marketContextError.classList.add("hidden");
+  }
+}
+
+function formatAnalysisPhaseLabel(language, phase) {
+  return t(language, `analysisPhase_${phase}`);
+}
+
+function renderRuntimeIntervalSection(state, language, apiReady) {
+  const profile = state.monitoringProfile || state.lastMonitoringProfile;
+  const shouldShow = Boolean(profile) && (state.status === STATUS.RUNNING || state.status === STATUS.PAUSED);
+  runtimeIntervalSection.classList.toggle("hidden", !shouldShow);
+  if (!shouldShow) {
+    runtimeIntervalError.textContent = "";
+    runtimeIntervalError.classList.add("hidden");
+    return;
+  }
+
+  const intervals = normalizeAnalysisIntervalRules(profile.rules);
+  const phase = getAnalysisPhase(state);
+  const activeRule = getActiveAnalysisIntervalRule(state, profile.rules);
+  const recommendationKey = getIntervalRecommendationKey(new Date());
+  populateIntervalSelects({
+    entrySelect: runtimeEntryIntervalSelect,
+    pendingSelect: runtimePendingIntervalSelect,
+    positionSelect: runtimePositionIntervalSelect
+  }, language, intervals);
+
+  runtimeEntryIntervalSelect.disabled = !apiReady || isUpdatingRuntimeIntervals;
+  runtimePendingIntervalSelect.disabled = !apiReady || isUpdatingRuntimeIntervals;
+  runtimePositionIntervalSelect.disabled = !apiReady || isUpdatingRuntimeIntervals;
+
+  runtimeIntervalStatus.innerHTML = `
+    <p><strong>${escapeHtml(t(language, "analysisPhaseLabel"))}:</strong> ${escapeHtml(formatAnalysisPhaseLabel(language, phase))}</p>
+    <p><strong>${escapeHtml(t(language, "activeIntervalLabel"))}:</strong> ${escapeHtml(formatAnalysisIntervalLabel(language, activeRule))}</p>
+  `;
+  runtimeIntervalRecommendation.textContent = t(language, `intervalRecommendation_${recommendationKey}`);
+  runtimeIntervalRecommendation.classList.toggle("hidden", false);
+
+  if (!runtimeIntervalError.textContent) {
+    runtimeIntervalError.classList.add("hidden");
+  }
+}
+
+function renderRuntimeSellStrategySection(state, language, apiReady) {
+  const profile = state.monitoringProfile || state.lastMonitoringProfile;
+  const shouldShow = Boolean(profile) && (state.status === STATUS.RUNNING || state.status === STATUS.PAUSED);
+  runtimeSellStrategySection.classList.toggle("hidden", !shouldShow);
+  if (!shouldShow) {
+    runtimeSellStrategyError.textContent = "";
+    runtimeSellStrategyError.classList.add("hidden");
+    return;
+  }
+
+  const sellRules = normalizeSellStrategyRules(profile.rules);
+  if (runtimeQuickProfitDeltaInput.value !== sellRules.quickProfitDelta && !isUpdatingSellStrategy) {
+    runtimeQuickProfitDeltaInput.value = sellRules.quickProfitDelta;
+  }
+  if (runtimeMaxLossDeltaInput.value !== sellRules.maxLossDelta && !isUpdatingSellStrategy) {
+    runtimeMaxLossDeltaInput.value = sellRules.maxLossDelta;
+  }
+
+  runtimeQuickProfitDeltaInput.disabled = !apiReady || isUpdatingSellStrategy;
+  runtimeMaxLossDeltaInput.disabled = !apiReady || isUpdatingSellStrategy;
+
+  const levels = buildSellStrategyContext(state.virtualPosition, sellRules);
+  runtimeSellStrategyStatus.innerHTML = levels
+    ? `
+      <p><strong>${escapeHtml(t(language, "quickProfitTrigger"))}:</strong> ${escapeHtml(levels.quickProfitPrice)}</p>
+      <p><strong>${escapeHtml(t(language, "maxLossTrigger"))}:</strong> ${escapeHtml(levels.maxLossPrice)}</p>
+    `
+    : `<p>${escapeHtml(t(language, "sellStrategyFlatHint"))}</p>`;
+
+  if (!runtimeSellStrategyError.textContent) {
+    runtimeSellStrategyError.classList.add("hidden");
+  }
 }
 
 async function render() {
@@ -773,7 +1463,7 @@ async function render() {
   try {
     await chrome.runtime.sendMessage({ type: "check-stale-position" });
   } catch {
-    // Service worker may be asleep; the onStartup/runMonitoringRound hooks will still catch it.
+    // Service worker may be asleep; the next monitoring round still catches it.
   }
 
   const state = await getState();
@@ -786,49 +1476,31 @@ async function render() {
   summaryText.textContent = getSummary(state, language);
   apiKeyInput.value = "";
   renderAnalysisCard(state, language);
+  renderSignalReviewPanel(state, language);
   renderPositionPanels(state, language);
-  renderLongTermFormWidget(state, language);
   renderRecentRounds(state, language);
   renderStatsCard(state, language);
   renderTradeJournal(state, language);
   apiSetupSection.classList.toggle("hidden", apiReady);
+  renderRuntimeIntervalSection(state, language, apiReady);
+  renderRuntimeSellStrategySection(state, language, apiReady);
+  renderMarketContextSection(state, language, apiReady);
 
   const hasSavedSession = hasSavedMonitoringSession(state);
   const isBusy = state.status === STATUS.RUNNING || state.status === STATUS.VALIDATING || isStartingMonitoring;
 
-  // Block Exit and Restart while there's still untracked broker state on the
-  // user's account. virtualPosition = real shares held; pendingLimitOrder =
-  // resting order at broker. Either condition means tearing down the session
-  // would leave the broker out of sync with the extension's view, and the
-  // next AI round would (incorrectly) treat the user as flat. The user must
-  // resolve via Mark sold / Cancel limit before exiting or restarting.
-  // Stop is still allowed — it pauses but preserves all state for Continue.
-  const hasOpenPosition = !!state.virtualPosition;
-  const hasPendingLimit = !!state.pendingLimitOrder;
-  const sessionEndBlockedReason = hasOpenPosition
-    ? t(language, "sessionEndBlockedByPosition")
-    : hasPendingLimit
-      ? t(language, "sessionEndBlockedByPending")
-      : "";
-  const sessionEndBlocked = !!sessionEndBlockedReason;
-
   stopMonitorButton.disabled = !isBusy;
   continueMonitorButton.disabled = !apiReady || state.status === STATUS.RUNNING || !hasSavedSession;
-  restartMonitorButton.disabled = !apiReady || !hasSavedSession || sessionEndBlocked;
-  exitMonitorButton.disabled = isStartingMonitoring || sessionEndBlocked;
-
-  // Tooltip explains WHY the buttons are disabled — a grey button with no
-  // explanation is the kind of thing that has users blaming the extension
-  // for being broken.
-  restartMonitorButton.title = sessionEndBlockedReason;
-  exitMonitorButton.title = sessionEndBlockedReason;
+  exitMonitorButton.disabled = isStartingMonitoring;
+  exitMonitorButton.title = "";
   confirmButton.disabled = isStartingMonitoring;
 
-  contextSection.classList.toggle("hidden", state.status !== STATUS.AWAITING_CONTEXT);
+  const marketContextSetupActive = isMarketContextSetupActive(state);
+  contextSection.classList.toggle("hidden", state.status !== STATUS.AWAITING_CONTEXT || marketContextSetupActive);
   saveApiKeyButton.disabled = false;
   clearApiKeyButton.disabled = false;
 
-  if (state.status === STATUS.AWAITING_CONTEXT) {
+  if (state.status === STATUS.AWAITING_CONTEXT && !marketContextSetupActive) {
     populateContextForm(state, language);
   }
 
@@ -850,7 +1522,6 @@ continueMonitorButton.addEventListener("click", async () => {
   const settings = await getSettings();
   const language = getLanguage(settings.language);
   continueMonitorButton.disabled = true;
-  restartMonitorButton.disabled = true;
   summaryText.textContent = t(language, "continuingSession");
   isStartingMonitoring = true;
 
@@ -871,26 +1542,83 @@ continueMonitorButton.addEventListener("click", async () => {
   await render();
 });
 
-restartMonitorButton.addEventListener("click", async () => {
+reviewSignalButton.addEventListener("click", () => {
+  isReviewFormOpen = true;
+  signalReviewError.textContent = "";
+  signalReviewError.classList.add("hidden");
+  void render();
+});
+
+ignoreReviewButton.addEventListener("click", async () => {
+  ignoreReviewButton.disabled = true;
+  await chrome.runtime.sendMessage({ type: "dismiss-signal-review" });
+  await render();
+});
+
+cancelReviewSignalButton.addEventListener("click", async () => {
+  isReviewFormOpen = false;
+  reviewChallengeInput.value = "";
+  signalReviewError.textContent = "";
+  signalReviewError.classList.add("hidden");
+  await render();
+});
+
+signalReviewForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+
   const settings = await getSettings();
   const language = getLanguage(settings.language);
-  continueMonitorButton.disabled = true;
-  restartMonitorButton.disabled = true;
-  summaryText.textContent = t(language, "restartingSession");
-  isStartingMonitoring = true;
+  const userChallenge = reviewChallengeInput.value.trim();
 
-  const state = await getState();
-  renderAnalysisCard({ ...state, status: STATUS.RUNNING, roundCount: 0, lastResult: null }, language);
+  signalReviewError.textContent = "";
+  signalReviewError.classList.add("hidden");
 
-  let response;
-  try {
-    response = await chrome.runtime.sendMessage({ type: "restart-monitoring" });
-  } finally {
-    isStartingMonitoring = false;
+  if (!userChallenge) {
+    signalReviewError.textContent = t(language, "reviewInputRequired");
+    signalReviewError.classList.remove("hidden");
+    return;
   }
 
-  if (!response?.ok) {
-    summaryText.textContent = response?.error || t(language, "couldNotRestart");
+  isReviewingSignal = true;
+  submitReviewSignalButton.disabled = true;
+  reviewSignalButton.disabled = true;
+
+  try {
+    const response = await chrome.runtime.sendMessage({ type: "review-signal", userChallenge });
+    if (!response?.ok) {
+      signalReviewError.textContent = response?.error || t(language, "couldNotReviewSignal");
+      signalReviewError.classList.remove("hidden");
+    } else {
+      isReviewFormOpen = false;
+      reviewChallengeInput.value = "";
+    }
+  } finally {
+    isReviewingSignal = false;
+  }
+
+  await render();
+});
+
+signalReviewResult.addEventListener("click", async (event) => {
+  if (event.target?.id !== "acceptReviewedSignalButton") {
+    return;
+  }
+
+  const settings = await getSettings();
+  const language = getLanguage(settings.language);
+
+  isAcceptingReviewedSignal = true;
+  try {
+    const response = await chrome.runtime.sendMessage({ type: "accept-reviewed-signal" });
+    if (!response?.ok) {
+      signalReviewError.textContent = response?.error || t(language, "couldNotStart");
+      signalReviewError.classList.remove("hidden");
+    } else {
+      signalReviewError.textContent = "";
+      signalReviewError.classList.add("hidden");
+    }
+  } finally {
+    isAcceptingReviewedSignal = false;
   }
 
   await render();
@@ -1039,38 +1767,222 @@ clearApiKeyButton.addEventListener("click", async () => {
   await render();
 });
 
-async function runLongTermGenerate({ timeframe, errorEl }) {
+async function runMarketContextScan(timeframe) {
   const settings = await getSettings();
   const language = getLanguage(settings.language);
-  errorEl.textContent = "";
-  errorEl.classList.add("hidden");
-
-  isGeneratingLongTerm = true;
+  marketContextError.textContent = "";
+  marketContextError.classList.add("hidden");
+  scanningMarketContextTimeframe = timeframe;
   await render();
+
   try {
-    const response = await chrome.runtime.sendMessage({
-      type: "generate-long-term-context",
-      timeframe
-    });
+    const response = await chrome.runtime.sendMessage({ type: "scan-market-context", timeframe });
     if (!response?.ok) {
-      errorEl.textContent = response?.error || t(language, "longTermGenerateFailed");
-      errorEl.classList.remove("hidden");
+      marketContextError.textContent = response?.error || t(language, "couldNotScanMarketContext");
+      marketContextError.classList.remove("hidden");
     }
-  } catch (error) {
-    errorEl.textContent = error?.message || t(language, "longTermGenerateFailed");
-    errorEl.classList.remove("hidden");
   } finally {
-    isGeneratingLongTerm = false;
-    await render();
+    scanningMarketContextTimeframe = null;
   }
+
+  await render();
 }
 
-longTermFormGenerateButton.addEventListener("click", () => {
-  void runLongTermGenerate({
-    timeframe: longTermFormTimeframeSelect.value || "daily",
-    errorEl: longTermFormError
-  });
+scanDailyContextButton.addEventListener("click", async () => {
+  await runMarketContextScan("daily");
 });
+
+scanHourlyContextButton.addEventListener("click", async () => {
+  await runMarketContextScan("1h");
+});
+
+confirmMarketContextButton.addEventListener("click", async () => {
+  const settings = await getSettings();
+  const language = getLanguage(settings.language);
+  const initialPosition = getInitialPositionSelection();
+  marketContextError.textContent = "";
+  marketContextError.classList.add("hidden");
+
+  if (!initialPosition.entryPriceValid) {
+    marketContextError.textContent = t(language, "initialEntryPriceInvalid");
+    marketContextError.classList.remove("hidden");
+    await render();
+    return;
+  }
+
+  isConfirmingMarketContext = true;
+  await render();
+
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: "confirm-market-context",
+      initialPositionMode: initialPosition.mode,
+      initialEntryPrice: initialPosition.entryPrice
+    });
+    if (!response?.ok) {
+      marketContextError.textContent = response?.error || t(language, "marketContextNotComplete");
+      marketContextError.classList.remove("hidden");
+    }
+  } finally {
+    isConfirmingMarketContext = false;
+  }
+
+  await render();
+});
+
+for (const radio of [initialPositionFlatRadio, initialPositionHoldingRadio]) {
+  radio.addEventListener("change", () => {
+    initialPositionMode = initialPositionHoldingRadio.checked ? "holding" : "flat";
+    marketContextError.textContent = "";
+    marketContextError.classList.add("hidden");
+    void render();
+  });
+}
+
+initialEntryPriceInput.addEventListener("input", () => {
+  void render();
+});
+
+premarketReferenceCloseInput.addEventListener("input", () => {
+  premarketReferenceCloseTouched = true;
+  void render();
+});
+
+generatePremarketDipButton.addEventListener("click", async () => {
+  const settings = await getSettings();
+  const language = getLanguage(settings.language);
+  premarketDipError.textContent = "";
+  premarketDipError.classList.add("hidden");
+  isGeneratingPremarketDipPlan = true;
+  await render();
+
+  let response;
+  let sendError = null;
+  try {
+    response = await chrome.runtime.sendMessage({
+      type: "generate-premarket-dip-plan",
+      referenceClose: premarketReferenceCloseInput.value
+    });
+  } catch (error) {
+    sendError = error;
+  } finally {
+    isGeneratingPremarketDipPlan = false;
+  }
+
+  if (sendError || !response?.ok) {
+    premarketDipError.textContent = sendError?.message || response?.error || t(language, "couldNotGeneratePremarketDip");
+    premarketDipError.classList.remove("hidden");
+  }
+
+  await render();
+});
+
+premarketDipResult.addEventListener("click", async (event) => {
+  const button = event.target?.closest?.("#adoptPremarketDipButton");
+  if (!button) return;
+
+  const settings = await getSettings();
+  const language = getLanguage(settings.language);
+  premarketDipError.textContent = "";
+  premarketDipError.classList.add("hidden");
+  isAdoptingPremarketDipPlan = true;
+  await render();
+
+  let response;
+  let sendError = null;
+  try {
+    response = await chrome.runtime.sendMessage({ type: "adopt-premarket-dip-plan" });
+  } catch (error) {
+    sendError = error;
+  } finally {
+    isAdoptingPremarketDipPlan = false;
+  }
+
+  if (sendError || !response?.ok) {
+    premarketDipError.textContent = sendError?.message || response?.error || t(language, "couldNotAdoptPremarketDip");
+    premarketDipError.classList.remove("hidden");
+  }
+
+  await render();
+});
+
+async function updateRuntimeIntervals() {
+  const settings = await getSettings();
+  const language = getLanguage(settings.language);
+  const nextEntryInterval = runtimeEntryIntervalSelect.value;
+  const nextPendingInterval = runtimePendingIntervalSelect.value;
+  const nextPositionInterval = runtimePositionIntervalSelect.value;
+  runtimeIntervalError.textContent = "";
+  runtimeIntervalError.classList.add("hidden");
+  isUpdatingRuntimeIntervals = true;
+  await render();
+
+  let response;
+  let sendError = null;
+  try {
+    response = await chrome.runtime.sendMessage({
+      type: "update-analysis-intervals",
+      entryInterval: nextEntryInterval,
+      pendingInterval: nextPendingInterval,
+      positionInterval: nextPositionInterval
+    });
+  } catch (error) {
+    sendError = error;
+  } finally {
+    isUpdatingRuntimeIntervals = false;
+  }
+
+  if (sendError || !response?.ok) {
+    runtimeIntervalError.textContent = sendError?.message || response?.error || t(language, "couldNotUpdateIntervals");
+    runtimeIntervalError.classList.remove("hidden");
+  }
+
+  await render();
+}
+
+for (const select of [runtimeEntryIntervalSelect, runtimePendingIntervalSelect, runtimePositionIntervalSelect]) {
+  select.addEventListener("change", () => {
+    void updateRuntimeIntervals();
+  });
+}
+
+async function updateRuntimeSellStrategy() {
+  const settings = await getSettings();
+  const language = getLanguage(settings.language);
+  const quickProfitDelta = runtimeQuickProfitDeltaInput.value;
+  const maxLossDelta = runtimeMaxLossDeltaInput.value;
+  runtimeSellStrategyError.textContent = "";
+  runtimeSellStrategyError.classList.add("hidden");
+  isUpdatingSellStrategy = true;
+  await render();
+
+  let response;
+  let sendError = null;
+  try {
+    response = await chrome.runtime.sendMessage({
+      type: "update-sell-strategy",
+      quickProfitDelta,
+      maxLossDelta
+    });
+  } catch (error) {
+    sendError = error;
+  } finally {
+    isUpdatingSellStrategy = false;
+  }
+
+  if (sendError || !response?.ok) {
+    runtimeSellStrategyError.textContent = sendError?.message || response?.error || t(language, "couldNotUpdateSellStrategy");
+    runtimeSellStrategyError.classList.remove("hidden");
+  }
+
+  await render();
+}
+
+for (const input of [runtimeQuickProfitDeltaInput, runtimeMaxLossDeltaInput]) {
+  input.addEventListener("change", () => {
+    void updateRuntimeSellStrategy();
+  });
+}
 
 function debounce(fn, wait) {
   let timer = null;
@@ -1115,8 +2027,11 @@ contextForm.addEventListener("submit", async (event) => {
     response = await chrome.runtime.sendMessage({
       type: "start-monitoring",
       symbolOverride: symbolOverrideInput.value,
-      analysisInterval: analysisIntervalSelect.value,
-      totalRounds: totalRoundsSelect.value
+      entryInterval: entryIntervalSelect.value,
+      pendingInterval: pendingIntervalSelect.value,
+      positionInterval: positionIntervalSelect.value,
+      quickProfitDelta: quickProfitDeltaInput.value,
+      maxLossDelta: maxLossDeltaInput.value
     });
   } catch (error) {
     sendError = error;
