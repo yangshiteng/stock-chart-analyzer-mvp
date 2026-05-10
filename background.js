@@ -1559,7 +1559,16 @@ async function startMonitoring(payload) {
     )
   );
   const currentState = await getState();
-  const marketContext = createMarketContextForProfile(baseProfile);
+  // Preserve a still-valid Market Context Scan across the form submission.
+  // Without this, every Start Monitoring click wipes the scan even when the
+  // user just scanned moments earlier — directly contradicting the
+  // shouldPreserveMarketContextAcrossReset preservation in
+  // buildResetStatePreservingHistory(). isMarketContextValidForProfile gates
+  // on COMPLETE status + same ticker + same trading day, so cross-day or
+  // ticker-change submissions still get a fresh blank context as before.
+  const marketContext = isMarketContextValidForProfile(currentState.marketContext, baseProfile)
+    ? currentState.marketContext
+    : createMarketContextForProfile(baseProfile);
 
   const state = await patchState({
     status: STATUS.AWAITING_CONTEXT,
