@@ -220,6 +220,18 @@ Completed (performance stats action breakdown removal):
 - Removed the Performance Stats "By Action" section because the limit-only action vocabulary leaves `BUY_LIMIT` as the only current entry action. Keeping `BUY_NOW` vs `BUY_LIMIT` buckets only surfaced legacy history and no longer helped calibration.
 - `computeTradeStats()` now returns only `{ overall, byConfidence }`; the UI keeps the overall summary and confidence calibration table.
 
+Completed (dip-buy discount — user-controlled BUY_LIMIT buffer):
+- **Trigger**: real-trade testing showed the prompt's "marketable limit" wording was getting users chopped — AI gave BUY_LIMIT @ near-current, fill, EMA break → SELL_NOW → recovery. Classic chop kill.
+- **Design** (symmetric to sell-strategy parameterization): new `lib/buy-strategy.js` with `DEFAULT_DIP_BUY_DISCOUNT = "0.20"` and `normalizeBuyStrategyRules / calculateMaxBuyOrderPrice / buildBuyStrategyContext` helpers. Saved on `monitoringProfile.rules.dipBuyDiscount` alongside the existing sell deltas.
+- **Prompt injection**: `formatBuyStrategySection()` injects `[BUY_STRATEGY]` ONLY in entry mode. When a previous round's currentPrice is available, the section shows a concrete max allowed orderPrice as guidance (computed from `lastSignal.currentPrice - discount`); on round 1 it tells the model to compute the gate itself from its freshly observed currentPrice. Hard rule: any BUY_LIMIT must have `orderPrice <= currentPrice - dipBuyDiscount`.
+- **Schema-side enforcement**: `validateAnalysisResult()` now takes a 3rd `buyStrategy` arg. When BUY_LIMIT is returned, it computes `maxAllowed = analysis.currentPrice - buyStrategy.dipBuyDiscount` (using the AI's freshly returned currentPrice, not a stale hint) and throws if `orderPrice > maxAllowed`. Existing `ANALYSIS_VALIDATION_MAX_ATTEMPTS = 2` gives one retry; persistent violation surfaces as a round failure with a descriptive message.
+- **UI**: new field in the start-session form + a runtime adjustment card mirroring the sell-strategy panel (`runtimeBuyStrategySection`). Default $0.20.
+- **State migration**: STATE_VERSION 10 → 11. `normalizeStoredProfile` now runs through `normalizeBuyStrategyRules` too, so old profiles get the default applied on first read; v11 hook re-normalizes proactively.
+- **Background handler**: new `update-buy-strategy` message route + `updateBuyStrategy` handler, parallels `updateSellStrategy`.
+- **Why NOT make this a prompt-only rule**: LLMs are unreliable at obeying soft constraints, especially numerical ones ("don't issue marketable limits"). Hard schema validation + the user-set buffer makes the constraint binding. Also: different stocks have different sensible discounts ($0.20 on a $30 stock vs a $200 stock), so the right value can only come from the user.
+- **Design parallel**: this is the third example of the same pattern — user sets a parameter, prompt explains it to AI, schema validator enforces it. (Sell strategy quickProfitDelta / maxLossDelta, market-context dipBuyPolicy, now dipBuyDiscount.) Replicate this pattern for any future "AI's signal must respect user preference" feature.
+- **Tests**: 12 new cases in `test/buy-strategy.test.js` covering pure helpers; 5 new cases in `test/llm.test.js` covering BUY_STRATEGY prompt section + validator enforcement + back-compat (no buyStrategy = no gate). Suite: 163/163 green.
+
 ## Future work / not planned
 
 ### Known risks / follow-ups (small)
