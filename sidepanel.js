@@ -6,7 +6,6 @@ import {
   normalizeAnalysisInterval,
   normalizeAnalysisIntervalRules
 } from "./lib/analysis-intervals.js";
-import { normalizeBuyDelta, normalizeBuyStrategyRules } from "./lib/buy-strategy.js";
 import { getLanguage, t } from "./lib/i18n.js";
 import { MARKET_CONTEXT_STATUS } from "./lib/market-context.js";
 import { PREMARKET_DIP_DISCOUNT_PERCENT, isWithinPremarketDipWindow } from "./lib/premarket-dip.js";
@@ -49,14 +48,11 @@ const pendingIntervalLabel = document.getElementById("pendingIntervalLabel");
 const positionIntervalLabel = document.getElementById("positionIntervalLabel");
 const quickProfitDeltaLabel = document.getElementById("quickProfitDeltaLabel");
 const maxLossDeltaLabel = document.getElementById("maxLossDeltaLabel");
-const dipBuyDiscountLabel = document.getElementById("dipBuyDiscountLabel");
-const dipBuyDiscountHint = document.getElementById("dipBuyDiscountHint");
 const entryIntervalSelect = document.getElementById("entryIntervalSelect");
 const pendingIntervalSelect = document.getElementById("pendingIntervalSelect");
 const positionIntervalSelect = document.getElementById("positionIntervalSelect");
 const quickProfitDeltaInput = document.getElementById("quickProfitDeltaInput");
 const maxLossDeltaInput = document.getElementById("maxLossDeltaInput");
-const dipBuyDiscountInput = document.getElementById("dipBuyDiscountInput");
 const formError = document.getElementById("formError");
 const confirmButton = document.getElementById("confirmButton");
 const runtimeIntervalSection = document.getElementById("runtimeIntervalSection");
@@ -80,13 +76,6 @@ const runtimeMaxLossDeltaLabel = document.getElementById("runtimeMaxLossDeltaLab
 const runtimeQuickProfitDeltaInput = document.getElementById("runtimeQuickProfitDeltaInput");
 const runtimeMaxLossDeltaInput = document.getElementById("runtimeMaxLossDeltaInput");
 const runtimeSellStrategyError = document.getElementById("runtimeSellStrategyError");
-const runtimeBuyStrategySection = document.getElementById("runtimeBuyStrategySection");
-const runtimeBuyStrategyTitle = document.getElementById("runtimeBuyStrategyTitle");
-const runtimeBuyStrategyCopy = document.getElementById("runtimeBuyStrategyCopy");
-const runtimeBuyStrategyStatus = document.getElementById("runtimeBuyStrategyStatus");
-const runtimeDipBuyDiscountLabel = document.getElementById("runtimeDipBuyDiscountLabel");
-const runtimeDipBuyDiscountInput = document.getElementById("runtimeDipBuyDiscountInput");
-const runtimeBuyStrategyError = document.getElementById("runtimeBuyStrategyError");
 const marketContextSection = document.getElementById("marketContextSection");
 const marketContextTitle = document.getElementById("marketContextTitle");
 const marketContextCopy = document.getElementById("marketContextCopy");
@@ -170,7 +159,6 @@ let premarketReferenceCloseTouched = false;
 let initialPositionMode = "flat";
 let isUpdatingRuntimeIntervals = false;
 let isUpdatingSellStrategy = false;
-let isUpdatingBuyStrategy = false;
 
 // Set an input's value WITHOUT clobbering what the user is currently typing.
 // number / text inputs only fire `change` on blur or Enter, so any render() that
@@ -893,8 +881,6 @@ function updateStaticText(language, settings) {
   positionIntervalLabel.textContent = t(language, "positionInterval");
   quickProfitDeltaLabel.textContent = t(language, "quickProfitDelta");
   maxLossDeltaLabel.textContent = t(language, "maxLossDelta");
-  dipBuyDiscountLabel.textContent = t(language, "dipBuyDiscount");
-  dipBuyDiscountHint.textContent = t(language, "dipBuyDiscountHint");
   runtimeIntervalTitle.textContent = t(language, "runtimeIntervalTitle");
   runtimeIntervalCopy.textContent = t(language, "runtimeIntervalCopy");
   runtimeEntryIntervalLabel.textContent = t(language, "entryInterval");
@@ -904,9 +890,6 @@ function updateStaticText(language, settings) {
   runtimeSellStrategyCopy.textContent = t(language, "runtimeSellStrategyCopy");
   runtimeQuickProfitDeltaLabel.textContent = t(language, "quickProfitDelta");
   runtimeMaxLossDeltaLabel.textContent = t(language, "maxLossDelta");
-  runtimeBuyStrategyTitle.textContent = t(language, "runtimeBuyStrategyTitle");
-  runtimeBuyStrategyCopy.textContent = t(language, "runtimeBuyStrategyCopy");
-  runtimeDipBuyDiscountLabel.textContent = t(language, "dipBuyDiscount");
   confirmButton.textContent = t(language, "start");
   recommendationTitle.textContent = t(language, "latestRecommendation");
   apiKeyStatus.textContent = settings.openaiApiKey
@@ -987,11 +970,6 @@ function populateSellStrategyInputs({ quickProfitInput, maxLossInput }, rules = 
   safeSetInputValue(maxLossInput, sellRules.maxLossDelta);
 }
 
-function populateBuyStrategyInputs({ dipBuyInput }, rules = {}) {
-  const buyRules = normalizeBuyStrategyRules(rules);
-  safeSetInputValue(dipBuyInput, buyRules.dipBuyDiscount);
-}
-
 function populateContextForm(state, language) {
   const profile = state.monitoringProfile || state.lastMonitoringProfile;
   safeSetInputValue(symbolOverrideInput, profile?.symbolOverride ?? "");
@@ -1003,9 +981,6 @@ function populateContextForm(state, language) {
   populateSellStrategyInputs({
     quickProfitInput: quickProfitDeltaInput,
     maxLossInput: maxLossDeltaInput
-  }, profile?.rules);
-  populateBuyStrategyInputs({
-    dipBuyInput: dipBuyDiscountInput
   }, profile?.rules);
 }
 
@@ -1329,31 +1304,6 @@ function renderRuntimeSellStrategySection(state, language, apiReady) {
   }
 }
 
-function renderRuntimeBuyStrategySection(state, language, apiReady) {
-  const profile = state.monitoringProfile || state.lastMonitoringProfile;
-  const shouldShow = Boolean(profile) && (state.status === STATUS.RUNNING || state.status === STATUS.PAUSED);
-  runtimeBuyStrategySection.classList.toggle("hidden", !shouldShow);
-  if (!shouldShow) {
-    runtimeBuyStrategyError.textContent = "";
-    runtimeBuyStrategyError.classList.add("hidden");
-    return;
-  }
-
-  const buyRules = normalizeBuyStrategyRules(profile.rules);
-  safeSetInputValue(runtimeDipBuyDiscountInput, buyRules.dipBuyDiscount, isUpdatingBuyStrategy);
-
-  runtimeDipBuyDiscountInput.disabled = !apiReady || isUpdatingBuyStrategy;
-
-  // Status hint: if holding, dip-buy doesn't apply this session — surface that.
-  runtimeBuyStrategyStatus.innerHTML = state.virtualPosition
-    ? `<p>${escapeHtml(t(language, "buyStrategyHoldingHint"))}</p>`
-    : "";
-
-  if (!runtimeBuyStrategyError.textContent) {
-    runtimeBuyStrategyError.classList.add("hidden");
-  }
-}
-
 async function render() {
   // Ask background to sweep stale (cross-trading-day) virtual positions before we read state.
   // Background handler is a cheap no-op when no position exists or position is same-day.
@@ -1381,7 +1331,6 @@ async function render() {
   apiSetupSection.classList.toggle("hidden", apiReady);
   renderRuntimeIntervalSection(state, language, apiReady);
   renderRuntimeSellStrategySection(state, language, apiReady);
-  renderRuntimeBuyStrategySection(state, language, apiReady);
   renderMarketContextSection(state, language, apiReady);
 
   const hasSavedSession = hasSavedMonitoringSession(state);
@@ -1800,40 +1749,6 @@ for (const input of [runtimeQuickProfitDeltaInput, runtimeMaxLossDeltaInput]) {
   });
 }
 
-async function updateRuntimeBuyStrategy() {
-  const settings = await getSettings();
-  const language = getLanguage(settings.language);
-  const dipBuyDiscount = runtimeDipBuyDiscountInput.value;
-  runtimeBuyStrategyError.textContent = "";
-  runtimeBuyStrategyError.classList.add("hidden");
-  isUpdatingBuyStrategy = true;
-  await render();
-
-  let response;
-  let sendError = null;
-  try {
-    response = await chrome.runtime.sendMessage({
-      type: "update-buy-strategy",
-      dipBuyDiscount
-    });
-  } catch (error) {
-    sendError = error;
-  } finally {
-    isUpdatingBuyStrategy = false;
-  }
-
-  if (sendError || !response?.ok) {
-    runtimeBuyStrategyError.textContent = sendError?.message || response?.error || t(language, "couldNotUpdateBuyStrategy");
-    runtimeBuyStrategyError.classList.remove("hidden");
-  }
-
-  await render();
-}
-
-runtimeDipBuyDiscountInput.addEventListener("change", () => {
-  void updateRuntimeBuyStrategy();
-});
-
 function debounce(fn, wait) {
   let timer = null;
   return (...args) => {
@@ -1881,8 +1796,7 @@ contextForm.addEventListener("submit", async (event) => {
       pendingInterval: pendingIntervalSelect.value,
       positionInterval: positionIntervalSelect.value,
       quickProfitDelta: quickProfitDeltaInput.value,
-      maxLossDelta: maxLossDeltaInput.value,
-      dipBuyDiscount: dipBuyDiscountInput.value
+      maxLossDelta: maxLossDeltaInput.value
     });
   } catch (error) {
     sendError = error;

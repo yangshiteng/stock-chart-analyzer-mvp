@@ -38,12 +38,6 @@ import {
   normalizePositiveDecimal
 } from "./lib/premarket-dip.js";
 import {
-  buildBuyStrategyContext,
-  isValidBuyDelta,
-  normalizeBuyDelta,
-  normalizeBuyStrategyRules
-} from "./lib/buy-strategy.js";
-import {
   buildSellStrategyContext,
   isValidSellDelta,
   normalizeSellDelta,
@@ -531,29 +525,6 @@ function getSellStrategyForState(state, monitoringProfile = null) {
   return buildSellStrategyContext(state.virtualPosition, profile?.rules || {});
 }
 
-function getBuyStrategyForState(state, monitoringProfile, hintCurrentPrice = null) {
-  // Only meaningful in entry mode (no position). The validator does the real
-  // enforcement using the AI's freshly-returned currentPrice, so the discount
-  // field is the source of truth; hintCurrentPrice is just for the prompt
-  // section so the AI sees a concrete "max allowed orderPrice" to target,
-  // even though it may shift slightly by the time the next round fires.
-  if (state.virtualPosition) {
-    return null;
-  }
-  const profile = monitoringProfile || state.monitoringProfile || state.lastMonitoringProfile || null;
-  const normalized = normalizeBuyStrategyRules(profile?.rules || {});
-  if (hintCurrentPrice) {
-    // Returns { currentPrice, dipBuyDiscount, maxOrderPrice } when hint price
-    // is readable. Both the discount and the hint max go to the prompt;
-    // validator only consults discount.
-    return buildBuyStrategyContext(hintCurrentPrice, normalized);
-  }
-  // No hint price yet (round 1) — still hand the discount through so the
-  // validator can enforce. Prompt section will display the discount without a
-  // concrete max number.
-  return { dipBuyDiscount: normalized.dipBuyDiscount };
-}
-
 async function rescheduleMonitoringAlarmIfRunning(state) {
   if (state?.status !== STATUS.RUNNING) {
     return;
@@ -642,7 +613,6 @@ async function buildMonitoringProfile(payload) {
   const positionInterval = `${payload.positionInterval || "1m"}`.trim();
   const quickProfitDeltaRaw = `${payload.quickProfitDelta || "0.20"}`.trim();
   const maxLossDeltaRaw = `${payload.maxLossDelta || "0.30"}`.trim();
-  const dipBuyDiscountRaw = `${payload.dipBuyDiscount || "0.20"}`.trim();
 
   if (
     !isValidAnalysisInterval(entryInterval)
@@ -656,13 +626,8 @@ async function buildMonitoringProfile(payload) {
     throw new Error(t(language, "chooseValidSellStrategy"));
   }
 
-  if (!isValidBuyDelta(dipBuyDiscountRaw)) {
-    throw new Error(t(language, "chooseValidBuyStrategy"));
-  }
-
   const quickProfitDelta = normalizeSellDelta(quickProfitDeltaRaw, "0.20");
   const maxLossDelta = normalizeSellDelta(maxLossDeltaRaw, "0.30");
-  const dipBuyDiscount = normalizeBuyDelta(dipBuyDiscountRaw, "0.20");
 
   return {
     symbolOverride,
@@ -671,8 +636,7 @@ async function buildMonitoringProfile(payload) {
       pendingInterval,
       positionInterval,
       quickProfitDelta,
-      maxLossDelta,
-      dipBuyDiscount
+      maxLossDelta
     }
   };
 }
@@ -1103,7 +1067,6 @@ async function runMonitoringRound() {
       mode,
       virtualPosition,
       sellStrategy: getSellStrategyForState(currentState, monitoringProfile),
-      buyStrategy: getBuyStrategyForState(currentState, monitoringProfile, lastSignal?.currentPrice || null),
       lastSignal,
       pendingLimitOrder,
       marketContext: currentState.marketContext?.summary || null
@@ -1634,49 +1597,6 @@ async function updateSellStrategy(payload) {
   return { ok: true, state };
 }
 
-function updateProfileBuyStrategy(profile, buyRules) {
-  if (!profile) {
-    return null;
-  }
-
-  const { dipBuyDiscount, ...restRules } = profile.rules || {};
-  void dipBuyDiscount;
-  return {
-    ...profile,
-    rules: {
-      ...restRules,
-      ...buyRules
-    }
-  };
-}
-
-async function updateBuyStrategy(payload) {
-  const language = await getUiLanguage();
-  const currentState = await getState();
-  const profile = currentState.monitoringProfile || currentState.lastMonitoringProfile;
-
-  if (!profile) {
-    throw new Error(t(language, "noPreviousSession"));
-  }
-
-  const dipBuyDiscountRaw = `${payload?.dipBuyDiscount || ""}`.trim();
-
-  if (!isValidBuyDelta(dipBuyDiscountRaw)) {
-    throw new Error(t(language, "chooseValidBuyStrategy"));
-  }
-
-  const buyRules = {
-    dipBuyDiscount: normalizeBuyDelta(dipBuyDiscountRaw, "0.20")
-  };
-  const state = await patchState({
-    monitoringProfile: updateProfileBuyStrategy(currentState.monitoringProfile, buyRules),
-    lastMonitoringProfile: updateProfileBuyStrategy(currentState.lastMonitoringProfile || profile, buyRules),
-    lastError: null
-  });
-
-  return { ok: true, state };
-}
-
 // onInstalled fires on first install, version update, AND every chrome://extensions reload.
 // Wiping the entire state on every reload used to nuke the trade journal — unacceptable now
 // that it feeds human review and the stats card. Preserve tradeHistory only; other fields
@@ -1923,11 +1843,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     if (message?.type === "update-analysis-intervals") {
       sendResponse(await updateAnalysisIntervals(message));
-      return;
-    }
-
-    if (message?.type === "update-buy-strategy") {
-      sendResponse(await updateBuyStrategy(message));
       return;
     }
 

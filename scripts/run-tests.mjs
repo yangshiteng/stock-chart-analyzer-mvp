@@ -1,6 +1,5 @@
 const testFiles = [
   "../test/analysis-intervals.test.js",
-  "../test/buy-strategy.test.js",
   "../test/chart-validator.test.js",
   "../test/discord-signal.test.js",
   "../test/llm.test.js",

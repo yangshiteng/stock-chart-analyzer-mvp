@@ -77,8 +77,7 @@ test("migrateState: pre-v3 state clears old session signals but preserves journa
     pendingInterval: "2m",
     positionInterval: "1m",
     quickProfitDelta: "0.20",
-    maxLossDelta: "0.30",
-    dipBuyDiscount: "0.20"
+    maxLossDelta: "0.30"
   });
   assert.equal(state.marketContext.status, MARKET_CONTEXT_STATUS.MISSING);
 });
@@ -176,16 +175,14 @@ test("migrateState: v6 profiles split legacy analysisInterval into state-specifi
     pendingInterval: "2m",
     positionInterval: "1m",
     quickProfitDelta: "0.20",
-    maxLossDelta: "0.30",
-    dipBuyDiscount: "0.20"
+    maxLossDelta: "0.30"
   });
   assert.deepEqual(state.lastMonitoringProfile.rules, {
     entryInterval: "15m",
     pendingInterval: "2m",
     positionInterval: "30m",
     quickProfitDelta: "0.20",
-    maxLossDelta: "0.30",
-    dipBuyDiscount: "0.20"
+    maxLossDelta: "0.30"
   });
 });
 
@@ -204,8 +201,7 @@ test("migrateState: v7 profiles receive default sell strategy deltas", () => {
     pendingInterval: "2m",
     positionInterval: "1m",
     quickProfitDelta: "0.25",
-    maxLossDelta: "0.30",
-    dipBuyDiscount: "0.20"
+    maxLossDelta: "0.30"
   });
 });
 
@@ -231,8 +227,7 @@ test("migrateState: v8 profiles drop removed total rounds rule", () => {
     pendingInterval: "2m",
     positionInterval: "5m",
     quickProfitDelta: "0.20",
-    maxLossDelta: "0.30",
-    dipBuyDiscount: "0.20"
+    maxLossDelta: "0.30"
   });
 });
 
@@ -262,8 +257,7 @@ test("migrateState: profiles drop removed userContext and longTermContext fields
     pendingInterval: "2m",
     positionInterval: "1m",
     quickProfitDelta: "0.20",
-    maxLossDelta: "0.30",
-    dipBuyDiscount: "0.20"
+    maxLossDelta: "0.30"
   });
   assert.equal(state.lastMonitoringProfile.symbolOverride, "AAPL");
   assert.equal(state.lastMonitoringProfile.userContext, undefined);
@@ -273,8 +267,7 @@ test("migrateState: profiles drop removed userContext and longTermContext fields
     pendingInterval: "2m",
     positionInterval: "1m",
     quickProfitDelta: "0.20",
-    maxLossDelta: "0.30",
-    dipBuyDiscount: "0.20"
+    maxLossDelta: "0.30"
   });
 });
 
