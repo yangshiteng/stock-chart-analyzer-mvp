@@ -80,53 +80,6 @@ test("buildAnalysisPromptFromConfig: entry mode injects ENTRY_MODE_RULES and SES
   assert.ok(!/\[FORCE_EXIT_RULES\]/.test(prompt));
 });
 
-test("buildAnalysisPromptFromConfig: BUY_STRATEGY section injects when buyStrategy provided in entry mode", () => {
-  const prompt = buildAnalysisPromptFromConfig(
-    getAnalysisPromptConfig(),
-    {
-      ...samplePayload,
-      mode: "entry",
-      buyStrategy: { dipBuyDiscount: "0.30", currentPrice: "28.00", maxOrderPrice: "27.70" }
-    },
-    "en"
-  );
-  assert.match(prompt, /\[BUY_STRATEGY\]/);
-  assert.match(prompt, /dip-buy discount: \$0\.30/);
-  assert.match(prompt, /Maximum allowed BUY_LIMIT orderPrice ≈ \$27\.70/);
-  assert.match(prompt, /MUST have orderPrice <= /);
-});
-
-test("buildAnalysisPromptFromConfig: BUY_STRATEGY section omitted in exit / force_exit modes", () => {
-  for (const mode of ["exit", "force_exit"]) {
-    const prompt = buildAnalysisPromptFromConfig(
-      getAnalysisPromptConfig(),
-      {
-        ...samplePayload,
-        mode,
-        virtualPosition: { entryPrice: "180.50" },
-        buyStrategy: { dipBuyDiscount: "0.30" }
-      },
-      "en"
-    );
-    assert.ok(!/\[BUY_STRATEGY\]/.test(prompt), `BUY_STRATEGY must not appear in ${mode} mode`);
-  }
-});
-
-test("buildAnalysisPromptFromConfig: BUY_STRATEGY first round (no hintCurrentPrice) tells AI to self-compute", () => {
-  const prompt = buildAnalysisPromptFromConfig(
-    getAnalysisPromptConfig(),
-    {
-      ...samplePayload,
-      mode: "entry",
-      buyStrategy: { dipBuyDiscount: "0.20" }
-    },
-    "en"
-  );
-  assert.match(prompt, /\[BUY_STRATEGY\]/);
-  assert.match(prompt, /First round/);
-  assert.match(prompt, /Compute the gate yourself/);
-});
-
 test("buildAnalysisPromptFromConfig: exit mode includes virtual position context + EXIT_MODE_RULES", () => {
   const prompt = buildAnalysisPromptFromConfig(
     getAnalysisPromptConfig(),
@@ -577,33 +530,6 @@ test("validateAnalysisResult: rejects entry setups below 1:1 reward-to-risk", ()
     () => validateAnalysisResult({ ...validEntryAnalysis, targetPrice: "181.00" }, "entry"),
     /at least 1:1/
   );
-});
-
-test("validateAnalysisResult: BUY_LIMIT must respect user's dip-buy discount", () => {
-  // currentPrice 180.70, discount 0.30 → max allowed 180.40.
-  // orderPrice 180.50 is too aggressive → reject.
-  const buyStrategy = { dipBuyDiscount: "0.30" };
-  assert.throws(
-    () => validateAnalysisResult(validEntryAnalysis, "entry", buyStrategy),
-    /above the user's max allowed/
-  );
-  // orderPrice 180.30 with same discount → accepted.
-  const cheaper = { ...validEntryAnalysis, orderPrice: "180.30", stopLossPrice: "179.80", targetPrice: "181.30" };
-  assert.equal(validateAnalysisResult(cheaper, "entry", buyStrategy), cheaper);
-});
-
-test("validateAnalysisResult: BUY_LIMIT skips dip-buy enforcement when buyStrategy omitted", () => {
-  // Back-compat path — no buy strategy means no discount gate, original
-  // R:R / stop validation still applies.
-  assert.equal(validateAnalysisResult(validEntryAnalysis, "entry"), validEntryAnalysis);
-  assert.equal(validateAnalysisResult(validEntryAnalysis, "entry", null), validEntryAnalysis);
-});
-
-test("validateAnalysisResult: BUY_LIMIT skips dip-buy enforcement when discount missing or invalid", () => {
-  // Defensive: don't fail open on a malformed buyStrategy object.
-  assert.equal(validateAnalysisResult(validEntryAnalysis, "entry", {}), validEntryAnalysis);
-  assert.equal(validateAnalysisResult(validEntryAnalysis, "entry", { dipBuyDiscount: "bad" }), validEntryAnalysis);
-  assert.equal(validateAnalysisResult(validEntryAnalysis, "entry", { dipBuyDiscount: "0" }), validEntryAnalysis);
 });
 
 test("validateAnalysisResult: force_exit accepts only SELL_NOW with positive prices", () => {

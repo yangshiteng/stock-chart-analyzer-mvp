@@ -63,7 +63,6 @@ The scan extracts `regime` (`uptrend` / `range` / `downtrend`), an aggression pr
    - **Ticker symbol** (auto-guessed from title/URL when possible, but user input wins)
    - **Entry / pending-order / position scan frequency**
    - **Quick-profit and max-loss dollar deltas**
-   - **Dip-buy discount** — minimum dollar buffer below current price before AI can issue a BUY_LIMIT. Higher = lower risk of chop-kill stop-outs, lower fill rate. Default $0.20.
 5. Click `Start Monitoring`. The side panel moves to the mandatory Market Context Scan.
 6. Switch the TradingView chart to Daily / 1D and click `Scan Daily`, then switch to 1H / 60m and click `Scan 1H`.
 7. Review the extracted context summary, declare whether you already hold the stock, and switch TradingView back to the 5-minute chart.
