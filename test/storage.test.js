@@ -76,8 +76,7 @@ test("migrateState: pre-v3 state clears old session signals but preserves journa
     entryInterval: "5m",
     pendingInterval: "2m",
     positionInterval: "1m",
-    quickProfitDelta: "0.20",
-    maxLossDelta: "0.30"
+    quickProfitDelta: "0.20"
   });
   assert.equal(state.marketContext.status, MARKET_CONTEXT_STATUS.MISSING);
 });
@@ -174,24 +173,24 @@ test("migrateState: v6 profiles split legacy analysisInterval into state-specifi
     entryInterval: "10m",
     pendingInterval: "2m",
     positionInterval: "1m",
-    quickProfitDelta: "0.20",
-    maxLossDelta: "0.30"
+    quickProfitDelta: "0.20"
   });
   assert.deepEqual(state.lastMonitoringProfile.rules, {
     entryInterval: "15m",
     pendingInterval: "2m",
     positionInterval: "30m",
-    quickProfitDelta: "0.20",
-    maxLossDelta: "0.30"
+    quickProfitDelta: "0.20"
   });
 });
 
 test("migrateState: v7 profiles receive default sell strategy deltas", () => {
+  // Legacy v7 profiles carried a maxLossDelta — verify it gets stripped by the
+  // v13 removal cleanup while quickProfitDelta is preserved.
   const state = migrateState({
     stateVersion: 7,
     monitoringProfile: {
       symbolOverride: "TSLA",
-      rules: { entryInterval: "5m", quickProfitDelta: "0.25", maxLossDelta: "bad" }
+      rules: { entryInterval: "5m", quickProfitDelta: "0.25", maxLossDelta: "0.50" }
     }
   });
 
@@ -200,8 +199,7 @@ test("migrateState: v7 profiles receive default sell strategy deltas", () => {
     entryInterval: "5m",
     pendingInterval: "2m",
     positionInterval: "1m",
-    quickProfitDelta: "0.25",
-    maxLossDelta: "0.30"
+    quickProfitDelta: "0.25"
   });
 });
 
@@ -226,8 +224,7 @@ test("migrateState: v8 profiles drop removed total rounds rule", () => {
     entryInterval: "1m",
     pendingInterval: "2m",
     positionInterval: "5m",
-    quickProfitDelta: "0.20",
-    maxLossDelta: "0.30"
+    quickProfitDelta: "0.20"
   });
 });
 
@@ -256,8 +253,7 @@ test("migrateState: profiles drop removed userContext and longTermContext fields
     entryInterval: "5m",
     pendingInterval: "2m",
     positionInterval: "1m",
-    quickProfitDelta: "0.20",
-    maxLossDelta: "0.30"
+    quickProfitDelta: "0.20"
   });
   assert.equal(state.lastMonitoringProfile.symbolOverride, "AAPL");
   assert.equal(state.lastMonitoringProfile.userContext, undefined);
@@ -266,8 +262,7 @@ test("migrateState: profiles drop removed userContext and longTermContext fields
     entryInterval: "5m",
     pendingInterval: "2m",
     positionInterval: "1m",
-    quickProfitDelta: "0.20",
-    maxLossDelta: "0.30"
+    quickProfitDelta: "0.20"
   });
 });
 

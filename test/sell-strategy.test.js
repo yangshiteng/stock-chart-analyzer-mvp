@@ -23,34 +23,37 @@ test("sell-strategy: normalizes deltas to cents", () => {
 });
 
 test("sell-strategy: defaults missing or invalid rules", () => {
-  assert.deepEqual(normalizeSellStrategyRules({ maxLossDelta: "bad" }), {
-    quickProfitDelta: "0.20",
-    maxLossDelta: "0.30"
+  assert.deepEqual(normalizeSellStrategyRules({ quickProfitDelta: "bad" }), {
+    quickProfitDelta: "0.20"
   });
 });
 
-test("sell-strategy: calculates quick-profit and max-loss trigger prices", () => {
+test("sell-strategy: strips legacy maxLossDelta from stored rules", () => {
+  // Old profiles carried maxLossDelta. The removed-feature cleanup means
+  // normalizeSellStrategyRules now returns ONLY quickProfitDelta. Anything
+  // else stays out — including legacy fields like maxLossDelta that callers
+  // may still hand us.
+  assert.deepEqual(normalizeSellStrategyRules({ quickProfitDelta: "0.25", maxLossDelta: "0.50" }), {
+    quickProfitDelta: "0.25"
+  });
+});
+
+test("sell-strategy: calculates quick-profit trigger price", () => {
   assert.deepEqual(calculateSellStrategyLevels("27.00", {
-    quickProfitDelta: "0.20",
-    maxLossDelta: "0.30"
+    quickProfitDelta: "0.20"
   }), {
     entryPrice: "27.00",
     quickProfitDelta: "0.20",
-    maxLossDelta: "0.30",
-    quickProfitPrice: "27.20",
-    maxLossPrice: "26.70"
+    quickProfitPrice: "27.20"
   });
 });
 
 test("sell-strategy: builds context from a virtual position", () => {
   assert.deepEqual(buildSellStrategyContext({ entryPrice: "27.80" }, {
-    quickProfitDelta: "0.25",
-    maxLossDelta: "0.40"
+    quickProfitDelta: "0.25"
   }), {
     entryPrice: "27.80",
     quickProfitDelta: "0.25",
-    maxLossDelta: "0.40",
-    quickProfitPrice: "28.05",
-    maxLossPrice: "27.40"
+    quickProfitPrice: "28.05"
   });
 });

@@ -95,9 +95,7 @@ test("buildAnalysisPromptFromConfig: exit mode includes virtual position context
       },
       sellStrategy: {
         quickProfitDelta: "0.20",
-        maxLossDelta: "0.30",
-        quickProfitPrice: "180.70",
-        maxLossPrice: "180.20"
+        quickProfitPrice: "180.70"
       }
     },
     "en"
@@ -106,7 +104,9 @@ test("buildAnalysisPromptFromConfig: exit mode includes virtual position context
   assert.match(prompt, /\[POSITION_CONTEXT\]/);
   assert.match(prompt, /180\.50/);
   assert.match(prompt, /Quick-profit trigger price: 180\.70/);
-  assert.match(prompt, /Max-loss trigger price: 180\.20/);
+  // Max-loss trigger removed: stop-loss is now chart-based only (the AI's
+  // own stopLossPrice from POSITION_CONTEXT), no user-set max-loss delta.
+  assert.ok(!/Max-loss/i.test(prompt), "POSITION_CONTEXT must not inject a max-loss trigger");
   assert.match(prompt, /breakout continuation/);
   assert.match(prompt, /\[EXIT_MODE_RULES\]/);
   assert.match(prompt, /Allowed actions: SELL_NOW, SELL_LIMIT, HOLD/);
