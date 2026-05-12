@@ -82,6 +82,14 @@
                 <input id="maxLossDeltaInput" type="number" step="0.01" min="0.01" placeholder="0.30" required>
               </label>
             </div>
+
+            <div class="field-grid">
+              <label class="field">
+                <span id="dipBuyDiscountLabel">Dip-Buy Discount</span>
+                <input id="dipBuyDiscountInput" type="number" step="0.01" min="0.01" placeholder="0.20" required>
+                <small id="dipBuyDiscountHint" class="form-hint"></small>
+              </label>
+            </div>
           </section>
 
           <p id="formError" class="form-error hidden"></p>
@@ -132,6 +140,19 @@
           </label>
         </div>
         <p id="runtimeSellStrategyError" class="form-error hidden"></p>
+      </section>
+
+      <section id="runtimeBuyStrategySection" class="card hidden">
+        <h2 id="runtimeBuyStrategyTitle">Buy Strategy</h2>
+        <p id="runtimeBuyStrategyCopy" class="form-section-copy"></p>
+        <div id="runtimeBuyStrategyStatus" class="runtime-interval-status"></div>
+        <div class="field-grid">
+          <label class="field">
+            <span id="runtimeDipBuyDiscountLabel">Dip-Buy Discount</span>
+            <input id="runtimeDipBuyDiscountInput" type="number" step="0.01" min="0.01" placeholder="0.20">
+          </label>
+        </div>
+        <p id="runtimeBuyStrategyError" class="form-error hidden"></p>
       </section>
 
       <section id="marketContextSection" class="card hidden">
