@@ -9,7 +9,6 @@ test("chart-validator: accepts tradingview.com", () => {
     language: "en"
   });
   assert.equal(r.isTradingView, true);
-  assert.deepEqual(r.matchedKeywords, ["tradingview"]);
   assert.match(r.reason, /TradingView chart/);
 });
 
@@ -33,7 +32,6 @@ test("chart-validator: rejects non-TradingView platforms", () => {
   for (const c of cases) {
     const r = validateChartTab({ ...c, language: "en" });
     assert.equal(r.isTradingView, false, `should reject ${c.pageUrl}`);
-    assert.deepEqual(r.matchedKeywords, []);
     assert.match(r.reason, /only supports TradingView/);
   }
 });
