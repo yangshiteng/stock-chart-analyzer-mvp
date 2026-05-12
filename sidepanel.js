@@ -172,6 +172,19 @@ let isUpdatingRuntimeIntervals = false;
 let isUpdatingSellStrategy = false;
 let isUpdatingBuyStrategy = false;
 
+// Set an input's value WITHOUT clobbering what the user is currently typing.
+// number / text inputs only fire `change` on blur or Enter, so any render() that
+// runs while the user is mid-edit will reset their typed value unless we skip
+// the focused input. The optional `skip` argument lets callers also bail when
+// a save round-trip is in flight (the input visually holds the new value but
+// the persisted state hasn't caught up yet — overwriting would flicker).
+function safeSetInputValue(input, value, skip = false) {
+  if (skip || document.activeElement === input) {
+    return;
+  }
+  input.value = value;
+}
+
 function escapeHtml(value) {
   return `${value}`
     .replaceAll("&", "&amp;")
@@ -970,18 +983,18 @@ function populateIntervalSelects({ entrySelect, pendingSelect, positionSelect },
 
 function populateSellStrategyInputs({ quickProfitInput, maxLossInput }, rules = {}) {
   const sellRules = normalizeSellStrategyRules(rules);
-  quickProfitInput.value = sellRules.quickProfitDelta;
-  maxLossInput.value = sellRules.maxLossDelta;
+  safeSetInputValue(quickProfitInput, sellRules.quickProfitDelta);
+  safeSetInputValue(maxLossInput, sellRules.maxLossDelta);
 }
 
 function populateBuyStrategyInputs({ dipBuyInput }, rules = {}) {
   const buyRules = normalizeBuyStrategyRules(rules);
-  dipBuyInput.value = buyRules.dipBuyDiscount;
+  safeSetInputValue(dipBuyInput, buyRules.dipBuyDiscount);
 }
 
 function populateContextForm(state, language) {
   const profile = state.monitoringProfile || state.lastMonitoringProfile;
-  symbolOverrideInput.value = profile?.symbolOverride ?? "";
+  safeSetInputValue(symbolOverrideInput, profile?.symbolOverride ?? "");
   populateIntervalSelects({
     entrySelect: entryIntervalSelect,
     pendingSelect: pendingIntervalSelect,
@@ -1297,12 +1310,8 @@ function renderRuntimeSellStrategySection(state, language, apiReady) {
   }
 
   const sellRules = normalizeSellStrategyRules(profile.rules);
-  if (runtimeQuickProfitDeltaInput.value !== sellRules.quickProfitDelta && !isUpdatingSellStrategy) {
-    runtimeQuickProfitDeltaInput.value = sellRules.quickProfitDelta;
-  }
-  if (runtimeMaxLossDeltaInput.value !== sellRules.maxLossDelta && !isUpdatingSellStrategy) {
-    runtimeMaxLossDeltaInput.value = sellRules.maxLossDelta;
-  }
+  safeSetInputValue(runtimeQuickProfitDeltaInput, sellRules.quickProfitDelta, isUpdatingSellStrategy);
+  safeSetInputValue(runtimeMaxLossDeltaInput, sellRules.maxLossDelta, isUpdatingSellStrategy);
 
   runtimeQuickProfitDeltaInput.disabled = !apiReady || isUpdatingSellStrategy;
   runtimeMaxLossDeltaInput.disabled = !apiReady || isUpdatingSellStrategy;
@@ -1331,9 +1340,7 @@ function renderRuntimeBuyStrategySection(state, language, apiReady) {
   }
 
   const buyRules = normalizeBuyStrategyRules(profile.rules);
-  if (runtimeDipBuyDiscountInput.value !== buyRules.dipBuyDiscount && !isUpdatingBuyStrategy) {
-    runtimeDipBuyDiscountInput.value = buyRules.dipBuyDiscount;
-  }
+  safeSetInputValue(runtimeDipBuyDiscountInput, buyRules.dipBuyDiscount, isUpdatingBuyStrategy);
 
   runtimeDipBuyDiscountInput.disabled = !apiReady || isUpdatingBuyStrategy;
 
