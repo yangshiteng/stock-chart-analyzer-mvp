@@ -612,7 +612,6 @@ async function buildMonitoringProfile(payload) {
   const pendingInterval = `${payload.pendingInterval || "2m"}`.trim();
   const positionInterval = `${payload.positionInterval || "1m"}`.trim();
   const quickProfitDeltaRaw = `${payload.quickProfitDelta || "0.20"}`.trim();
-  const maxLossDeltaRaw = `${payload.maxLossDelta || "0.30"}`.trim();
 
   if (
     !isValidAnalysisInterval(entryInterval)
@@ -622,12 +621,11 @@ async function buildMonitoringProfile(payload) {
     throw new Error(t(language, "chooseValidAnalysisInterval"));
   }
 
-  if (!isValidSellDelta(quickProfitDeltaRaw) || !isValidSellDelta(maxLossDeltaRaw)) {
+  if (!isValidSellDelta(quickProfitDeltaRaw)) {
     throw new Error(t(language, "chooseValidSellStrategy"));
   }
 
   const quickProfitDelta = normalizeSellDelta(quickProfitDeltaRaw, "0.20");
-  const maxLossDelta = normalizeSellDelta(maxLossDeltaRaw, "0.30");
 
   return {
     symbolOverride,
@@ -635,8 +633,7 @@ async function buildMonitoringProfile(payload) {
       entryInterval,
       pendingInterval,
       positionInterval,
-      quickProfitDelta,
-      maxLossDelta
+      quickProfitDelta
     }
   };
 }
@@ -1578,15 +1575,13 @@ async function updateSellStrategy(payload) {
   }
 
   const quickProfitDeltaRaw = `${payload?.quickProfitDelta || ""}`.trim();
-  const maxLossDeltaRaw = `${payload?.maxLossDelta || ""}`.trim();
 
-  if (!isValidSellDelta(quickProfitDeltaRaw) || !isValidSellDelta(maxLossDeltaRaw)) {
+  if (!isValidSellDelta(quickProfitDeltaRaw)) {
     throw new Error(t(language, "chooseValidSellStrategy"));
   }
 
   const sellRules = {
-    quickProfitDelta: normalizeSellDelta(quickProfitDeltaRaw, "0.20"),
-    maxLossDelta: normalizeSellDelta(maxLossDeltaRaw, "0.30")
+    quickProfitDelta: normalizeSellDelta(quickProfitDeltaRaw, "0.20")
   };
   const state = await patchState({
     monitoringProfile: updateProfileSellStrategy(currentState.monitoringProfile, sellRules),

@@ -47,12 +47,10 @@ const entryIntervalLabel = document.getElementById("entryIntervalLabel");
 const pendingIntervalLabel = document.getElementById("pendingIntervalLabel");
 const positionIntervalLabel = document.getElementById("positionIntervalLabel");
 const quickProfitDeltaLabel = document.getElementById("quickProfitDeltaLabel");
-const maxLossDeltaLabel = document.getElementById("maxLossDeltaLabel");
 const entryIntervalSelect = document.getElementById("entryIntervalSelect");
 const pendingIntervalSelect = document.getElementById("pendingIntervalSelect");
 const positionIntervalSelect = document.getElementById("positionIntervalSelect");
 const quickProfitDeltaInput = document.getElementById("quickProfitDeltaInput");
-const maxLossDeltaInput = document.getElementById("maxLossDeltaInput");
 const formError = document.getElementById("formError");
 const confirmButton = document.getElementById("confirmButton");
 const runtimeIntervalSection = document.getElementById("runtimeIntervalSection");
@@ -72,9 +70,7 @@ const runtimeSellStrategyTitle = document.getElementById("runtimeSellStrategyTit
 const runtimeSellStrategyCopy = document.getElementById("runtimeSellStrategyCopy");
 const runtimeSellStrategyStatus = document.getElementById("runtimeSellStrategyStatus");
 const runtimeQuickProfitDeltaLabel = document.getElementById("runtimeQuickProfitDeltaLabel");
-const runtimeMaxLossDeltaLabel = document.getElementById("runtimeMaxLossDeltaLabel");
 const runtimeQuickProfitDeltaInput = document.getElementById("runtimeQuickProfitDeltaInput");
-const runtimeMaxLossDeltaInput = document.getElementById("runtimeMaxLossDeltaInput");
 const runtimeSellStrategyError = document.getElementById("runtimeSellStrategyError");
 const marketContextSection = document.getElementById("marketContextSection");
 const marketContextTitle = document.getElementById("marketContextTitle");
@@ -817,7 +813,6 @@ function renderPositionPanels(state, language) {
       <p class="position-line"><strong>${escapeHtml(t(language, "currentPrice"))}:</strong> ${escapeHtml(state.lastResult?.analysis?.currentPrice || nA)}</p>
       <p class="position-line"><strong>${escapeHtml(t(language, "floatingDelta"))}:</strong> ${escapeHtml(floatingDelta)}</p>
       <p class="position-line"><strong>${escapeHtml(t(language, "quickProfitTrigger"))}:</strong> ${escapeHtml(sellLevels?.quickProfitPrice || nA)}</p>
-      <p class="position-line"><strong>${escapeHtml(t(language, "maxLossTrigger"))}:</strong> ${escapeHtml(sellLevels?.maxLossPrice || nA)}</p>
       <p class="position-line"><strong>${escapeHtml(t(language, "stopLossPriceLabel"))}:</strong> ${escapeHtml(position.stopLossPrice || nA)}</p>
       <p class="position-line"><strong>${escapeHtml(t(language, "targetPriceLabel"))}:</strong> ${escapeHtml(position.targetPrice || nA)}</p>
     `;
@@ -880,7 +875,6 @@ function updateStaticText(language, settings) {
   pendingIntervalLabel.textContent = t(language, "pendingInterval");
   positionIntervalLabel.textContent = t(language, "positionInterval");
   quickProfitDeltaLabel.textContent = t(language, "quickProfitDelta");
-  maxLossDeltaLabel.textContent = t(language, "maxLossDelta");
   runtimeIntervalTitle.textContent = t(language, "runtimeIntervalTitle");
   runtimeIntervalCopy.textContent = t(language, "runtimeIntervalCopy");
   runtimeEntryIntervalLabel.textContent = t(language, "entryInterval");
@@ -889,7 +883,6 @@ function updateStaticText(language, settings) {
   runtimeSellStrategyTitle.textContent = t(language, "runtimeSellStrategyTitle");
   runtimeSellStrategyCopy.textContent = t(language, "runtimeSellStrategyCopy");
   runtimeQuickProfitDeltaLabel.textContent = t(language, "quickProfitDelta");
-  runtimeMaxLossDeltaLabel.textContent = t(language, "maxLossDelta");
   confirmButton.textContent = t(language, "start");
   recommendationTitle.textContent = t(language, "latestRecommendation");
   apiKeyStatus.textContent = settings.openaiApiKey
@@ -964,10 +957,9 @@ function populateIntervalSelects({ entrySelect, pendingSelect, positionSelect },
   populateAnalysisIntervalSelect(positionSelect, language, intervals.positionInterval);
 }
 
-function populateSellStrategyInputs({ quickProfitInput, maxLossInput }, rules = {}) {
+function populateSellStrategyInputs({ quickProfitInput }, rules = {}) {
   const sellRules = normalizeSellStrategyRules(rules);
   safeSetInputValue(quickProfitInput, sellRules.quickProfitDelta);
-  safeSetInputValue(maxLossInput, sellRules.maxLossDelta);
 }
 
 function populateContextForm(state, language) {
@@ -979,8 +971,7 @@ function populateContextForm(state, language) {
     positionSelect: positionIntervalSelect
   }, language, profile?.rules);
   populateSellStrategyInputs({
-    quickProfitInput: quickProfitDeltaInput,
-    maxLossInput: maxLossDeltaInput
+    quickProfitInput: quickProfitDeltaInput
   }, profile?.rules);
 }
 
@@ -1286,17 +1277,12 @@ function renderRuntimeSellStrategySection(state, language, apiReady) {
 
   const sellRules = normalizeSellStrategyRules(profile.rules);
   safeSetInputValue(runtimeQuickProfitDeltaInput, sellRules.quickProfitDelta, isUpdatingSellStrategy);
-  safeSetInputValue(runtimeMaxLossDeltaInput, sellRules.maxLossDelta, isUpdatingSellStrategy);
 
   runtimeQuickProfitDeltaInput.disabled = !apiReady || isUpdatingSellStrategy;
-  runtimeMaxLossDeltaInput.disabled = !apiReady || isUpdatingSellStrategy;
 
   const levels = buildSellStrategyContext(state.virtualPosition, sellRules);
   runtimeSellStrategyStatus.innerHTML = levels
-    ? `
-      <p><strong>${escapeHtml(t(language, "quickProfitTrigger"))}:</strong> ${escapeHtml(levels.quickProfitPrice)}</p>
-      <p><strong>${escapeHtml(t(language, "maxLossTrigger"))}:</strong> ${escapeHtml(levels.maxLossPrice)}</p>
-    `
+    ? `<p><strong>${escapeHtml(t(language, "quickProfitTrigger"))}:</strong> ${escapeHtml(levels.quickProfitPrice)}</p>`
     : `<p>${escapeHtml(t(language, "sellStrategyFlatHint"))}</p>`;
 
   if (!runtimeSellStrategyError.textContent) {
@@ -1715,7 +1701,6 @@ async function updateRuntimeSellStrategy() {
   const settings = await getSettings();
   const language = getLanguage(settings.language);
   const quickProfitDelta = runtimeQuickProfitDeltaInput.value;
-  const maxLossDelta = runtimeMaxLossDeltaInput.value;
   runtimeSellStrategyError.textContent = "";
   runtimeSellStrategyError.classList.add("hidden");
   isUpdatingSellStrategy = true;
@@ -1726,8 +1711,7 @@ async function updateRuntimeSellStrategy() {
   try {
     response = await chrome.runtime.sendMessage({
       type: "update-sell-strategy",
-      quickProfitDelta,
-      maxLossDelta
+      quickProfitDelta
     });
   } catch (error) {
     sendError = error;
@@ -1743,11 +1727,9 @@ async function updateRuntimeSellStrategy() {
   await render();
 }
 
-for (const input of [runtimeQuickProfitDeltaInput, runtimeMaxLossDeltaInput]) {
-  input.addEventListener("change", () => {
-    void updateRuntimeSellStrategy();
-  });
-}
+runtimeQuickProfitDeltaInput.addEventListener("change", () => {
+  void updateRuntimeSellStrategy();
+});
 
 function debounce(fn, wait) {
   let timer = null;
@@ -1795,8 +1777,7 @@ contextForm.addEventListener("submit", async (event) => {
       entryInterval: entryIntervalSelect.value,
       pendingInterval: pendingIntervalSelect.value,
       positionInterval: positionIntervalSelect.value,
-      quickProfitDelta: quickProfitDeltaInput.value,
-      maxLossDelta: maxLossDeltaInput.value
+      quickProfitDelta: quickProfitDeltaInput.value
     });
   } catch (error) {
     sendError = error;

@@ -62,7 +62,7 @@ The scan extracts `regime` (`uptrend` / `range` / `downtrend`), an aggression pr
 4. The side panel opens with the session form. Fill in:
    - **Ticker symbol** (auto-guessed from title/URL when possible, but user input wins)
    - **Entry / pending-order / position scan frequency**
-   - **Quick-profit and max-loss dollar deltas**
+   - **Quick-profit dollar delta** (stop-loss is chart-based — the AI returns its own `stopLossPrice` each round; place a hard stop at the broker if you want a fixed dollar cap)
 5. Click `Start Monitoring`. The side panel moves to the mandatory Market Context Scan.
 6. Switch the TradingView chart to Daily / 1D and click `Scan Daily`, then switch to 1H / 60m and click `Scan 1H`.
 7. Review the extracted context summary, declare whether you already hold the stock, and switch TradingView back to the 5-minute chart.
