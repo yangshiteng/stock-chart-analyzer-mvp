@@ -12,7 +12,7 @@ Chrome Extension (Manifest V3) that screenshots a TradingView chart on a fixed 5
 
 ## Key files
 - `background.js` — service worker, monitoring loop, tab binding, message routing, trade lifecycle handlers
-- `lib/llm.js` — OpenAI calls (`callOpenAi` + `callOpenAiOnce` + retry wrapper), Market Context scan prompt, execution prompt assembly, review/lesson calls, analysis-output validation
+- `lib/llm.js` — OpenAI calls (`callOpenAi` + `callOpenAiOnce` + retry wrapper), Market Context scan prompt, execution prompt assembly, analysis-output validation
 - `lib/market-context.js` — Market Context state helpers, same-symbol/same-day validity, Daily + 1H merge policy, key-level dedupe
 - `lib/prompt-config.js` — execution prompt config + JSON schema
 - `lib/chart-validator.js` — TradingView hostname check (extension is hard-locked to TradingView)
@@ -86,13 +86,12 @@ Completed (Stage B — virtual-position state machine + semi-auto flow):
 - New background handlers: `mark-bought` sets `virtualPosition`; `mark-sold` appends to `state.tradeHistory` and calls `pauseMonitoring` (session ends when flat).
 - Sidepanel: position-summary card + manual mark-sold form appear based on `virtualPosition`; mark-bought now flows through `BUY_LIMIT → Mark limit placed → Limit filled` after the limit-only refactor.
 
-Completed (Stage C — trade journal + human-review lessons):
-- `markSold` persists closed trades to `state.tradeHistory` with `{ id, plannedStopLoss, plannedTarget, heldMinutes, lesson: null }`, then fires a background `generateTradeLesson` call that writes a ≤80-char lesson back by matching on `trade.id` (fire-and-forget; failures are swallowed so they cannot strand the session).
-- `lib/llm.js` adds `generateTradeLesson` (separate OpenAI call with strict JSON schema, `LESSON_MAX_OUTPUT_TOKENS = 400`). Prompt instructs the model to name specific errors instead of generic praise.
-- `RECENT_LESSONS` prompt injection was removed later. Lessons stay in the Trade Journal for human review only; they are not fed back into future analysis calls.
-- Sidepanel gains a Trade Journal card rendering `tradeHistory` with win/loss tone + `Generating lesson...` placeholder until the async lesson lands.
-- i18n keys added (en + zh): `tradeJournalTitle`, `tradeJournalCopy`, `noClosedTrades`, `lessonPending`.
-- Tests include a regression asserting legacy `recentLessons` payloads are ignored by prompt assembly.
+Completed (Stage C — trade journal):
+- `markSold` persists closed trades to `state.tradeHistory` with `{ id, symbol, entryPrice, entryTime, exitPrice, exitTime, pnlPercent, plannedStopLoss, plannedTarget, heldMinutes, entryAction, reason }`.
+- Sidepanel renders a Trade Journal card listing recent closed trades with win/loss tone. Abandoned overnight-gap trades render with `data-tone="abandoned"` + `ABANDONED` badge + a one-line explanation.
+- i18n keys: `tradeJournalTitle`, `tradeJournalCopy`, `noClosedTrades`, `tradeAbandonedBadge`, `tradeAbandonedLesson`.
+- The journal originally also generated an AI-written "lesson" per trade via a fire-and-forget `generateTradeLesson` OpenAI call. That feature was later removed in full — see "Removed (AI-generated trade lesson)" below. Trade rows are now pure data; the user's own pattern-spotting across rows is the actual reflection loop.
+- An older `RECENT_LESSONS` prompt-injection variant was removed even earlier and is still locked out by a regression test asserting legacy `recentLessons` payloads never reach the prompt.
 
 Completed (real-trade stats card):
 - `MAX_TRADE_HISTORY = 500` decouples `tradeHistory` retention from `MAX_RESULTS` (20, which is still used for the per-round `results` timeline). See Known risks below.
@@ -123,7 +122,7 @@ Completed (Stage B follow-up — overnight-gap auto-abandon):
 - `virtualPosition` now carries `tradingDay` (US/Eastern YYYY-MM-DD) at `markBought` time.
 - `lib/market-hours.js` exports `getUsTradingDay(now)`; DST-safe via `Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" })`.
 - `abandonStaleVirtualPositionIfNeeded()` runs at the start of every `runMonitoringRound`. If the stored `tradingDay !== today`, the position is cleared, an `{ status: "abandoned", abandonReason: "overnight_gap" }` record is appended to `tradeHistory`, and the session is paused with i18n reason `sessionAbandonedOvernight`.
-- Sidepanel Trade Journal renders abandoned trades with `data-tone="abandoned"` (gray, 75% opacity) + `ABANDONED` badge + explanatory lesson text.
+- Sidepanel Trade Journal renders abandoned trades with `data-tone="abandoned"` (gray, 75% opacity) + `ABANDONED` badge + a one-line explanation that the row was an overnight auto-close, not a real exit.
 - Design choice: no user confirmation — per day-trading rule, any cross-day position is invalid by definition. Prevents the "stale ghost position" scenario from power loss / lid-close / Chrome crash.
 
 Completed (VWAP + Volume signal gating in execution prompt):
@@ -255,11 +254,26 @@ Removed (LLM self-rated confidence — fully deleted):
 - **Migration**: STATE_VERSION 14 → 15 with a v15 hook in `lib/storage.js` that strips `confidence` / `entryConfidence` from `lastResult.analysis`, `pendingLimitOrder`, `virtualPosition`, every `results[].analysis`, and every `tradeHistory[]` entry. Stored journal rows stay intact otherwise — only the dead field is removed.
 - **If signal-quality grading is ever needed again**: do not re-add a self-rated label on the analysis JSON. Either (1) compute setup-quality mechanically from the chart-readable fields (e.g. R:R ratio, distance from VWAP, volume ratio) and surface that as a derived score, or (2) gate on visible chart structure inside the prompt (already done — WAIT/HOLD when conditions aren't met). LLM self-report is a dead-end channel for this use case; the four-condition rule survived in the prompt because it's a useful behavioral nudge, but it now drives **action selection** rather than a separate rating field.
 
+Removed (AI-generated trade lesson — fully deleted):
+- **Originally shipped** as Stage C alongside the trade journal. After each `markSold`, the background fired a separate `generateTradeLesson` OpenAI call (`LESSON_MAX_OUTPUT_TOKENS = 400`, strict JSON schema `{ lesson: string }`) and wrote a ≤80-char post-mortem string back onto the matching `tradeHistory[].lesson` field by `trade.id`. Fire-and-forget; failures were swallowed so a network blip couldn't strand the session. The side panel rendered a `Generating lesson...` placeholder until the async value arrived.
+- **Why removed**: same anti-pattern family as the just-removed self-rated `confidence` and the earlier `userContext` notes — **AI generating content with insufficient input to produce real information**. The `generateTradeLesson` prompt got exactly six fields: `{entryPrice, exitPrice, plannedStop, plannedTarget, heldMinutes, entryAction, thesis-text}`. The model could not see:
+  1. Intra-hold chart evolution — what shape the price took between entry and exit
+  2. Why the user sold when they did (mid-target SELL_NOW, hit stop, panic, target hit, end-of-session)
+  3. Post-exit price action — whether selling early was correct or premature
+  4. Concurrent market events — index correlation, news, sector rotation
+  5. The user's emotional/strategic state at exit
+  Without those, the lesson reduced to templated rephrasings of the six input numbers — useful-sounding sentences that didn't add information the user couldn't see by looking at the journal row directly.
+- **Why this matters as a category**: trade reflection is the high-value human work in a trading edge. AI generating a confident-sounding "lesson" in the middle of the journal **competes with** the user's own pattern-spotting attention. Pure data (P&L, held minutes, entry → exit, planned stop/target) is the better reflection material; the user looking at 20 rows of clean numbers spots their own habits more reliably than reading 20 LLM rationalizations.
+- **Different from the `confidence` removal**: `confidence` was noise leaking into prompt + display + stats. `lesson` was a separate OpenAI call (real cost, real latency, real async race) producing low-value text. Closer to the `premarket dip` removal in that it was an orthogonal feature that didn't damage 5-minute execution but earned its keep poorly.
+- **Deleted**: `LESSON_JSON_SCHEMA`, `LESSON_MAX_OUTPUT_TOKENS`, `buildLessonPrompt`, `generateTradeLesson`, and the export from `lib/llm.js`. From `background.js`: the import, the fire-and-forget IIFE inside `markSold`, the `lesson: null` field on both the normal `markSold` trade record and the abandoned-overnight trade record. From `lib/i18n.js`: `lessonPending` key (en + zh); `tradeJournalCopy` rewritten to drop "with AI-generated lessons for human review" — now just "Closed trades for human review." From `sidepanel.js`: the `lesson` branch + `Generating lesson...` placeholder in trade journal rendering. The `tradeAbandonedLesson` i18n key was **kept** because the abandoned-overnight row still needs a one-line explanation of why it was auto-closed — that's a deterministic system message, not an AI generation. From `sidepanel.css`: `.journal-lesson` renamed to `.journal-abandon-note` (now only used for the abandoned-trade explanation).
+- **Migration**: STATE_VERSION 15 → 16 with a v16 hook in `lib/storage.js` that `delete trade.lesson` for every entry in `tradeHistory`. Non-lesson fields are preserved.
+- **Tests**: new v16 migration test in `test/storage.test.js` asserts the field is stripped while other fields survive. The unrelated regression for legacy `recentLessons` prompt injection stays — that was an earlier removed feature about feeding lessons BACK into the analysis prompt, removed for the same reason this one was: AI doesn't need (and can't usefully consume) post-hoc trade narratives.
+- **If trade reflection feels useful again**: do NOT re-add a per-trade AI call. Either (1) compute deterministic post-hoc tags from journal fields (e.g. "stopped at planned stop", "held past target", "exited before quick-profit") and surface those as tone badges, or (2) build a periodic batch reflection over many trades (weekly summary) where the larger sample compensates for missing context. Single-trade LLM lessons with 6 input fields are structurally too thin.
+
 ## Future work / not planned
 
 ### Known risks / follow-ups (small)
 - `state.tradeHistory` now uses its own `MAX_TRADE_HISTORY = 500` (previously reused `MAX_RESULTS = 20`, which silently dropped journal entries after ~20 trades). Decoupled so months of history survive for human review + real-trade stats. 500 is not unbounded — if a user ever runs for multiple years, consider export-to-CSV + purge, or a separate `journalArchive`.
-- `generateTradeLesson` is fire-and-forget with a swallowed catch. If the call fails (network / rate limit), the trade's `lesson` stays `null` forever — no retry, no backfill. Fine for now; revisit if many lessons end up stuck at null.
 - `tradeHistory` is now preserved across every state reset via `buildResetStatePreservingHistory()` helper. Reset paths include `onInstalled` (reload/update), `onStartup` when active session state exists, `exitMonitoring` (Exit button), monitored-tab close, and `runValidationPreflight` (fires on every Start Monitoring click). Other state fields (virtualPosition, pendingLimitOrder, monitoringProfile, results, Market Context, …) intentionally reset to defaults in those paths — only tradeHistory is protected. If the shape of `tradeHistory` entries ever changes, add a one-off migration inside the helper; it's the single chokepoint for cross-version journal preservation.
 - No tab-activity freshness check: if user leaves the tab backgrounded for 30+ min, the screenshot still fires on schedule but the chart data may be stale. Currently ignored because users actively watching wouldn't hit this; worth revisiting if false signals correlate with tab-switch patterns.
 

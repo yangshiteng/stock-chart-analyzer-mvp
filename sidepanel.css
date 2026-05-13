@@ -925,10 +925,11 @@ h2 {
   font-variant-numeric: tabular-nums;
   font-size: 12px;
 }
-.journal-lesson {
+.journal-abandon-note {
   margin: 2px 0 0;
   color: inherit;
   line-height: 1.4;
+  font-size: 12px;
 }
 
 .position-summary {

@@ -18,8 +18,7 @@ import { getDiscordNotificationReason } from "./lib/discord-signal.js";
 import { getLanguage, t } from "./lib/i18n.js";
 import {
   analyzeChartCapture,
-  analyzeMarketContextScan,
-  generateTradeLesson
+  analyzeMarketContextScan
 } from "./lib/llm.js";
 import {
   MARKET_CONTEXT_STATUS,
@@ -758,9 +757,8 @@ async function markSold(payload) {
     ? Math.max(0, Math.round((exitTime.getTime() - entryTimeMs) / 60000))
     : null;
 
-  const tradeId = createId();
   const trade = {
-    id: tradeId,
+    id: createId(),
     symbol: position.symbol || null,
     entryPrice: position.entryPrice,
     entryTime: position.entryTime,
@@ -771,8 +769,7 @@ async function markSold(payload) {
     plannedStopLoss: position.stopLossPrice || null,
     plannedTarget: position.targetPrice || null,
     heldMinutes,
-    entryAction: position.entryAction || null,
-    lesson: null
+    entryAction: position.entryAction || null
   };
 
   const tradeHistory = [trade, ...(currentState.tradeHistory || [])].slice(0, MAX_TRADE_HISTORY);
@@ -785,22 +782,6 @@ async function markSold(payload) {
   });
 
   const state = await pauseMonitoring(t(language, "sessionClosedAfterSell"));
-
-  // Fire-and-forget lesson generation. A failure here must NOT break the flow.
-  void (async () => {
-    try {
-      const lesson = await generateTradeLesson(trade);
-      if (!lesson) return;
-      const latest = await getState();
-      const updatedHistory = (latest.tradeHistory || []).map((t) =>
-        t.id === tradeId ? { ...t, lesson } : t
-      );
-      await patchState({ tradeHistory: updatedHistory });
-    } catch (error) {
-      console.warn("Trade lesson generation failed:", error);
-    }
-  })();
-
   return { ok: true, state };
 }
 
@@ -1501,7 +1482,6 @@ async function abandonStaleVirtualPositionIfNeeded() {
     plannedStopLoss: position.stopLossPrice || null,
     plannedTarget: position.targetPrice || null,
     heldMinutes: null,
-    lesson: null,
     status: "abandoned",
     abandonReason: "overnight_gap"
   };

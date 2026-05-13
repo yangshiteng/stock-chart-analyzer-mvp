@@ -571,12 +571,15 @@ function renderTradeJournal(state, language) {
     const symbol = trade.symbol || "?";
     const entry = trade.entryPrice || "?";
     const exit = trade.exitPrice || "?";
-    const lesson = isAbandoned
-      ? `<em>${escapeHtml(t(language, "tradeAbandonedLesson"))}</em>`
-      : (trade.lesson && trade.lesson.trim()
-          ? escapeHtml(trade.lesson)
-          : `<em>${escapeHtml(t(language, "lessonPending"))}</em>`);
     const held = Number.isFinite(trade.heldMinutes) ? `${trade.heldMinutes}m` : "—";
+    // Abandoned trades get a one-line explanation so the user can tell at a
+    // glance the row was an overnight auto-close, not a real exit. Normal
+    // trades no longer render an AI-generated lesson — the chart-readable
+    // numbers in the row (P&L, held minutes, entry → exit) are the actual
+    // reflection material.
+    const abandonNote = isAbandoned
+      ? `<p class="journal-abandon-note"><em>${escapeHtml(t(language, "tradeAbandonedLesson"))}</em></p>`
+      : "";
     return `<li class="journal-item" data-tone="${tone}">
       <div class="journal-headline">
         <span class="journal-symbol">${escapeHtml(symbol)}</span>
@@ -584,7 +587,7 @@ function renderTradeJournal(state, language) {
         <span class="journal-held">${escapeHtml(held)}</span>
       </div>
       <div class="journal-prices">${escapeHtml(entry)} → ${escapeHtml(exit)}</div>
-      <p class="journal-lesson">${lesson}</p>
+      ${abandonNote}
     </li>`;
   }).join("");
 
