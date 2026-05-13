@@ -19,7 +19,6 @@ import { getLanguage, t } from "./lib/i18n.js";
 import {
   analyzeChartCapture,
   analyzeMarketContextScan,
-  generatePremarketDipPlan,
   generateTradeLesson
 } from "./lib/llm.js";
 import {
@@ -32,11 +31,6 @@ import {
   shouldPreserveMarketContextAcrossReset
 } from "./lib/market-context.js";
 import { getUsMarketSessionPhase, getUsTradingDay, isNearUsMarketClose } from "./lib/market-hours.js";
-import {
-  buildPendingLimitOrderFromPremarketPlan,
-  isWithinPremarketDipWindow,
-  normalizePositiveDecimal
-} from "./lib/premarket-dip.js";
 import {
   buildSellStrategyContext,
   isValidSellDelta,
@@ -560,7 +554,6 @@ async function setAwaitingMarketContext(monitoringProfile, currentState, reason 
     monitoringProfile,
     lastMonitoringProfile: monitoringProfile,
     marketContext,
-    premarketDipPlan: null,
 
     stopReason: reason,
     lastError: null,
@@ -579,9 +572,6 @@ async function beginMonitoringRounds(monitoringProfile, currentState, overrides 
     monitoringProfile,
     lastMonitoringProfile: monitoringProfile,
     marketContext: normalizeMarketContext(currentState.marketContext),
-    premarketDipPlan: currentState.pendingLimitOrder?.source === "premarket_dip_plan"
-      ? currentState.premarketDipPlan
-      : null,
 
     stopReason: null,
     lastError: null,
@@ -650,10 +640,7 @@ async function markBought(payload) {
   const language = await getUiLanguage();
   const currentState = await getState();
   const pending = currentState.pendingLimitOrder;
-  const isPremarketAwaitingFill = currentState.status === STATUS.AWAITING_CONTEXT
-    && pending?.source === "premarket_dip_plan"
-    && pending?.action === "BUY_LIMIT";
-  if (currentState.status !== STATUS.RUNNING && !isPremarketAwaitingFill) {
+  if (currentState.status !== STATUS.RUNNING) {
     throw new Error(t(language, "markBoughtNotRunning"));
   }
   if (currentState.virtualPosition) {
@@ -1217,7 +1204,6 @@ async function scanMarketContext(payload) {
       lastMonitoringProfile: monitoringProfile,
       lastValidation: validationRecord,
       marketContext,
-      premarketDipPlan: null,
       stopReason: null,
       lastError: null
     });
@@ -1294,114 +1280,11 @@ async function confirmMarketContextAndStart(payload = {}) {
     initialVirtualPosition
       ? {
           virtualPosition: initialVirtualPosition,
-          pendingLimitOrder: null,
-          premarketDipPlan: null
+          pendingLimitOrder: null
         }
       : {}
   );
   return { ok: true, state };
-}
-
-async function createPremarketDipPlan(payload) {
-  await ensureApiKeyConfigured();
-
-  const language = await getUiLanguage();
-  const currentState = await getState();
-  const monitoringProfile = getMarketContextSetupProfile(currentState, language);
-
-  if (currentState.status !== STATUS.AWAITING_CONTEXT) {
-    throw new Error(t(language, "premarketDipSetupOnly"));
-  }
-  if (currentState.virtualPosition) {
-    throw new Error(t(language, "limitBuyWhileHolding"));
-  }
-  if (currentState.pendingLimitOrder) {
-    throw new Error(t(language, "limitAlreadyPending"));
-  }
-  if (!isWithinPremarketDipWindow()) {
-    throw new Error(t(language, "premarketDipUnavailable"));
-  }
-  if (!isMarketContextValidForProfile(currentState.marketContext, monitoringProfile)) {
-    throw new Error(t(language, "marketContextNotComplete"));
-  }
-
-  let referenceClose;
-  try {
-    referenceClose = normalizePositiveDecimal(payload?.referenceClose, "referenceClose");
-  } catch {
-    throw new Error(t(language, "premarketReferenceCloseInvalid"));
-  }
-
-  const plan = await generatePremarketDipPlan({
-    symbol: monitoringProfile.symbolOverride,
-    referenceClose,
-    marketContext: currentState.marketContext
-  });
-  const now = new Date();
-  const premarketDipPlan = {
-    ...plan,
-    id: createId(),
-    status: "draft",
-    source: "premarket_dip_plan",
-    symbol: monitoringProfile.symbolOverride,
-    referenceClose,
-    tradingDay: getUsTradingDay(now),
-    createdAt: now.toISOString()
-  };
-
-  const state = await patchState({
-    premarketDipPlan,
-    lastError: null
-  });
-
-  return { ok: true, state, plan: premarketDipPlan };
-}
-
-async function adoptPremarketDipPlan() {
-  const language = await getUiLanguage();
-  const currentState = await getState();
-  const monitoringProfile = getMarketContextSetupProfile(currentState, language);
-  const plan = currentState.premarketDipPlan;
-
-  if (currentState.status !== STATUS.AWAITING_CONTEXT) {
-    throw new Error(t(language, "premarketDipSetupOnly"));
-  }
-  if (!plan) {
-    throw new Error(t(language, "premarketNoPlan"));
-  }
-  if (currentState.virtualPosition) {
-    throw new Error(t(language, "limitBuyWhileHolding"));
-  }
-  if (currentState.pendingLimitOrder) {
-    throw new Error(t(language, "limitAlreadyPending"));
-  }
-  if (!isWithinPremarketDipWindow()) {
-    throw new Error(t(language, "premarketDipUnavailable"));
-  }
-  if (!isMarketContextValidForProfile(currentState.marketContext, monitoringProfile)) {
-    throw new Error(t(language, "marketContextNotComplete"));
-  }
-
-  const now = new Date();
-  const pendingLimitOrder = buildPendingLimitOrderFromPremarketPlan(plan, {
-    now,
-    sourceRound: currentState.roundCount || 0,
-    sourcePlanId: plan.id || null,
-    symbol: monitoringProfile.symbolOverride
-  });
-
-  const state = await patchState({
-    pendingLimitOrder,
-    premarketDipPlan: {
-      ...plan,
-      status: "accepted",
-      acceptedAt: now.toISOString()
-    },
-
-    lastError: null
-  });
-
-  return { ok: true, state, pendingLimitOrder };
 }
 
 async function startMonitoring(payload) {
@@ -1440,7 +1323,6 @@ async function startMonitoring(payload) {
     results: [],
     virtualPosition: null,
     pendingLimitOrder: null,
-    premarketDipPlan: null,
     stopReason: null,
     lastError: null,
     tradeHistory: currentState.tradeHistory || []
@@ -1801,16 +1683,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     if (message?.type === "confirm-market-context") {
       sendResponse(await confirmMarketContextAndStart(message));
-      return;
-    }
-
-    if (message?.type === "generate-premarket-dip-plan") {
-      sendResponse(await createPremarketDipPlan(message));
-      return;
-    }
-
-    if (message?.type === "adopt-premarket-dip-plan") {
-      sendResponse(await adoptPremarketDipPlan());
       return;
     }
 

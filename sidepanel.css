@@ -357,19 +357,6 @@ h2 {
   accent-color: var(--buy);
 }
 
-.premarket-dip-panel {
-  display: grid;
-  gap: 12px;
-  margin-top: 14px;
-  padding-top: 14px;
-  border-top: 1px solid rgba(20, 37, 58, 0.1);
-}
-
-.premarket-dip-result {
-  display: grid;
-  gap: 12px;
-}
-
 .market-context-levels {
   display: grid;
   gap: 8px;

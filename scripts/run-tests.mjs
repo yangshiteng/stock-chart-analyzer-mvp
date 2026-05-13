@@ -5,7 +5,6 @@ const testFiles = [
   "../test/llm.test.js",
   "../test/market-context.test.js",
   "../test/market-hours.test.js",
-  "../test/premarket-dip.test.js",
   "../test/sell-strategy.test.js",
   "../test/side-panel.test.js",
   "../test/storage.test.js",
