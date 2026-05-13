@@ -158,6 +158,28 @@ test("migrateState: legacy state carrying premarketDipPlan is stripped (v14 remo
   assert.ok(!("premarketDipPlan" in state), "v14 migration deletes the premarketDipPlan field");
 });
 
+test("migrateState: v16 strips lesson field from tradeHistory entries (AI-generated lesson removed)", () => {
+  // generateTradeLesson was removed entirely. v16 must scrub any leftover
+  // `lesson` strings from on-disk journal rows so the field doesn't keep
+  // re-surfacing in UI / stats / future migrations.
+  const state = migrateState({
+    stateVersion: 15,
+    tradeHistory: [
+      { id: "t1", pnlPercent: 1.0, lesson: "old AI-generated wisdom" },
+      { id: "t2", pnlPercent: -0.5, lesson: null },
+      { id: "t3", pnlPercent: 0.3 }
+    ]
+  });
+
+  assert.equal(state.stateVersion, STATE_VERSION);
+  for (const trade of state.tradeHistory) {
+    assert.ok(!("lesson" in trade), `trade ${trade.id} must not carry a lesson field`);
+  }
+  // Non-lesson fields preserved.
+  assert.equal(state.tradeHistory[0].pnlPercent, 1.0);
+  assert.equal(state.tradeHistory[1].id, "t2");
+});
+
 test("migrateState: v15 strips confidence/entryConfidence from result, pending order, position, journal", () => {
   // Confidence was removed entirely in v15. Any state stored at v14 or earlier
   // may still carry confidence on lastResult.analysis, pendingLimitOrder,

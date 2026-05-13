@@ -10,7 +10,7 @@ This is an execution assistant, not a fundamental screener. It assumes the user 
 - Sends each screenshot to OpenAI Responses API with a strict JSON schema and gets back one execution signal per round.
 - Requires a pre-session Market Context Scan (Daily + 1H TradingView screenshots) so 5-minute entries know the higher-timeframe regime and key support / resistance levels.
 - Tracks a virtual position lifecycle (entry → hold → exit) inside the extension so the AI prompt is mode-aware.
-- Logs each closed trade to a journal and generates an AI-written lesson for human review.
+- Logs each closed trade to a journal (entry/exit prices, planned stop/target, held minutes, P&L) for human review.
 - Surfaces a real-trade performance stats card (win rate, avg PnL, total PnL, avg held minutes, best/worst trade) once trade history is non-empty.
 - Optionally posts a Discord webhook notification when the action changes between rounds.
 - Bilingual UI (English + Simplified Chinese), single source of truth in `lib/i18n.js`.
@@ -118,7 +118,6 @@ Notable injected sections:
 - Post-response validation checks that the returned action is legal for the current mode, `BUY_LIMIT` / `SELL_LIMIT` include a positive decimal `orderPrice`, `WAIT` / `HOLD` keep `orderPrice` empty, and entry-mode long setups have stop < orderPrice < target with at least 1:1 reward-to-risk. Invalid analysis output gets one fresh model retry before the session pauses with the validation error.
 
 Legacy optional Daily / Weekly long-term context was removed. The current design reintroduces higher-timeframe information only as a mandatory, structured Market Context Scan for intraday execution: Daily + 1H regime and key levels, not swing-trading thesis text.
-Recent trade lessons are intentionally kept out of the prompt. They remain in the trade journal as human review material, not as model self-learning context.
 
 ## State model
 
@@ -153,7 +152,7 @@ Pure aggregation lives in `lib/trade-stats.js` and is unit-tested.
 - `popup.html` / `popup.js` / `popup.css` — language, API key, Discord webhook, Start.
 - `sidepanel.html` / `sidepanel-other-tab.html` / `sidepanel.js` / `sidepanel.css` — session form, recommendation card, position card, limit-order card, trade journal, performance stats, recent rounds timeline, and the non-bound-tab placeholder.
 - `offscreen.html` / `offscreen.js` — short audio cue when a fresh round lands.
-- `lib/llm.js` — OpenAI calls (`callOpenAi` + `callOpenAiOnce` + retry wrapper), Market Context scan prompt, execution prompt assembly, review/lesson calls, analysis-output validation.
+- `lib/llm.js` — OpenAI calls (`callOpenAi` + `callOpenAiOnce` + retry wrapper), Market Context scan prompt, execution prompt assembly, analysis-output validation.
 - `lib/market-context.js` — Market Context state helpers, same-day/same-symbol validity, Daily + 1H merge policy, key-level dedupe.
 - `lib/prompt-config.js` — execution prompt config + JSON schema.
 - `lib/chart-validator.js` — TradingView hostname check (the extension only supports TradingView).
