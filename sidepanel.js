@@ -8,7 +8,6 @@ import {
 } from "./lib/analysis-intervals.js";
 import { getLanguage, t } from "./lib/i18n.js";
 import { MARKET_CONTEXT_STATUS } from "./lib/market-context.js";
-import { PREMARKET_DIP_DISCOUNT_PERCENT, isWithinPremarketDipWindow } from "./lib/premarket-dip.js";
 import {
   buildSellStrategyContext,
   normalizeSellDelta,
@@ -95,15 +94,6 @@ const initialEntryPriceField = document.getElementById("initialEntryPriceField")
 const initialEntryPriceLabel = document.getElementById("initialEntryPriceLabel");
 const initialEntryPriceInput = document.getElementById("initialEntryPriceInput");
 const initialPositionHint = document.getElementById("initialPositionHint");
-const premarketDipPanel = document.getElementById("premarketDipPanel");
-const premarketDipTitle = document.getElementById("premarketDipTitle");
-const premarketDipCopy = document.getElementById("premarketDipCopy");
-const premarketReferenceCloseLabel = document.getElementById("premarketReferenceCloseLabel");
-const premarketReferenceCloseInput = document.getElementById("premarketReferenceCloseInput");
-const generatePremarketDipButton = document.getElementById("generatePremarketDipButton");
-const premarketDipAvailability = document.getElementById("premarketDipAvailability");
-const premarketDipResult = document.getElementById("premarketDipResult");
-const premarketDipError = document.getElementById("premarketDipError");
 const marketContextFiveMinuteReminder = document.getElementById("marketContextFiveMinuteReminder");
 const marketContextError = document.getElementById("marketContextError");
 const confirmMarketContextButton = document.getElementById("confirmMarketContextButton");
@@ -149,9 +139,6 @@ const STALE_LIMIT_THRESHOLD_MINUTES = 10;
 let isStartingMonitoring = false;
 let scanningMarketContextTimeframe = null;
 let isConfirmingMarketContext = false;
-let isGeneratingPremarketDipPlan = false;
-let isAdoptingPremarketDipPlan = false;
-let premarketReferenceCloseTouched = false;
 let initialPositionMode = "flat";
 let isUpdatingRuntimeIntervals = false;
 let isUpdatingSellStrategy = false;
@@ -1062,100 +1049,6 @@ function renderInitialPositionPanel(language, complete) {
   return selected;
 }
 
-function renderPremarketDipPlanResult(state, language, canAdopt) {
-  const plan = state.premarketDipPlan;
-  if (!plan) {
-    premarketDipResult.innerHTML = "";
-    premarketDipResult.classList.add("hidden");
-    return;
-  }
-
-  const support = plan.nearestSupport
-    ? `${plan.nearestSupport} / ${formatMarketContextValue(language, plan.supportStrength, "levelStrength")}`
-    : t(language, "nA");
-  const adoptDisabled = !canAdopt || isAdoptingPremarketDipPlan;
-  const adoptText = isAdoptingPremarketDipPlan
-    ? t(language, "premarketAdopting")
-    : t(language, "premarketAdoptButton");
-
-  premarketDipResult.innerHTML = `
-    <div class="analysis-grid">
-      ${renderMetricCard(language, t(language, "premarketAction"), formatActionLabel(language, plan.action), { tone: "buy" })}
-      ${renderMetricCard(language, t(language, "orderPriceLabel"), plan.orderPrice)}
-      ${renderMetricCard(language, t(language, "stopLossPriceLabel"), plan.stopLossPrice)}
-      ${renderMetricCard(language, t(language, "targetPriceLabel"), plan.targetPrice)}
-      ${renderMetricCard(language, t(language, "confidenceLabel"), formatConfidenceLabel(language, plan.confidence), { tone: `confidence-${getConfidenceTone(plan.confidence)}` })}
-      ${renderMetricCard(language, t(language, "premarketDiscount"), plan.discountPercent || `${PREMARKET_DIP_DISCOUNT_PERCENT}%`)}
-      ${renderMetricCard(language, t(language, "premarketNearestSupport"), support, { fullSpan: true })}
-      ${renderMetricCard(language, t(language, "premarketReasoning"), plan.reasoning, { fullSpan: true })}
-    </div>
-    <div class="form-actions">
-      <button id="adoptPremarketDipButton" class="mode-button buy-button" type="button" ${adoptDisabled ? "disabled" : ""}>
-        ${escapeHtml(adoptText)}
-      </button>
-    </div>
-  `;
-  premarketDipResult.classList.remove("hidden");
-}
-
-function renderPremarketDipPlanPanel(state, language, apiReady, complete) {
-  const shouldShow = complete;
-  premarketDipPanel.classList.toggle("hidden", !shouldShow);
-  if (!shouldShow) {
-    premarketDipResult.innerHTML = "";
-    premarketDipResult.classList.add("hidden");
-    premarketDipError.textContent = "";
-    premarketDipError.classList.add("hidden");
-    return;
-  }
-
-  const inWindow = isWithinPremarketDipWindow(new Date());
-  const hasPendingLimit = Boolean(state.pendingLimitOrder);
-  const hasOpenPosition = Boolean(state.virtualPosition);
-  const plan = state.premarketDipPlan;
-
-  if (plan?.referenceClose && !premarketReferenceCloseTouched && !premarketReferenceCloseInput.value) {
-    premarketReferenceCloseInput.value = plan.referenceClose;
-  }
-  const referenceCloseValid = parsePositivePrice(premarketReferenceCloseInput.value) !== null;
-
-  premarketDipTitle.textContent = t(language, "premarketDipTitle");
-  premarketDipCopy.textContent = t(language, "premarketDipCopy", {
-    discount: PREMARKET_DIP_DISCOUNT_PERCENT
-  });
-  premarketReferenceCloseLabel.textContent = t(language, "premarketReferenceCloseLabel");
-  generatePremarketDipButton.textContent = isGeneratingPremarketDipPlan
-    ? t(language, "premarketGenerating")
-    : t(language, "premarketGenerateButton");
-
-  let hint = inWindow ? t(language, "premarketDipAvailable") : t(language, "premarketDipUnavailable");
-  if (!inWindow) {
-    hint = t(language, "premarketDipUnavailable");
-  } else if (hasPendingLimit) {
-    hint = t(language, "limitAlreadyPending");
-  } else if (hasOpenPosition) {
-    hint = t(language, "limitBuyWhileHolding");
-  } else if (!referenceCloseValid) {
-    hint = t(language, "premarketReferenceCloseInvalid");
-  }
-  premarketDipAvailability.textContent = hint;
-
-  generatePremarketDipButton.disabled = !apiReady
-    || !inWindow
-    || !referenceCloseValid
-    || hasPendingLimit
-    || hasOpenPosition
-    || isGeneratingPremarketDipPlan
-    || isAdoptingPremarketDipPlan;
-
-  const canAdopt = apiReady && inWindow && !hasPendingLimit && !hasOpenPosition && Boolean(plan);
-  renderPremarketDipPlanResult(state, language, canAdopt);
-
-  if (!premarketDipError.textContent) {
-    premarketDipError.classList.add("hidden");
-  }
-}
-
 function renderMarketContextSection(state, language, apiReady) {
   const shouldShow = isMarketContextSetupActive(state);
   marketContextSection.classList.toggle("hidden", !shouldShow);
@@ -1163,7 +1056,6 @@ function renderMarketContextSection(state, language, apiReady) {
     initialPositionMode = "flat";
     initialEntryPriceInput.value = "";
     initialPositionPanel.classList.add("hidden");
-    renderPremarketDipPlanPanel(state, language, apiReady, false);
     marketContextFiveMinuteReminder.textContent = "";
     marketContextFiveMinuteReminder.classList.add("hidden");
     marketContextError.textContent = "";
@@ -1213,7 +1105,6 @@ function renderMarketContextSection(state, language, apiReady) {
   marketContextFiveMinuteReminder.classList.toggle("hidden", !complete);
 
   renderMarketContextSummary(state, language);
-  renderPremarketDipPlanPanel(state, language, apiReady, complete && initialPosition.mode !== "holding");
 
   const error = marketContext.lastError || "";
   if (error) {
@@ -1592,69 +1483,6 @@ for (const radio of [initialPositionFlatRadio, initialPositionHoldingRadio]) {
 
 initialEntryPriceInput.addEventListener("input", () => {
   void render();
-});
-
-premarketReferenceCloseInput.addEventListener("input", () => {
-  premarketReferenceCloseTouched = true;
-  void render();
-});
-
-generatePremarketDipButton.addEventListener("click", async () => {
-  const settings = await getSettings();
-  const language = getLanguage(settings.language);
-  premarketDipError.textContent = "";
-  premarketDipError.classList.add("hidden");
-  isGeneratingPremarketDipPlan = true;
-  await render();
-
-  let response;
-  let sendError = null;
-  try {
-    response = await chrome.runtime.sendMessage({
-      type: "generate-premarket-dip-plan",
-      referenceClose: premarketReferenceCloseInput.value
-    });
-  } catch (error) {
-    sendError = error;
-  } finally {
-    isGeneratingPremarketDipPlan = false;
-  }
-
-  if (sendError || !response?.ok) {
-    premarketDipError.textContent = sendError?.message || response?.error || t(language, "couldNotGeneratePremarketDip");
-    premarketDipError.classList.remove("hidden");
-  }
-
-  await render();
-});
-
-premarketDipResult.addEventListener("click", async (event) => {
-  const button = event.target?.closest?.("#adoptPremarketDipButton");
-  if (!button) return;
-
-  const settings = await getSettings();
-  const language = getLanguage(settings.language);
-  premarketDipError.textContent = "";
-  premarketDipError.classList.add("hidden");
-  isAdoptingPremarketDipPlan = true;
-  await render();
-
-  let response;
-  let sendError = null;
-  try {
-    response = await chrome.runtime.sendMessage({ type: "adopt-premarket-dip-plan" });
-  } catch (error) {
-    sendError = error;
-  } finally {
-    isAdoptingPremarketDipPlan = false;
-  }
-
-  if (sendError || !response?.ok) {
-    premarketDipError.textContent = sendError?.message || response?.error || t(language, "couldNotAdoptPremarketDip");
-    premarketDipError.classList.remove("hidden");
-  }
-
-  await render();
 });
 
 async function updateRuntimeIntervals() {

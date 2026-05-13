@@ -11,7 +11,7 @@ test("migrateState: invalid input returns the current default state", () => {
   assert.deepEqual(state.results, []);
   assert.deepEqual(state.tradeHistory, []);
   assert.equal(state.marketContext.status, MARKET_CONTEXT_STATUS.MISSING);
-  assert.equal(state.premarketDipPlan, null);
+  assert.ok(!("premarketDipPlan" in state), "premarketDipPlan field was removed in v14");
 });
 
 test("migrateState: current-version state receives defaults and keeps known data", () => {
@@ -29,7 +29,7 @@ test("migrateState: current-version state receives defaults and keeps known data
   assert.deepEqual(state.tradeHistory, [{ id: "t1" }]);
   assert.deepEqual(state.results, [{ id: "r1" }]);
   assert.equal(state.marketContext.status, MARKET_CONTEXT_STATUS.MISSING);
-  assert.equal(state.premarketDipPlan, null);
+  assert.ok(!("premarketDipPlan" in state), "premarketDipPlan field was removed in v14");
 });
 
 test("migrateState: pre-v3 state clears old session signals but preserves journal and last profile", () => {
@@ -141,7 +141,10 @@ test("migrateState: v4 state is upgraded to v5 with Market Context reset", () =>
   assert.equal(state.marketContext.summary, null);
 });
 
-test("migrateState: v5 state is upgraded to current version with premarket dip draft cleared", () => {
+test("migrateState: legacy state carrying premarketDipPlan is stripped (v14 removal)", () => {
+  // premarketDipPlan was added in v6 and removed entirely in v14. Any stored
+  // state from v5..v13 may still carry the field. The v14 migration hook
+  // deletes it so it never re-surfaces in app code.
   const state = migrateState({
     stateVersion: 5,
     status: STATUS.AWAITING_CONTEXT,
@@ -152,7 +155,7 @@ test("migrateState: v5 state is upgraded to current version with premarket dip d
   });
 
   assert.equal(state.stateVersion, STATE_VERSION);
-  assert.equal(state.premarketDipPlan, null);
+  assert.ok(!("premarketDipPlan" in state), "v14 migration deletes the premarketDipPlan field");
 });
 
 test("migrateState: v6 profiles split legacy analysisInterval into state-specific intervals", () => {

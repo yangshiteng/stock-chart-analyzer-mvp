@@ -66,7 +66,7 @@ The scan extracts `regime` (`uptrend` / `range` / `downtrend`), an aggression pr
 5. Click `Start Monitoring`. The side panel moves to the mandatory Market Context Scan.
 6. Switch the TradingView chart to Daily / 1D and click `Scan Daily`, then switch to 1H / 60m and click `Scan 1H`.
 7. Review the extracted context summary, declare whether you already hold the stock, and switch TradingView back to the 5-minute chart.
-8. If already holding, enter the broker entry price; the premarket dip plan is skipped and the first round starts in exit mode. If flat, the optional premarket dip plan is available only from 4:00-9:30 ET.
+8. If already holding, enter the broker entry price; the first round starts in exit mode. If flat, the first round starts in entry mode.
 9. Click `Start Monitoring`. The first 5-minute round fires immediately if the regular session is open; otherwise monitoring waits and retries on the selected cadence. Monitoring continues until the user pauses/stops it or the regular session ends at 16:00 ET.
 10. The recommendation card shows the latest signal. The session enters entry mode (looking for BUY) or exit mode (managing an open position) depending on the declared/recorded position state.
 

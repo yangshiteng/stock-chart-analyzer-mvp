@@ -7,11 +7,9 @@ import {
   FORCE_EXIT_ACTIONS,
   buildAnalysisPromptFromConfig,
   buildMarketContextScanPrompt,
-  buildPremarketDipPlanPrompt,
   getAllowedActions,
   validateAnalysisResult,
-  validateMarketContextScanResult,
-  validatePremarketDipPlanResult
+  validateMarketContextScanResult
 } from "../lib/llm.js";
 import { getAnalysisPromptConfig } from "../lib/prompt-config.js";
 
@@ -403,80 +401,6 @@ test("validateMarketContextScanResult: accepts a valid scan and rejects wrong ti
   assert.throws(
     () => validateMarketContextScanResult({ ...scan, timeframe: "1h" }, "daily"),
     /expected daily/
-  );
-});
-
-test("buildPremarketDipPlanPrompt: uses symbol, Market Context, fixed 10% threshold, and anti-FOMO rules", () => {
-  const prompt = buildPremarketDipPlanPrompt(
-    {
-      symbol: "USAR",
-      referenceClose: "27.42",
-      marketContext: sampleMarketContext
-    },
-    "en"
-  );
-
-  assert.match(prompt, /\[PREMARKET_INPUTS\]/);
-  assert.match(prompt, /Symbol: USAR/);
-  assert.match(prompt, /User-entered yesterday close: 27\.42/);
-  assert.match(prompt, /Fixed defensive dip threshold: 10%/);
-  assert.match(prompt, /Reference dip price: 24\.68/);
-  assert.match(prompt, /\[MARKET_CONTEXT\]/);
-  assert.match(prompt, /Prior breakout shelf/);
-  assert.match(prompt, /FOMO/);
-  assert.match(prompt, /Do not request additional chart images/);
-  assert.doesNotMatch(prompt, /input_image/);
-});
-
-test("validatePremarketDipPlanResult: accepts a conservative BUY_LIMIT plan", () => {
-  const plan = validatePremarketDipPlanResult(
-    {
-      action: "BUY_LIMIT",
-      symbol: "USAR",
-      orderPrice: "24.70",
-      stopLossPrice: "24.00",
-      targetPrice: "25.60",
-      confidence: "medium",
-      referenceClose: "27.42",
-      discountPercent: "10%",
-      nearestSupport: "24.65",
-      supportStrength: "strong",
-      reasoning: "Near strong support at the fixed dip threshold."
-    },
-    {
-      symbol: "USAR",
-      referenceClose: "27.42"
-    }
-  );
-
-  assert.equal(plan.action, "BUY_LIMIT");
-  assert.equal(plan.symbol, "USAR");
-  assert.equal(plan.orderPrice, "24.70");
-  assert.equal(plan.nearestSupport, "24.65");
-});
-
-test("validatePremarketDipPlanResult: rejects shallow FOMO entries", () => {
-  assert.throws(
-    () => validatePremarketDipPlanResult(
-      {
-        action: "BUY_LIMIT",
-        symbol: "USAR",
-        orderPrice: "27.00",
-        stopLossPrice: "26.50",
-        targetPrice: "28.00",
-        confidence: "high",
-        referenceClose: "27.42",
-        discountPercent: "10%",
-        nearestSupport: "27.00",
-        supportStrength: "medium",
-        reasoning: "Chasing because the stock is strong."
-      },
-      {
-        symbol: "USAR",
-        referenceClose: "27.42"
-      }
-    ),
-    /too close to yesterday's close/
   );
 });
 
