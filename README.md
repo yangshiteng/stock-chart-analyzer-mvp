@@ -11,8 +11,7 @@ This is an execution assistant, not a fundamental screener. It assumes the user 
 - Requires a pre-session Market Context Scan (Daily + 1H TradingView screenshots) so 5-minute entries know the higher-timeframe regime and key support / resistance levels.
 - Tracks a virtual position lifecycle (entry → hold → exit) inside the extension so the AI prompt is mode-aware.
 - Logs each closed trade to a journal and generates an AI-written lesson for human review.
-- Surfaces a real-trade performance stats card (win rate, avg PnL, and confidence calibration) once trade history is non-empty.
-- Color-codes the latest recommendation confidence (`high` = green, `medium` = amber, `low` = red) so weak signals are obvious at a glance.
+- Surfaces a real-trade performance stats card (win rate, avg PnL, total PnL, avg held minutes, best/worst trade) once trade history is non-empty.
 - Optionally posts a Discord webhook notification when the action changes between rounds.
 - Bilingual UI (English + Simplified Chinese), single source of truth in `lib/i18n.js`.
 
@@ -98,7 +97,6 @@ The model returns strict JSON with these fields:
 - `entryPrice` — optional reference to the recorded entry price when already holding; not the primary execution price
 - `stopLossPrice` — invalidation level
 - `targetPrice` — profit target
-- `confidence` — `high` | `medium` | `low`; rendered green / amber / red in the recommendation card
 - `reasoning` — short rationale, must name specific structure / EMAs / VWAP / volume seen on the chart
 - `symbol`
 - `currentPrice`
@@ -126,7 +124,7 @@ Recent trade lessons are intentionally kept out of the prompt. They remain in th
 
 Single source of truth: `STATUS` enum (`IDLE` / `VALIDATING` / `AWAITING_CONTEXT` / `RUNNING` / `PAUSED`) plus a versioned state object (`stateVersion`) and five orthogonal data fields:
 
-- `virtualPosition` — `null` when scanning for entry, `{ entryPrice, stopLossPrice, targetPrice, entryAction, entryConfidence, tradingDay, ... }` when holding.
+- `virtualPosition` — `null` when scanning for entry, `{ entryPrice, stopLossPrice, targetPrice, entryAction, tradingDay, ... }` when holding.
 - `pendingLimitOrder` — `null` or a snapshot of a resting BUY_LIMIT / SELL_LIMIT the user has placed at the broker.
 - `marketContext` — mandatory pre-session context tied to `symbol` + US trading day. Contains Daily scan, 1H scan, and merged summary; invalid/missing context forces `AWAITING_CONTEXT`.
 - `monitoringProfile` — per-session config: `symbolOverride`, state-specific scan intervals, sell-strategy deltas, bound tab/window metadata.
@@ -144,7 +142,7 @@ Browser/tab close policy: closing the monitored TradingView tab or restarting Ch
 
 ## Performance stats
 
-Once any closed trade exists, a Performance Stats card renders in the side panel with overall win rate, avg PnL %, total PnL %, avg held minutes, best/worst trade, plus a confidence breakdown (high / medium / low — calibration check). Buckets with `n < 5` show a "small sample" warning rather than being hidden — sparse buckets are still informative if flagged.
+Once any closed trade exists, a Performance Stats card renders in the side panel with overall win rate, avg PnL %, total PnL %, avg held minutes, and best/worst trade.
 
 Pure aggregation lives in `lib/trade-stats.js` and is unit-tested.
 
@@ -153,7 +151,7 @@ Pure aggregation lives in `lib/trade-stats.js` and is unit-tested.
 - `manifest.json`
 - `background.js` — service worker; alarm-driven monitoring loop; tab binding; message routing; handlers for mark-bought / mark-sold / mark-limit-placed / mark-limit-cancelled.
 - `popup.html` / `popup.js` / `popup.css` — language, API key, Discord webhook, Start.
-- `sidepanel.html` / `sidepanel-other-tab.html` / `sidepanel.js` / `sidepanel.css` — session form, recommendation card, confidence coloring, position card, limit-order card, trade journal, performance stats, recent rounds timeline, and the non-bound-tab placeholder.
+- `sidepanel.html` / `sidepanel-other-tab.html` / `sidepanel.js` / `sidepanel.css` — session form, recommendation card, position card, limit-order card, trade journal, performance stats, recent rounds timeline, and the non-bound-tab placeholder.
 - `offscreen.html` / `offscreen.js` — short audio cue when a fresh round lands.
 - `lib/llm.js` — OpenAI calls (`callOpenAi` + `callOpenAiOnce` + retry wrapper), Market Context scan prompt, execution prompt assembly, review/lesson calls, analysis-output validation.
 - `lib/market-context.js` — Market Context state helpers, same-day/same-symbol validity, Daily + 1H merge policy, key-level dedupe.
@@ -179,7 +177,7 @@ Pure aggregation lives in `lib/trade-stats.js` and is unit-tested.
 
 ## Discord notifications
 
-Optional. When a webhook URL is configured, the extension posts an embed **only when `action` differs from the previous round's action** — no per-round spam. Payload includes action, current price, entry/stop/target, confidence, reasoning, symbol.
+Optional. When a webhook URL is configured, the extension posts an embed **only when `action` differs from the previous round's action** — no per-round spam. Payload includes action, current price, entry/stop/target, reasoning, symbol.
 
 ## Market Hours
 

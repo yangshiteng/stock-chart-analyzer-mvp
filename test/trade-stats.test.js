@@ -7,8 +7,7 @@ const T = (overrides) => ({
   symbol: "TSLA",
   pnlPercent: 1.0,
   heldMinutes: 30,
-  entryAction: "BUY_NOW",
-  entryConfidence: "high",
+  entryAction: "BUY_LIMIT",
   ...overrides
 });
 
@@ -70,34 +69,27 @@ test("trade-stats: avgHeldMinutes ignores non-finite values", () => {
   assert.equal(stats.overall.avgHeldMinutes, 60);
 });
 
-test("trade-stats: breakdown by confidence", () => {
+test("trade-stats: no byConfidence breakdown (field removed)", () => {
+  // Confidence was removed entirely (schema, prompt, UI, stats) because LLM
+  // self-rated confidence didn't differentiate winners from losers across
+  // multi-week real-trade testing. Lock the regression: computeTradeStats
+  // returns ONLY overall, no buckets.
   const stats = computeTradeStats([
-    T({ pnlPercent: 2, entryConfidence: "high" }),
+    T({ pnlPercent: 2 }),
+    T({ pnlPercent: -1 })
+  ]);
+  assert.deepEqual(Object.keys(stats), ["overall"]);
+  assert.ok(!("byConfidence" in stats));
+});
+
+test("trade-stats: legacy trades with leftover entryConfidence field are ignored", () => {
+  // Old trade journal rows may still carry an entryConfidence field on disk.
+  // computeTradeStats must not key on it or surface it. We aggregate the
+  // overall block normally regardless.
+  const stats = computeTradeStats([
     T({ pnlPercent: 1, entryConfidence: "high" }),
-    T({ pnlPercent: -1, entryConfidence: "medium" }),
-    T({ pnlPercent: -2, entryConfidence: "low" })
+    T({ pnlPercent: -1, entryConfidence: "low" })
   ]);
-  assert.equal(stats.byConfidence.high.n, 2);
-  assert.equal(stats.byConfidence.high.winRate, 1);
-  assert.equal(stats.byConfidence.medium.n, 1);
-  assert.equal(stats.byConfidence.medium.winRate, 0);
-  assert.equal(stats.byConfidence.low.n, 1);
-});
-
-test("trade-stats: legacy trades with null confidence bucket under 'unknown'", () => {
-  const stats = computeTradeStats([
-    T({ pnlPercent: 1, entryAction: null, entryConfidence: null }),
-    T({ pnlPercent: -1, entryAction: "BUY_NOW", entryConfidence: "high" })
-  ]);
-  assert.equal(stats.byConfidence.unknown.n, 1);
-  assert.equal(stats.byConfidence.high.n, 1);
-});
-
-test("trade-stats: known buckets always present even when empty", () => {
-  const stats = computeTradeStats([
-    T({ pnlPercent: 1, entryAction: "BUY_NOW", entryConfidence: "high" })
-  ]);
-  // medium, low should exist with n=0 for stable UI rendering
-  assert.equal(stats.byConfidence.medium.n, 0);
-  assert.equal(stats.byConfidence.low.n, 0);
+  assert.equal(stats.overall.n, 2);
+  assert.equal(stats.overall.winRate, 0.5);
 });
