@@ -14,9 +14,7 @@ import {
   normalizeSellStrategyRules
 } from "./lib/sell-strategy.js";
 import { getSettings, getState, patchSettings } from "./lib/storage.js";
-import { CONFIDENCE_BUCKETS, computeTradeStats } from "./lib/trade-stats.js";
-
-const SMALL_SAMPLE_THRESHOLD = 5;
+import { computeTradeStats } from "./lib/trade-stats.js";
 
 const heroEyebrow = document.getElementById("heroEyebrow");
 const heroTitle = document.getElementById("heroTitle");
@@ -196,17 +194,6 @@ function formatAnalysisActionLabel(language, analysis) {
     return t(language, "sellLimitProfitAction");
   }
   return formatActionLabel(language, analysis?.action);
-}
-
-function formatConfidenceLabel(language, confidence) {
-  if (!confidence) return t(language, "unknown");
-  const key = `confidence_${confidence}`;
-  const label = t(language, key);
-  return label === key ? confidence : label;
-}
-
-function getConfidenceTone(confidence) {
-  return ["high", "medium", "low"].includes(confidence) ? confidence : "unknown";
 }
 
 function formatAnalysisIntervalLabel(language, value) {
@@ -474,7 +461,6 @@ function renderAnalysisCard(state, language) {
       ${renderMetricCard(language, t(language, "currentPrice"), analysis.currentPrice || nA)}
       ${renderMetricCard(language, t(language, "stopLossPriceLabel"), analysis.stopLossPrice || nA)}
       ${renderMetricCard(language, t(language, "targetPriceLabel"), analysis.targetPrice || nA)}
-      ${renderMetricCard(language, t(language, "confidenceLabel"), formatConfidenceLabel(language, analysis.confidence), { tone: `confidence-${getConfidenceTone(analysis.confidence)}` })}
       ${renderMetricCard(language, t(language, "reasoningLabel"), analysis.reasoning || nA, { fullSpan: true })}
     </div>
     ${renderNearbyMarketLevels(state, analysis, language)}
@@ -530,35 +516,6 @@ function getPnlTone(value) {
   return "neutral";
 }
 
-function renderStatBucket(language, label, bucket, isHeader = false) {
-  if (bucket.n === 0) {
-    return `
-      <div class="stats-row${isHeader ? " stats-row-header" : ""}" data-tone="empty">
-        <div class="stats-row-label">${escapeHtml(label)}</div>
-        <div class="stats-row-empty">${escapeHtml(t(language, "statsBucketEmpty"))}</div>
-      </div>
-    `;
-  }
-
-  const small = bucket.n < SMALL_SAMPLE_THRESHOLD;
-  const warning = small
-    ? `<div class="stats-small-sample">⚠ ${escapeHtml(t(language, "statsSmallSampleWarning", { n: bucket.n }))}</div>`
-    : "";
-  const pnlTone = getPnlTone(bucket.avgPnlPercent);
-
-  return `
-    <div class="stats-row${isHeader ? " stats-row-header" : ""}${small ? " stats-row-small" : ""}">
-      <div class="stats-row-label">${escapeHtml(label)}</div>
-      <div class="stats-row-metrics">
-        <span class="stats-metric"><span class="stats-metric-k">${escapeHtml(t(language, "statsSampleSize"))}</span><span class="stats-metric-v">${bucket.n}</span></span>
-        <span class="stats-metric"><span class="stats-metric-k">${escapeHtml(t(language, "statsWinRate"))}</span><span class="stats-metric-v">${escapeHtml(formatWinRate(bucket.winRate))}</span></span>
-        <span class="stats-metric stats-metric-pnl" data-tone="${pnlTone}"><span class="stats-metric-k">${escapeHtml(t(language, "statsAvgPnl"))}</span><span class="stats-metric-v">${escapeHtml(formatPctSigned(bucket.avgPnlPercent))}</span></span>
-      </div>
-      ${warning}
-    </div>
-  `;
-}
-
 function renderStatsOverall(language, overall) {
   const pnlTone = getPnlTone(overall.avgPnlPercent);
   const totalTone = getPnlTone(overall.totalPnlPercent);
@@ -587,18 +544,9 @@ function renderStatsCard(state, language) {
   }
   statsSection.classList.remove("hidden");
 
-  const confidenceRows = CONFIDENCE_BUCKETS
-    .map((key) => renderStatBucket(language, formatConfidenceLabel(language, key), stats.byConfidence[key]))
-    .join("");
-  const confidenceUnknown = stats.byConfidence.unknown && stats.byConfidence.unknown.n > 0
-    ? renderStatBucket(language, t(language, "unknown"), stats.byConfidence.unknown)
-    : "";
-
   statsContent.innerHTML = `
     <h3 class="stats-heading">${escapeHtml(t(language, "statsOverallHeading"))}</h3>
     ${renderStatsOverall(language, stats.overall)}
-    <h3 class="stats-heading">${escapeHtml(t(language, "statsByConfidenceHeading"))}</h3>
-    <div class="stats-table">${confidenceRows}${confidenceUnknown}</div>
   `;
 }
 

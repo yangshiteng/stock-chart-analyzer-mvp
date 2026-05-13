@@ -208,11 +208,6 @@ function buildDiscordAnalysisPayloadV4(result, state, language, notificationReas
             inline: true
           },
           {
-            name: t(language, "confidenceLabel"),
-            value: truncateText(analysis.confidence || fallback, 60),
-            inline: true
-          },
-          {
             name: t(language, "orderPriceLabel"),
             value: truncateText(analysis.orderPrice || fallback, 120),
             inline: true
@@ -669,8 +664,7 @@ async function markBought(payload) {
     sourceRound: pending?.sourceRound ?? currentState.roundCount ?? 0,
     source: pending?.source || "signal",
     sourceReviewId: pending?.sourceReviewId || null,
-    entryAction: pending?.action || suggestion.action || null,
-    entryConfidence: pending?.confidence || suggestion.confidence || null
+    entryAction: pending?.action || suggestion.action || null
   };
 
   const state = await patchState({
@@ -718,7 +712,6 @@ async function markLimitPlaced(payload) {
     stopLossPrice: suggestion.stopLossPrice || null,
     targetPrice: suggestion.targetPrice || null,
     reasoning: suggestion.reasoning || null,
-    confidence: suggestion.confidence || null,
     symbol: currentState.monitoringProfile?.symbolOverride || suggestion.symbol || null,
     placedAt: new Date().toISOString(),
     sourceRound: currentState.roundCount || 0
@@ -779,7 +772,6 @@ async function markSold(payload) {
     plannedTarget: position.targetPrice || null,
     heldMinutes,
     entryAction: position.entryAction || null,
-    entryConfidence: position.entryConfidence || null,
     lesson: null
   };
 
@@ -1250,8 +1242,7 @@ function buildInitialVirtualPositionFromPayload(payload, monitoringProfile, lang
     sourceRound: 0,
     source: "manual_existing_position",
     sourceReviewId: null,
-    entryAction: "manual_existing_position",
-    entryConfidence: null
+    entryAction: "manual_existing_position"
   };
 }
 

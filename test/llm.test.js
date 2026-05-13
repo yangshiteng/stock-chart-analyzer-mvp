@@ -129,10 +129,14 @@ test("buildAnalysisPromptFromConfig: force_exit includes FORCE_EXIT_RULES", () =
 
 test("buildAnalysisPromptFromConfig: required schema fields present", () => {
   const prompt = buildAnalysisPromptFromConfig(getAnalysisPromptConfig(), samplePayload, "en");
-  for (const key of ["orderPrice", "entryPrice", "stopLossPrice", "targetPrice", "confidence"]) {
+  for (const key of ["orderPrice", "entryPrice", "stopLossPrice", "targetPrice"]) {
     assert.ok(prompt.includes(key), `prompt should mention ${key}`);
   }
   assert.match(prompt, /Do not output triggerCondition/);
+  // Confidence field was removed entirely — schema, prompt, UI, stats — because
+  // LLM self-rated confidence didn't differentiate winners from losers in
+  // multi-week real-trade testing. Lock the regression here.
+  assert.ok(!/confidence/i.test(prompt), "confidence field must not be re-introduced into the prompt");
 });
 
 test("buildAnalysisPromptFromConfig: no capital/position-size leakage", () => {
@@ -201,7 +205,6 @@ test("buildAnalysisPromptFromConfig: LAST_SIGNAL_AND_ORDER injected in entry mod
         stopLossPrice: "179.10",
         targetPrice: "183.00",
         currentPrice: "181.30",
-        confidence: "medium",
         reasoning: "waiting for volume confirmation"
       }
     },
@@ -242,7 +245,6 @@ test("buildAnalysisPromptFromConfig: LAST_SIGNAL_AND_ORDER includes pending limi
         limitPrice: "180.50",
         stopLossPrice: "179.10",
         targetPrice: "183.00",
-        confidence: "high",
         placedAt: new Date(Date.now() - 5 * 60000).toISOString()
       }
     },
@@ -410,7 +412,6 @@ const validEntryAnalysis = {
   entryPrice: null,
   stopLossPrice: "179.50",
   targetPrice: "182.00",
-  confidence: "medium",
   reasoning: "VWAP reclaim with rising volume",
   symbol: "TSLA",
   currentPrice: "180.70"

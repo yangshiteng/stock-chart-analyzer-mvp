@@ -158,6 +158,39 @@ test("migrateState: legacy state carrying premarketDipPlan is stripped (v14 remo
   assert.ok(!("premarketDipPlan" in state), "v14 migration deletes the premarketDipPlan field");
 });
 
+test("migrateState: v15 strips confidence/entryConfidence from result, pending order, position, journal", () => {
+  // Confidence was removed entirely in v15. Any state stored at v14 or earlier
+  // may still carry confidence on lastResult.analysis, pendingLimitOrder,
+  // virtualPosition.entryConfidence, results[].analysis.confidence, and
+  // tradeHistory[].entryConfidence. The v15 hook must strip all of them.
+  const state = migrateState({
+    stateVersion: 14,
+    lastResult: { analysis: { action: "BUY_LIMIT", confidence: "high" } },
+    pendingLimitOrder: { action: "BUY_LIMIT", limitPrice: "180.50", confidence: "medium" },
+    virtualPosition: { entryPrice: "180.50", entryConfidence: "high" },
+    results: [
+      { id: "r1", analysis: { action: "WAIT", confidence: "low" } }
+    ],
+    tradeHistory: [
+      { id: "t1", pnlPercent: 1.0, entryConfidence: "high" },
+      { id: "t2", pnlPercent: -0.5, entryConfidence: null }
+    ]
+  });
+
+  assert.equal(state.stateVersion, STATE_VERSION);
+  assert.ok(!("confidence" in state.lastResult.analysis));
+  assert.ok(!("confidence" in state.pendingLimitOrder));
+  assert.ok(!("entryConfidence" in state.virtualPosition));
+  assert.ok(!("confidence" in state.results[0].analysis));
+  assert.ok(!("entryConfidence" in state.tradeHistory[0]));
+  assert.ok(!("entryConfidence" in state.tradeHistory[1]));
+  // Non-confidence fields are preserved.
+  assert.equal(state.lastResult.analysis.action, "BUY_LIMIT");
+  assert.equal(state.pendingLimitOrder.limitPrice, "180.50");
+  assert.equal(state.virtualPosition.entryPrice, "180.50");
+  assert.equal(state.tradeHistory[0].pnlPercent, 1.0);
+});
+
 test("migrateState: v6 profiles split legacy analysisInterval into state-specific intervals", () => {
   const state = migrateState({
     stateVersion: 6,
