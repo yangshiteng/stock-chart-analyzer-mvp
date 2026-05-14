@@ -31,12 +31,6 @@ import {
 } from "./lib/market-context.js";
 import { getUsMarketSessionPhase, getUsTradingDay, isNearUsMarketClose } from "./lib/market-hours.js";
 import {
-  buildSellStrategyContext,
-  isValidSellDelta,
-  normalizeSellDelta,
-  normalizeSellStrategyRules
-} from "./lib/sell-strategy.js";
-import {
   SIDEPANEL_PATH,
   enableSidePanelForWindow,
   resetSidePanelDefaultsToFullUi,
@@ -486,6 +480,10 @@ function normalizeMonitoringProfileRules(monitoringProfile) {
   void entryInterval;
   void pendingInterval;
   void positionInterval;
+  // quickProfitDelta / maxLossDelta were sell-strategy parameters of the
+  // (removed) user-set magnitude-based take-profit / stop-loss feature.
+  // Stripped from in-memory profile rules; storage migration v17 also
+  // strips them from on-disk state.
   void quickProfitDelta;
   void maxLossDelta;
   void totalRounds;
@@ -493,8 +491,7 @@ function normalizeMonitoringProfileRules(monitoringProfile) {
     ...monitoringProfile,
     rules: {
       ...restRules,
-      ...normalizeAnalysisIntervalRules(monitoringProfile.rules),
-      ...normalizeSellStrategyRules(monitoringProfile.rules)
+      ...normalizeAnalysisIntervalRules(monitoringProfile.rules)
     }
   };
 }
@@ -506,11 +503,6 @@ function getActiveIntervalRuleForState(state, monitoringProfile = null) {
 
 function scheduleMonitoringAlarmForState(state, monitoringProfile = null) {
   scheduleMonitoringAlarm(getAnalysisIntervalMinutes(getActiveIntervalRuleForState(state, monitoringProfile)));
-}
-
-function getSellStrategyForState(state, monitoringProfile = null) {
-  const profile = monitoringProfile || state.monitoringProfile || state.lastMonitoringProfile || null;
-  return buildSellStrategyContext(state.virtualPosition, profile?.rules || {});
 }
 
 async function rescheduleMonitoringAlarmIfRunning(state) {
@@ -595,7 +587,6 @@ async function buildMonitoringProfile(payload) {
   const entryInterval = `${payload.entryInterval || payload.analysisInterval || "5m"}`.trim();
   const pendingInterval = `${payload.pendingInterval || "2m"}`.trim();
   const positionInterval = `${payload.positionInterval || "1m"}`.trim();
-  const quickProfitDeltaRaw = `${payload.quickProfitDelta || "0.20"}`.trim();
 
   if (
     !isValidAnalysisInterval(entryInterval)
@@ -605,19 +596,12 @@ async function buildMonitoringProfile(payload) {
     throw new Error(t(language, "chooseValidAnalysisInterval"));
   }
 
-  if (!isValidSellDelta(quickProfitDeltaRaw)) {
-    throw new Error(t(language, "chooseValidSellStrategy"));
-  }
-
-  const quickProfitDelta = normalizeSellDelta(quickProfitDeltaRaw, "0.20");
-
   return {
     symbolOverride,
     rules: {
       entryInterval,
       pendingInterval,
-      positionInterval,
-      quickProfitDelta
+      positionInterval
     }
   };
 }
@@ -663,7 +647,11 @@ async function markBought(payload) {
     sourceRound: pending?.sourceRound ?? currentState.roundCount ?? 0,
     source: pending?.source || "signal",
     sourceReviewId: pending?.sourceReviewId || null,
-    entryAction: pending?.action || suggestion.action || null
+    entryAction: pending?.action || suggestion.action || null,
+    // Capture the key-level anchor used for entry — passed through from the
+    // pending limit order (preferred, since that's what actually filled) or
+    // falling back to the most recent analysis output.
+    entryAnchorSource: pending?.anchorSource || suggestion.anchorSource || null
   };
 
   const state = await patchState({
@@ -713,7 +701,11 @@ async function markLimitPlaced(payload) {
     reasoning: suggestion.reasoning || null,
     symbol: currentState.monitoringProfile?.symbolOverride || suggestion.symbol || null,
     placedAt: new Date().toISOString(),
-    sourceRound: currentState.roundCount || 0
+    sourceRound: currentState.roundCount || 0,
+    // Carry the key-level anchor through so subsequent rounds can compare
+    // whether to keep the same anchor (just realigned to a new EMA value)
+    // or switch to a different level (genuine structural change).
+    anchorSource: suggestion.anchorSource || null
   };
 
   const state = await patchState({ pendingLimitOrder, lastError: null });
@@ -769,7 +761,8 @@ async function markSold(payload) {
     plannedStopLoss: position.stopLossPrice || null,
     plannedTarget: position.targetPrice || null,
     heldMinutes,
-    entryAction: position.entryAction || null
+    entryAction: position.entryAction || null,
+    entryAnchorSource: position.entryAnchorSource || null
   };
 
   const tradeHistory = [trade, ...(currentState.tradeHistory || [])].slice(0, MAX_TRADE_HISTORY);
@@ -1023,7 +1016,6 @@ async function runMonitoringRound() {
       symbolHint: monitoringProfile.symbolOverride || null,
       mode,
       virtualPosition,
-      sellStrategy: getSellStrategyForState(currentState, monitoringProfile),
       lastSignal,
       pendingLimitOrder,
       marketContext: currentState.marketContext?.summary || null
@@ -1223,7 +1215,8 @@ function buildInitialVirtualPositionFromPayload(payload, monitoringProfile, lang
     sourceRound: 0,
     source: "manual_existing_position",
     sourceReviewId: null,
-    entryAction: "manual_existing_position"
+    entryAction: "manual_existing_position",
+    entryAnchorSource: "manual_existing_position"
   };
 }
 
@@ -1398,50 +1391,6 @@ async function updateAnalysisIntervals(payload) {
   });
 
   await rescheduleMonitoringAlarmIfRunning(state);
-
-  return { ok: true, state };
-}
-
-function updateProfileSellStrategy(profile, sellRules) {
-  if (!profile) {
-    return null;
-  }
-
-  const { quickProfitDelta, maxLossDelta, ...restRules } = profile.rules || {};
-  void quickProfitDelta;
-  void maxLossDelta;
-  return {
-    ...profile,
-    rules: {
-      ...restRules,
-      ...sellRules
-    }
-  };
-}
-
-async function updateSellStrategy(payload) {
-  const language = await getUiLanguage();
-  const currentState = await getState();
-  const profile = currentState.monitoringProfile || currentState.lastMonitoringProfile;
-
-  if (!profile) {
-    throw new Error(t(language, "noPreviousSession"));
-  }
-
-  const quickProfitDeltaRaw = `${payload?.quickProfitDelta || ""}`.trim();
-
-  if (!isValidSellDelta(quickProfitDeltaRaw)) {
-    throw new Error(t(language, "chooseValidSellStrategy"));
-  }
-
-  const sellRules = {
-    quickProfitDelta: normalizeSellDelta(quickProfitDeltaRaw, "0.20")
-  };
-  const state = await patchState({
-    monitoringProfile: updateProfileSellStrategy(currentState.monitoringProfile, sellRules),
-    lastMonitoringProfile: updateProfileSellStrategy(currentState.lastMonitoringProfile || profile, sellRules),
-    lastError: null
-  });
 
   return { ok: true, state };
 }
@@ -1684,10 +1633,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return;
     }
 
-    if (message?.type === "update-sell-strategy") {
-      sendResponse(await updateSellStrategy(message));
-      return;
-    }
 
     if (message?.type === "mark-bought") {
       sendResponse(await markBought(message));

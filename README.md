@@ -61,7 +61,6 @@ The scan extracts `regime` (`uptrend` / `range` / `downtrend`), an aggression pr
 4. The side panel opens with the session form. Fill in:
    - **Ticker symbol** (auto-guessed from title/URL when possible, but user input wins)
    - **Entry / pending-order / position scan frequency**
-   - **Quick-profit dollar delta** (stop-loss is chart-based — the AI returns its own `stopLossPrice` each round; place a hard stop at the broker if you want a fixed dollar cap)
 5. Click `Start Monitoring`. The side panel moves to the mandatory Market Context Scan.
 6. Switch the TradingView chart to Daily / 1D and click `Scan Daily`, then switch to 1H / 60m and click `Scan 1H`.
 7. Review the extracted context summary, declare whether you already hold the stock, and switch TradingView back to the 5-minute chart.
@@ -75,11 +74,15 @@ Action vocabulary the AI is allowed to return:
 
 | Mode | Allowed actions |
 | --- | --- |
-| Entry (no position) | `BUY_LIMIT`, `WAIT` |
-| Exit (holding) | `SELL_NOW`, `SELL_LIMIT`, `HOLD` |
+| Entry (no position) | `BUY_LIMIT` only |
+| Exit (holding) | `SELL_LIMIT` (default) or `SELL_NOW` (recorded stop broken) |
 | Force-exit (10 min before close, holding) | `SELL_NOW` only |
 
-Entries are limit-only. In exit mode, `SELL_NOW` is allowed for immediate scalp profit, stop-loss, or capital protection; `SELL_LIMIT` is reserved for a take-profit limit above current price.
+The key-levels strategy: every round always emits a price-bearing action. There is **no WAIT and no HOLD** — limit orders are zero-cost when they don't fill, so always giving a number (anchored to a chart key level) is strictly safer than withholding one. The user decides at the broker whether to actually place the order.
+
+- `BUY_LIMIT` is anchored to the nearest key level strictly **below** current price (static from Market Context or dynamic from EMA / VWAP).
+- `SELL_LIMIT` is anchored to the nearest key level strictly **above** current price.
+- `SELL_NOW` fires only when (a) current price has broken the recorded stop, or (b) we are in the force-exit window.
 
 Side panel buttons follow the signal:
 
@@ -93,7 +96,8 @@ Side panel buttons follow the signal:
 The model returns strict JSON with these fields:
 
 - `action` — see vocabulary above
-- `orderPrice` — the exact broker order price to place now for `BUY_LIMIT` / `SELL_LIMIT`; `null` for `WAIT`, `HOLD`, and usually `SELL_NOW`
+- `orderPrice` — the exact broker order price for `BUY_LIMIT` (must be < currentPrice) or `SELL_LIMIT` (must be > currentPrice); `null` for `SELL_NOW`
+- `anchorSource` — which key level was chosen (`EMA20` / `EMA50` / `EMA100` / `EMA200` / `VWAP` / `pivot` / `gap` / `prior_high` / `prior_low` / `conservative_estimate` / `stop_broken` / `force_exit`)
 - `entryPrice` — optional reference to the recorded entry price when already holding; not the primary execution price
 - `stopLossPrice` — invalidation level
 - `targetPrice` — profit target
@@ -115,7 +119,7 @@ Notable injected sections:
 
 - `LAST_SIGNAL_AND_ORDER` — the prior round's action plus any resting limit order (action, price, age in minutes, full snapshot) so the next round either reuses the same numbers or explicitly flags invalidation in `reasoning`. Omitted in force-exit mode.
 - `MARKET_CONTEXT` — mandatory same-symbol, same-trading-day Daily + 1H context. The prompt uses it as a higher-timeframe map for regime, support/resistance, dip-buy aggressiveness, and profit-taking style; the final action still must be executable from the current 5-minute screenshot.
-- Post-response validation checks that the returned action is legal for the current mode, `BUY_LIMIT` / `SELL_LIMIT` include a positive decimal `orderPrice`, `WAIT` / `HOLD` keep `orderPrice` empty, and entry-mode long setups have stop < orderPrice < target with at least 1:1 reward-to-risk. Invalid analysis output gets one fresh model retry before the session pauses with the validation error.
+- Post-response validation checks that the returned action is legal for the current mode, `BUY_LIMIT` has `orderPrice` strictly below `currentPrice` with `stopLossPrice` below that and `targetPrice` above `currentPrice`, `SELL_LIMIT` has `orderPrice` strictly above `currentPrice`, `SELL_NOW` has `orderPrice=null`, and `anchorSource` is present on every output. Per-trade R:R floor was removed — the user's edge is aggregate across many key-level attempts. Invalid analysis output gets one fresh model retry before the session pauses with the validation error.
 
 Legacy optional Daily / Weekly long-term context was removed. The current design reintroduces higher-timeframe information only as a mandatory, structured Market Context Scan for intraday execution: Daily + 1H regime and key levels, not swing-trading thesis text.
 
@@ -126,7 +130,7 @@ Single source of truth: `STATUS` enum (`IDLE` / `VALIDATING` / `AWAITING_CONTEXT
 - `virtualPosition` — `null` when scanning for entry, `{ entryPrice, stopLossPrice, targetPrice, entryAction, tradingDay, ... }` when holding.
 - `pendingLimitOrder` — `null` or a snapshot of a resting BUY_LIMIT / SELL_LIMIT the user has placed at the broker.
 - `marketContext` — mandatory pre-session context tied to `symbol` + US trading day. Contains Daily scan, 1H scan, and merged summary; invalid/missing context forces `AWAITING_CONTEXT`.
-- `monitoringProfile` — per-session config: `symbolOverride`, state-specific scan intervals, sell-strategy deltas, bound tab/window metadata.
+- `monitoringProfile` — per-session config: `symbolOverride`, state-specific scan intervals, bound tab/window metadata.
 - `tradeHistory` — closed (and abandoned) trades, capped at 500. Preserved across every reset path via `buildResetStatePreservingHistory()`.
 
 Stored monitor state is migrated through `migrateState()` in `lib/storage.js` before use. The migration chain through `STATE_VERSION = 10` removes legacy `userContext` / `longTermContext` / `longTermContextDraft` / `lastSignalReview` fields, resets pre-v5 market context, restores missing defaults, and caps large `results` / `tradeHistory` arrays to their configured limits. `tradeHistory` and `lastMonitoringProfile` are preserved.
