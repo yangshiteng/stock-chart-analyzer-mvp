@@ -8,11 +8,6 @@ import {
 } from "./lib/analysis-intervals.js";
 import { getLanguage, t } from "./lib/i18n.js";
 import { MARKET_CONTEXT_STATUS } from "./lib/market-context.js";
-import {
-  buildSellStrategyContext,
-  normalizeSellDelta,
-  normalizeSellStrategyRules
-} from "./lib/sell-strategy.js";
 import { getSettings, getState, patchSettings } from "./lib/storage.js";
 import { computeTradeStats } from "./lib/trade-stats.js";
 
@@ -43,11 +38,9 @@ const symbolOverrideInput = document.getElementById("symbolOverrideInput");
 const entryIntervalLabel = document.getElementById("entryIntervalLabel");
 const pendingIntervalLabel = document.getElementById("pendingIntervalLabel");
 const positionIntervalLabel = document.getElementById("positionIntervalLabel");
-const quickProfitDeltaLabel = document.getElementById("quickProfitDeltaLabel");
 const entryIntervalSelect = document.getElementById("entryIntervalSelect");
 const pendingIntervalSelect = document.getElementById("pendingIntervalSelect");
 const positionIntervalSelect = document.getElementById("positionIntervalSelect");
-const quickProfitDeltaInput = document.getElementById("quickProfitDeltaInput");
 const formError = document.getElementById("formError");
 const confirmButton = document.getElementById("confirmButton");
 const runtimeIntervalSection = document.getElementById("runtimeIntervalSection");
@@ -62,13 +55,6 @@ const runtimePendingIntervalSelect = document.getElementById("runtimePendingInte
 const runtimePositionIntervalSelect = document.getElementById("runtimePositionIntervalSelect");
 const runtimeIntervalRecommendation = document.getElementById("runtimeIntervalRecommendation");
 const runtimeIntervalError = document.getElementById("runtimeIntervalError");
-const runtimeSellStrategySection = document.getElementById("runtimeSellStrategySection");
-const runtimeSellStrategyTitle = document.getElementById("runtimeSellStrategyTitle");
-const runtimeSellStrategyCopy = document.getElementById("runtimeSellStrategyCopy");
-const runtimeSellStrategyStatus = document.getElementById("runtimeSellStrategyStatus");
-const runtimeQuickProfitDeltaLabel = document.getElementById("runtimeQuickProfitDeltaLabel");
-const runtimeQuickProfitDeltaInput = document.getElementById("runtimeQuickProfitDeltaInput");
-const runtimeSellStrategyError = document.getElementById("runtimeSellStrategyError");
 const marketContextSection = document.getElementById("marketContextSection");
 const marketContextTitle = document.getElementById("marketContextTitle");
 const marketContextCopy = document.getElementById("marketContextCopy");
@@ -139,7 +125,6 @@ let scanningMarketContextTimeframe = null;
 let isConfirmingMarketContext = false;
 let initialPositionMode = "flat";
 let isUpdatingRuntimeIntervals = false;
-let isUpdatingSellStrategy = false;
 
 // Set an input's value WITHOUT clobbering what the user is currently typing.
 // number / text inputs only fire `change` on blur or Enter, so any render() that
@@ -461,6 +446,7 @@ function renderAnalysisCard(state, language) {
       ${renderMetricCard(language, t(language, "currentPrice"), analysis.currentPrice || nA)}
       ${renderMetricCard(language, t(language, "stopLossPriceLabel"), analysis.stopLossPrice || nA)}
       ${renderMetricCard(language, t(language, "targetPriceLabel"), analysis.targetPrice || nA)}
+      ${renderMetricCard(language, t(language, "anchorSourceLabel"), analysis.anchorSource || nA)}
       ${renderMetricCard(language, t(language, "reasoningLabel"), analysis.reasoning || nA, { fullSpan: true })}
     </div>
     ${renderNearbyMarketLevels(state, analysis, language)}
@@ -740,8 +726,6 @@ function renderPositionPanels(state, language) {
     positionSection.classList.remove("hidden");
     positionActions.classList.remove("hidden");
     const nA = t(language, "nA");
-    const profile = state.monitoringProfile || state.lastMonitoringProfile || {};
-    const sellLevels = buildSellStrategyContext(position, profile.rules || {});
     const currentPrice = parsePositivePrice(state.lastResult?.analysis?.currentPrice);
     const entryPrice = parsePositivePrice(position.entryPrice);
     const floatingDelta = currentPrice && entryPrice ? formatDollarSigned(currentPrice - entryPrice) : nA;
@@ -750,9 +734,9 @@ function renderPositionPanels(state, language) {
       <p class="position-line"><strong>${escapeHtml(t(language, "entryPriceLabel"))}:</strong> ${escapeHtml(position.entryPrice || nA)}</p>
       <p class="position-line"><strong>${escapeHtml(t(language, "currentPrice"))}:</strong> ${escapeHtml(state.lastResult?.analysis?.currentPrice || nA)}</p>
       <p class="position-line"><strong>${escapeHtml(t(language, "floatingDelta"))}:</strong> ${escapeHtml(floatingDelta)}</p>
-      <p class="position-line"><strong>${escapeHtml(t(language, "quickProfitTrigger"))}:</strong> ${escapeHtml(sellLevels?.quickProfitPrice || nA)}</p>
       <p class="position-line"><strong>${escapeHtml(t(language, "stopLossPriceLabel"))}:</strong> ${escapeHtml(position.stopLossPrice || nA)}</p>
       <p class="position-line"><strong>${escapeHtml(t(language, "targetPriceLabel"))}:</strong> ${escapeHtml(position.targetPrice || nA)}</p>
+      <p class="position-line"><strong>${escapeHtml(t(language, "entryAnchorLabel"))}:</strong> ${escapeHtml(position.entryAnchorSource || nA)}</p>
     `;
 
     // Prefill exitPriceInput with the AI's currentPrice — user marking a manual
@@ -812,15 +796,11 @@ function updateStaticText(language, settings) {
   entryIntervalLabel.textContent = t(language, "entryInterval");
   pendingIntervalLabel.textContent = t(language, "pendingInterval");
   positionIntervalLabel.textContent = t(language, "positionInterval");
-  quickProfitDeltaLabel.textContent = t(language, "quickProfitDelta");
   runtimeIntervalTitle.textContent = t(language, "runtimeIntervalTitle");
   runtimeIntervalCopy.textContent = t(language, "runtimeIntervalCopy");
   runtimeEntryIntervalLabel.textContent = t(language, "entryInterval");
   runtimePendingIntervalLabel.textContent = t(language, "pendingInterval");
   runtimePositionIntervalLabel.textContent = t(language, "positionInterval");
-  runtimeSellStrategyTitle.textContent = t(language, "runtimeSellStrategyTitle");
-  runtimeSellStrategyCopy.textContent = t(language, "runtimeSellStrategyCopy");
-  runtimeQuickProfitDeltaLabel.textContent = t(language, "quickProfitDelta");
   confirmButton.textContent = t(language, "start");
   recommendationTitle.textContent = t(language, "latestRecommendation");
   apiKeyStatus.textContent = settings.openaiApiKey
@@ -895,11 +875,6 @@ function populateIntervalSelects({ entrySelect, pendingSelect, positionSelect },
   populateAnalysisIntervalSelect(positionSelect, language, intervals.positionInterval);
 }
 
-function populateSellStrategyInputs({ quickProfitInput }, rules = {}) {
-  const sellRules = normalizeSellStrategyRules(rules);
-  safeSetInputValue(quickProfitInput, sellRules.quickProfitDelta);
-}
-
 function populateContextForm(state, language) {
   const profile = state.monitoringProfile || state.lastMonitoringProfile;
   safeSetInputValue(symbolOverrideInput, profile?.symbolOverride ?? "");
@@ -908,9 +883,6 @@ function populateContextForm(state, language) {
     pendingSelect: pendingIntervalSelect,
     positionSelect: positionIntervalSelect
   }, language, profile?.rules);
-  populateSellStrategyInputs({
-    quickProfitInput: quickProfitDeltaInput
-  }, profile?.rules);
 }
 
 function isMarketContextSetupActive(state) {
@@ -1107,31 +1079,6 @@ function renderRuntimeIntervalSection(state, language, apiReady) {
   }
 }
 
-function renderRuntimeSellStrategySection(state, language, apiReady) {
-  const profile = state.monitoringProfile || state.lastMonitoringProfile;
-  const shouldShow = Boolean(profile) && (state.status === STATUS.RUNNING || state.status === STATUS.PAUSED);
-  runtimeSellStrategySection.classList.toggle("hidden", !shouldShow);
-  if (!shouldShow) {
-    runtimeSellStrategyError.textContent = "";
-    runtimeSellStrategyError.classList.add("hidden");
-    return;
-  }
-
-  const sellRules = normalizeSellStrategyRules(profile.rules);
-  safeSetInputValue(runtimeQuickProfitDeltaInput, sellRules.quickProfitDelta, isUpdatingSellStrategy);
-
-  runtimeQuickProfitDeltaInput.disabled = !apiReady || isUpdatingSellStrategy;
-
-  const levels = buildSellStrategyContext(state.virtualPosition, sellRules);
-  runtimeSellStrategyStatus.innerHTML = levels
-    ? `<p><strong>${escapeHtml(t(language, "quickProfitTrigger"))}:</strong> ${escapeHtml(levels.quickProfitPrice)}</p>`
-    : `<p>${escapeHtml(t(language, "sellStrategyFlatHint"))}</p>`;
-
-  if (!runtimeSellStrategyError.textContent) {
-    runtimeSellStrategyError.classList.add("hidden");
-  }
-}
-
 async function render() {
   // Ask background to sweep stale (cross-trading-day) virtual positions before we read state.
   // Background handler is a cheap no-op when no position exists or position is same-day.
@@ -1158,7 +1105,6 @@ async function render() {
   renderTradeJournal(state, language);
   apiSetupSection.classList.toggle("hidden", apiReady);
   renderRuntimeIntervalSection(state, language, apiReady);
-  renderRuntimeSellStrategySection(state, language, apiReady);
   renderMarketContextSection(state, language, apiReady);
 
   const hasSavedSession = hasSavedMonitoringSession(state);
@@ -1476,40 +1422,6 @@ for (const select of [runtimeEntryIntervalSelect, runtimePendingIntervalSelect, 
   });
 }
 
-async function updateRuntimeSellStrategy() {
-  const settings = await getSettings();
-  const language = getLanguage(settings.language);
-  const quickProfitDelta = runtimeQuickProfitDeltaInput.value;
-  runtimeSellStrategyError.textContent = "";
-  runtimeSellStrategyError.classList.add("hidden");
-  isUpdatingSellStrategy = true;
-  await render();
-
-  let response;
-  let sendError = null;
-  try {
-    response = await chrome.runtime.sendMessage({
-      type: "update-sell-strategy",
-      quickProfitDelta
-    });
-  } catch (error) {
-    sendError = error;
-  } finally {
-    isUpdatingSellStrategy = false;
-  }
-
-  if (sendError || !response?.ok) {
-    runtimeSellStrategyError.textContent = sendError?.message || response?.error || t(language, "couldNotUpdateSellStrategy");
-    runtimeSellStrategyError.classList.remove("hidden");
-  }
-
-  await render();
-}
-
-runtimeQuickProfitDeltaInput.addEventListener("change", () => {
-  void updateRuntimeSellStrategy();
-});
-
 function debounce(fn, wait) {
   let timer = null;
   return (...args) => {
@@ -1555,8 +1467,7 @@ contextForm.addEventListener("submit", async (event) => {
       symbolOverride: symbolOverrideInput.value,
       entryInterval: entryIntervalSelect.value,
       pendingInterval: pendingIntervalSelect.value,
-      positionInterval: positionIntervalSelect.value,
-      quickProfitDelta: quickProfitDeltaInput.value
+      positionInterval: positionIntervalSelect.value
     });
   } catch (error) {
     sendError = error;

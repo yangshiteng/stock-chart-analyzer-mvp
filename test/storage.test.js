@@ -75,8 +75,7 @@ test("migrateState: pre-v3 state clears old session signals but preserves journa
   assert.deepEqual(state.lastMonitoringProfile.rules, {
     entryInterval: "5m",
     pendingInterval: "2m",
-    positionInterval: "1m",
-    quickProfitDelta: "0.20"
+    positionInterval: "1m"
   });
   assert.equal(state.marketContext.status, MARKET_CONTEXT_STATUS.MISSING);
 });
@@ -230,20 +229,19 @@ test("migrateState: v6 profiles split legacy analysisInterval into state-specifi
   assert.deepEqual(state.monitoringProfile.rules, {
     entryInterval: "10m",
     pendingInterval: "2m",
-    positionInterval: "1m",
-    quickProfitDelta: "0.20"
+    positionInterval: "1m"
   });
   assert.deepEqual(state.lastMonitoringProfile.rules, {
     entryInterval: "15m",
     pendingInterval: "2m",
-    positionInterval: "30m",
-    quickProfitDelta: "0.20"
+    positionInterval: "30m"
   });
 });
 
-test("migrateState: v7 profiles receive default sell strategy deltas", () => {
-  // Legacy v7 profiles carried a maxLossDelta — verify it gets stripped by the
-  // v13 removal cleanup while quickProfitDelta is preserved.
+test("migrateState: v7 profiles strip legacy sell-strategy fields entirely (v17 cleanup)", () => {
+  // v7 profiles carried both maxLossDelta and quickProfitDelta. Both have been
+  // removed (v13 stripped maxLossDelta, v17 stripped quickProfitDelta). Only
+  // interval fields should remain.
   const state = migrateState({
     stateVersion: 7,
     monitoringProfile: {
@@ -256,8 +254,7 @@ test("migrateState: v7 profiles receive default sell strategy deltas", () => {
   assert.deepEqual(state.monitoringProfile.rules, {
     entryInterval: "5m",
     pendingInterval: "2m",
-    positionInterval: "1m",
-    quickProfitDelta: "0.25"
+    positionInterval: "1m"
   });
 });
 
@@ -281,8 +278,7 @@ test("migrateState: v8 profiles drop removed total rounds rule", () => {
   assert.deepEqual(state.monitoringProfile.rules, {
     entryInterval: "1m",
     pendingInterval: "2m",
-    positionInterval: "5m",
-    quickProfitDelta: "0.20"
+    positionInterval: "5m"
   });
 });
 
@@ -310,8 +306,7 @@ test("migrateState: profiles drop removed userContext and longTermContext fields
   assert.deepEqual(state.monitoringProfile.rules, {
     entryInterval: "5m",
     pendingInterval: "2m",
-    positionInterval: "1m",
-    quickProfitDelta: "0.20"
+    positionInterval: "1m"
   });
   assert.equal(state.lastMonitoringProfile.symbolOverride, "AAPL");
   assert.equal(state.lastMonitoringProfile.userContext, undefined);
@@ -319,8 +314,7 @@ test("migrateState: profiles drop removed userContext and longTermContext fields
   assert.deepEqual(state.lastMonitoringProfile.rules, {
     entryInterval: "5m",
     pendingInterval: "2m",
-    positionInterval: "1m",
-    quickProfitDelta: "0.20"
+    positionInterval: "1m"
   });
 });
 

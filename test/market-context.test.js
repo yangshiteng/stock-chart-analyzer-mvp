@@ -29,9 +29,6 @@ test("market context: validity requires complete same-symbol same-day context", 
     hourlyScan: { timeframe: "1h" },
     summary: {
       regime: "uptrend",
-      aggression: "high",
-      dipBuyPolicy: "aggressive",
-      profitTakingStyle: "normal",
       keyLevels: [],
       riskNotes: ""
     }
@@ -45,7 +42,7 @@ test("market context: validity requires complete same-symbol same-day context", 
   );
 });
 
-test("market context: merge derives conservative policy when daily and 1H conflict", () => {
+test("market context: merge collapses to range regime when daily and 1H conflict", () => {
   const merged = mergeMarketContextScans({
     symbol: "TSLA",
     tradingDay: "2026-05-05",
@@ -55,8 +52,7 @@ test("market context: merge derives conservative policy when daily and 1H confli
       keyLevels: [
         {
           label: "Daily shelf",
-          type: "support",
-          strength: "strong",
+          type: "pivot",
           timeframe: "daily",
           price: "180.50",
           zoneLow: null,
@@ -71,9 +67,8 @@ test("market context: merge derives conservative policy when daily and 1H confli
       regime: "downtrend",
       keyLevels: [
         {
-          label: "Nearby resistance",
-          type: "resistance",
-          strength: "medium",
+          label: "Nearby pivot",
+          type: "prior_high",
           timeframe: "1h",
           price: "185.00",
           zoneLow: null,
@@ -87,10 +82,42 @@ test("market context: merge derives conservative policy when daily and 1H confli
 
   assert.equal(merged.status, MARKET_CONTEXT_STATUS.COMPLETE);
   assert.equal(merged.summary.regime, "range");
-  assert.equal(merged.summary.aggression, "low");
-  assert.equal(merged.summary.dipBuyPolicy, "support_only");
-  assert.equal(merged.summary.profitTakingStyle, "quick_scalp");
+  // Derived policy fields (aggression / dipBuyPolicy / profitTakingStyle) were
+  // removed in the key-levels redesign — only regime + keyLevels + riskNotes.
+  assert.ok(!("aggression" in merged.summary));
+  assert.ok(!("dipBuyPolicy" in merged.summary));
+  assert.ok(!("profitTakingStyle" in merged.summary));
   assert.equal(merged.summary.keyLevels.length, 2);
+  // No strength tier on key levels anymore.
+  for (const level of merged.summary.keyLevels) {
+    assert.ok(!("strength" in level), "keyLevel.strength was removed in v17");
+  }
+});
+
+test("market context: legacy support/resistance types are normalized to pivot", () => {
+  // v16 and earlier stored scans may carry type='support' or type='resistance'.
+  // Those role-labels are now decided at runtime based on current price; the
+  // static type collapses to 'pivot' on read for backward compatibility.
+  const merged = mergeMarketContextScans({
+    symbol: "TSLA",
+    tradingDay: "2026-05-05",
+    dailyScan: {
+      timeframe: "daily",
+      regime: "uptrend",
+      keyLevels: [
+        { label: "L1", type: "support", strength: "strong", timeframe: "daily", price: "100.00", zoneLow: null, zoneHigh: null, reason: "" },
+        { label: "L2", type: "resistance", strength: "medium", timeframe: "daily", price: "110.00", zoneLow: null, zoneHigh: null, reason: "" }
+      ],
+      riskNotes: ""
+    },
+    hourlyScan: { timeframe: "1h", regime: "uptrend", keyLevels: [], riskNotes: "" }
+  });
+
+  // Both should normalize to "pivot".
+  for (const level of merged.summary.keyLevels) {
+    assert.equal(level.type, "pivot");
+    assert.ok(!("strength" in level));
+  }
 });
 
 // ---- shouldPreserveMarketContextAcrossReset ----------------------------

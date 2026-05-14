@@ -270,6 +270,70 @@ Removed (AI-generated trade lesson — fully deleted):
 - **Tests**: new v16 migration test in `test/storage.test.js` asserts the field is stripped while other fields survive. The unrelated regression for legacy `recentLessons` prompt injection stays — that was an earlier removed feature about feeding lessons BACK into the analysis prompt, removed for the same reason this one was: AI doesn't need (and can't usefully consume) post-hoc trade narratives.
 - **If trade reflection feels useful again**: do NOT re-add a per-trade AI call. Either (1) compute deterministic post-hoc tags from journal fields (e.g. "stopped at planned stop", "held past target", "exited before quick-profit") and surface those as tone badges, or (2) build a periodic batch reflection over many trades (weekly summary) where the larger sample compensates for missing context. Single-trade LLM lessons with 6 input fields are structurally too thin.
 
+Completed (key-levels strategy redesign — STATE_VERSION 17, the largest single design change in the project's history):
+
+**Trigger** — multi-week real-trade observation that the EMA/VWAP-anchored prompt produced a structural late-entry / missed-entry pattern. EMAs and VWAP are mathematically lagging (moving averages of past prices) so any "wait for confirmation" rule by definition fires after the move. When price was above the lines, the AI's "wait for pullback" stance led to entries getting stopped on institutional distribution; when price was below, the AI's "wait for stabilization / reclaim" stance led to chasing the bounce after it already happened.
+
+**The new framework, in one paragraph**: every decision is anchored to a key level. Buy = nearest key level below current price; sell = nearest key level above current price; stop = key level just below the buy. Key levels come from both static MARKET_CONTEXT (pivot / gap / prior_high / prior_low) and dynamic 5-minute chart (EMA 20/50/100/200 / VWAP). All levels are equal — no strength tier. Every round always emits a price-bearing action (BUY_LIMIT / SELL_LIMIT / SELL_NOW) — WAIT and HOLD are removed because limit orders are zero-cost when they don't fill. The user decides at the broker whether to actually place each order.
+
+**Five user-confirmed design pillars** (each was discussed and locked individually before any code was touched):
+1. **关键点位 framework, not support/resistance**: Role is decided dynamically at execution time by current price position, not pre-classified at scan time. A level below current price acts as support; above acts as resistance; the role inverts when price crosses through (TA's polarity-inversion principle).
+2. **No strong/medium/weak classification**: The Market Context Scan no longer asks the model to rate level strength. All extracted levels are equal — proximity to current price + trend regime is the selection filter.
+3. **No WAIT / no HOLD**: `ALLOWED_ACTIONS` collapses from 5 actions to 3 (`BUY_LIMIT`, `SELL_LIMIT`, `SELL_NOW`). Limit orders are zero-cost when they don't fill, so "always emit a number" is strictly safer than "withhold a number." The user is the broker-side gatekeeper.
+4. **EMA / VWAP are themselves legitimate key levels**, not just trend gauges. Their dynamic values are candidate anchors for BUY_LIMIT / SELL_LIMIT. Each round re-evaluates: if the same anchor's value moved (e.g. EMA20 from 27.50 to 27.55), emit the new value as a "realignment" with explicit reasoning; if the anchor is invalidated (price decisively broke through), switch to a new anchor.
+5. **stopLossPrice = nearest key level below the BUY_LIMIT; targetPrice = nearest key level above currentPrice**: everything is symmetric. No percentages, no magic numbers. Stop is recorded at entry and does NOT trail in exit mode (the planned stop is a commitment).
+
+**Action vocabulary collapse**:
+- `ALLOWED_ACTIONS`: `[BUY_LIMIT, SELL_NOW, SELL_LIMIT, HOLD, WAIT]` → `[BUY_LIMIT, SELL_NOW, SELL_LIMIT]`
+- `ENTRY_MODE_ACTIONS`: `[BUY_LIMIT, WAIT]` → `[BUY_LIMIT]`
+- `EXIT_MODE_ACTIONS`: `[SELL_NOW, SELL_LIMIT, HOLD]` → `[SELL_NOW, SELL_LIMIT]`
+- `FORCE_EXIT_ACTIONS`: `[SELL_NOW]` (unchanged)
+
+**New required schema field**: `anchorSource` on every analysis output. Values: `EMA20` / `EMA50` / `EMA100` / `EMA200` / `VWAP` / `pivot` / `gap` / `prior_high` / `prior_low` / `conservative_estimate` (no level available) / `stop_broken` (SELL_NOW because stop hit) / `force_exit` (SELL_NOW because near close). Recorded on `pendingLimitOrder.anchorSource`, `virtualPosition.entryAnchorSource`, and every trade journal entry's `entryAnchorSource` — provides the audit trail needed to evaluate which anchor types are working over time.
+
+**Validator changes**:
+- NEW: BUY_LIMIT `orderPrice` MUST be strictly < `currentPrice` (pre-placed bid at a support below, not a marketable limit at current).
+- NEW: every action MUST include `anchorSource`.
+- REMOVED: R:R ≥ 1:1 hard floor — the key-levels strategy depends on aggregate edge across many small attempts, not per-trade R:R. The user can decide at the broker whether tight-R:R signals are worth placing.
+- REMOVED: stop-orderPrice distance "0.3-2%" range — stop is a key level, distance is whatever the chart gives.
+
+**Prompt rewrite** (in `lib/prompt-config.js`):
+- `chartFocusAreas`: key levels (static + dynamic from EMA/VWAP) is now the **first** bullet. Trend description is informational only.
+- `entryModeRules`: complete rewrite. Steps 1-5: collect candidates below, pick nearest, emit BUY_LIMIT, stop = next level below order, target = nearest level above current.
+- `exitModeRules`: complete rewrite. Priority 1: stop break → SELL_NOW. Priority 2: SELL_LIMIT at nearest key level above current. No HOLD.
+- `executionRules`: collapsed from 13 rules to 6. Removed: Volume gating, VWAP gating, four-condition Setup-quality gating, R:R floor, stop-distance range.
+- `LAST_SIGNAL_AND_ORDER` section now emits THREE-WAY continuity rules (anchor unchanged + value unchanged → repeat; anchor unchanged + value moved → realign; anchor invalidated → switch). Includes `anchorSource` in the snapshot.
+
+**Market Context Scan changes** (in `lib/llm.js` + `lib/market-context.js`):
+- `MARKET_CONTEXT_LEVEL_TYPES` enum: dropped `support` and `resistance` (role is dynamic), kept `pivot` / `gap` / `prior_high` / `prior_low`.
+- `MARKET_CONTEXT_LEVEL_STRENGTHS` constant entirely removed.
+- `keyLevels[].strength` field removed from schema and validator.
+- Derived summary fields `aggression` / `dipBuyPolicy` / `profitTakingStyle` removed — only `regime` / `keyLevels` / `riskNotes` remain. The new strategy doesn't use derived policy hints.
+- `derivePolicy()` helper removed. `dedupeLevels()` simplified to prefer-daily-over-1h ranking (no strength tier).
+- `normalizeLevel()` normalizes legacy `type=support` / `type=resistance` values to `type=pivot` on read for backward compatibility with v16 and earlier stored scans.
+
+**Sell strategy entire feature deleted** (the last remaining user-set parameter):
+- `lib/sell-strategy.js` + `test/sell-strategy.test.js` removed.
+- `quickProfitDelta` form field, runtime adjustment card, all DOM refs, populate/render functions, update handler, message route, and i18n keys removed (~14 keys per language).
+- `Quick Profit Trigger` row removed from the position summary card.
+- `formatVirtualPositionLines` no longer takes a `sellStrategy` argument.
+- `analyzeChartCapture` payload no longer includes `sellStrategy`.
+- `normalizeMonitoringProfileRules` / `normalizeStoredProfile` keep `quickProfitDelta` in their destructure-and-strip block for legacy data cleanup.
+
+**Side panel UI changes**:
+- Recommendation card now shows the `anchorSource` as a dedicated metric (e.g. `Anchor: EMA20`) — visible audit of which level drove each signal.
+- Position summary shows `entryAnchorSource` so you can see which anchor the trade started at, regardless of when it filled.
+- Form simplified to just: Ticker / Entry / Pending / Position scan intervals. Quick Profit Delta field gone.
+
+**Migration STATE_VERSION 16 → 17**:
+- Re-normalizes `monitoringProfile` + `lastMonitoringProfile` to strip `quickProfitDelta`.
+- Re-normalizes `marketContext` via `normalizeMarketContext()` to strip `aggression` / `dipBuyPolicy` / `profitTakingStyle` from the summary and `strength` from every `keyLevels[]` entry; legacy `type=support` / `type=resistance` values are mapped to `type=pivot`.
+- Legacy stored WAIT / HOLD entries in `lastResult.analysis.action` and `results[].analysis.action` are intentionally left alone as audit-trail breadcrumbs — they cannot be re-emitted as live action because the validator and schema have changed.
+
+**Tests**: 137 → 135. Net -2 (deleted 6 sell-strategy tests; added 4 new tests for the anchorSource requirement, the orderPrice < currentPrice rule, the legacy support/resistance-type-rejection, the role-is-dynamic Market Context note). Suite green.
+
+**Why this is the largest single change so far** — every prior removal (`userContext`, `dipBuyDiscount`, `maxLossDelta`, premarket dip, `confidence`, `lesson`) was a single isolated feature. This one rewrites the **core decision logic** of the plugin, simplifying the action vocab, schema, validator, prompt, and Market Context shape simultaneously. The result is a strategy that is structurally simpler (one decision rule applied symmetrically) and philosophically purer (every signal anchored to an audit-trail-visible key level).
+
 ## Future work / not planned
 
 ### Known risks / follow-ups (small)
