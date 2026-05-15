@@ -256,6 +256,20 @@ function parsePositivePrice(value) {
   return Number.isFinite(price) && price > 0 ? price : null;
 }
 
+// Compute which of the three exit zones the current position is in.
+// Used purely for UI labeling — actual zone logic lives in the prompt
+// (lib/prompt-config.js -> exitModeRules).
+function computeZoneLabel(language, position, state) {
+  if (!position) return t(language, "nA");
+  const current = parsePositivePrice(state?.lastResult?.analysis?.currentPrice);
+  const softStop = parsePositivePrice(position.stopLossPrice);
+  const hardStop = parsePositivePrice(position.hardStopPrice);
+  if (current === null) return t(language, "zonePending");
+  if (hardStop !== null && current <= hardStop) return t(language, "zoneHardExit");
+  if (softStop !== null && current <= softStop) return t(language, "zoneRecovery");
+  return t(language, "zoneTakeProfit");
+}
+
 function formatDollar(value) {
   const price = Number(`${value ?? ""}`.trim());
   return Number.isFinite(price) ? price.toFixed(2) : "";
@@ -734,9 +748,11 @@ function renderPositionPanels(state, language) {
       <p class="position-line"><strong>${escapeHtml(t(language, "entryPriceLabel"))}:</strong> ${escapeHtml(position.entryPrice || nA)}</p>
       <p class="position-line"><strong>${escapeHtml(t(language, "currentPrice"))}:</strong> ${escapeHtml(state.lastResult?.analysis?.currentPrice || nA)}</p>
       <p class="position-line"><strong>${escapeHtml(t(language, "floatingDelta"))}:</strong> ${escapeHtml(floatingDelta)}</p>
-      <p class="position-line"><strong>${escapeHtml(t(language, "stopLossPriceLabel"))}:</strong> ${escapeHtml(position.stopLossPrice || nA)}</p>
+      <p class="position-line"><strong>${escapeHtml(t(language, "softStopLabel"))}:</strong> ${escapeHtml(position.stopLossPrice || nA)}</p>
+      <p class="position-line"><strong>${escapeHtml(t(language, "hardStopLabel"))}:</strong> ${escapeHtml(position.hardStopPrice || nA)}</p>
       <p class="position-line"><strong>${escapeHtml(t(language, "targetPriceLabel"))}:</strong> ${escapeHtml(position.targetPrice || nA)}</p>
       <p class="position-line"><strong>${escapeHtml(t(language, "entryAnchorLabel"))}:</strong> ${escapeHtml(position.entryAnchorSource || nA)}</p>
+      <p class="position-line"><strong>${escapeHtml(t(language, "zoneLabel"))}:</strong> ${escapeHtml(computeZoneLabel(language, position, state))}</p>
     `;
 
     // Prefill exitPriceInput with the AI's currentPrice — user marking a manual

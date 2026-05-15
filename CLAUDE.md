@@ -334,6 +334,53 @@ Completed (key-levels strategy redesign — STATE_VERSION 17, the largest single
 
 **Why this is the largest single change so far** — every prior removal (`userContext`, `dipBuyDiscount`, `maxLossDelta`, premarket dip, `confidence`, `lesson`) was a single isolated feature. This one rewrites the **core decision logic** of the plugin, simplifying the action vocab, schema, validator, prompt, and Market Context shape simultaneously. The result is a strategy that is structurally simpler (one decision rule applied symmetrically) and philosophically purer (every signal anchored to an audit-trail-visible key level).
 
+Completed (dual-stop + three-zone exit strategy — STATE_VERSION 18, follow-up to the key-levels redesign):
+
+**Motivation**: under v17, exit logic was just "nearest resistance above current price"; stop was a single line that triggered `SELL_NOW` the moment it broke. Real-trade testing exposed the user's actual pattern: support breaks are often "假破" (false break) where the next deeper support holds and price recovers. Forcing SELL_NOW on the first break loses these recoveries. But naively waiting longer is the classic blowup recipe. Solution: **two stops** — a soft one that triggers "give it a chance" recovery mode, and a hard one that triggers unconditional exit.
+
+**Two design docs were written first** (in repo root): `BUY_STRATEGY.md` and `SELL_STRATEGY.md`. These are now the canonical specs; any future refinements should update them.
+
+**Schema split — mode-aware schemas**. Single `buildAnalysisJsonSchema(allowedActions)` replaced by four variants:
+- `entry`: `{action: BUY_LIMIT, orderPrice, anchorSource, reasoning, symbol, currentPrice}` — drops stop/target entirely
+- `first_exit`: same as entry's fields PLUS `stopLossPrice`, `hardStopPrice`, `targetPrice` required
+- `exit`: just `{action, orderPrice, anchorSource, reasoning, symbol, currentPrice}` — stops are on virtualPosition, not re-emitted
+- `force_exit`: same as exit (action locked to SELL_NOW)
+
+**Action vocabulary**:
+- `ENTRY_MODE_ACTIONS`: `["BUY_LIMIT"]` (unchanged)
+- `FIRST_EXIT_MODE_ACTIONS` (NEW): `["SELL_LIMIT", "SELL_NOW"]` — SELL_NOW for catastrophic gap-down
+- `EXIT_MODE_ACTIONS`: `["SELL_NOW", "SELL_LIMIT"]` (unchanged)
+- `FORCE_EXIT_ACTIONS`: `["SELL_NOW"]` (unchanged)
+
+**Trigger pathway for first_exit** — this is the most novel piece. Previously `markBought` was a simple state write. Now it's a 2-step:
+1. Validate inputs and capture the live chart screenshot
+2. Run a one-shot `analyzeChartCapture({mode: "first_exit", ...})`
+3. If the AI call fails, `markBought` THROWS — the position is NOT recorded, user sees an error and retries. This is intentional: a position without stops is worse than no position
+4. If success, write `virtualPosition` with `stopLossPrice` (soft) + `hardStopPrice` (hard) + the AI's initial SELL_LIMIT as `lastResult.analysis`
+5. The fresh `lastResult` includes `isFirstExit: true` so the side panel can flag it
+
+**Three-zone state machine** — encoded entirely in `exitModeRules` prompt; no dedicated code path. AI reads `virtualPosition.stopLossPrice` + `virtualPosition.hardStopPrice` + `currentPrice` and decides:
+- `current > softStop` → take-profit zone → SELL_LIMIT at nearest resistance above
+- `hardStop < current ≤ softStop` → recovery zone → SELL_LIMIT at nearest resistance above AND ≤ entry (break-even target)
+- `current ≤ hardStop` → must-exit zone → SELL_NOW
+
+**Stops are PERMANENT** — set at fill time, do not trail upward as price rises. The trade's commitment is fixed at entry. Future work may add trailing if real-trade testing shows the user gives back too much profit.
+
+**No averaging-down in v1** — the user originally proposed letting recovery zone include "place additional BUY_LIMIT at deeper support to lower average cost". Deferred because: (1) classic Martingale trap on cascade days, (2) plugin's architecture assumes single position per session (multi-fill, partial-fill, multi-stop management would be a major rewrite), (3) the recovery zone's break-even-target SELL_LIMIT already captures most of the upside without the position-sizing risk.
+
+**Files touched**:
+- `lib/constants.js`: STATE_VERSION 17 → 18
+- `lib/llm.js`: 4 schema builders + `getAllowedActions` extended + `normalizeMode` + `validateFirstExitResult` + `formatVirtualPositionLines(virtualPosition, mode)` + `buildAnalysisPromptFromConfig` handles first_exit
+- `lib/prompt-config.js`: rewritten — `firstExitModeRules` added, `exitModeRules` rewritten as three-zone, `schemaByMode` for per-mode required-fields hint
+- `lib/storage.js`: v18 migration hook adds `hardStopPrice: null` to any pre-existing virtualPosition
+- `background.js`: `markBought` becomes async 2-step; captures live screenshot then runs `analyzeChartCapture(mode: "first_exit")` and persists the dual stops + initial SELL_LIMIT; failure throws so the position isn't recorded without stops
+- `sidepanel.js`: `computeZoneLabel(language, position, state)` helper; position-summary card now shows softStop, hardStop, entryAnchor, and current zone
+- `lib/i18n.js`: 10 new keys per language (softStopLabel, hardStopLabel, zoneLabel + 4 zone names + 2 first_exit error strings, en + zh)
+- `BUY_STRATEGY.md` + `SELL_STRATEGY.md`: canonical specs added to repo root
+- Tests: 135 → 138 (added: first_exit prompt assembly test, first_exit dual-stop validator tests, gap-down SELL_NOW test; updated: entry mode no longer requires stop/target in schema)
+
+**Design tension we resolved**: the user kept proposing variations that would reintroduce subjective choice (averaging-down, "3 limit candidates", trend-based target selection). Each time, the response was the same: don't let user preference participate in AI decisions; aggregate edge across deterministic rules beats discretionary tuning. This is the same pattern that drove `userContext` / `dipBuyDiscount` / `maxLossDelta` / `confidence` removals.
+
 ## Future work / not planned
 
 ### Known risks / follow-ups (small)

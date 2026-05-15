@@ -631,33 +631,84 @@ async function markBought(payload) {
     throw new Error(t(language, "entryPriceInvalid"));
   }
 
-  // Prefer the pending limit order's captured snapshot over lastResult — lastResult may have
-  // moved on to a different signal by the time the limit fills several rounds later.
+  // STEP 1 — Trigger a one-shot "first-exit" AI analysis right at fill moment.
+  // This is where the soft stop, hard stop, and initial SELL_LIMIT are decided
+  // by the AI looking at the CURRENT chart (not at stale data from the BUY
+  // signal's round). See SELL_STRATEGY.md "首次卖出分析" for full rationale.
+  const monitoringProfile = currentState.monitoringProfile;
   const suggestion = currentState.lastResult?.analysis || {};
-  const source = pending || suggestion;
   const now = new Date();
-  const virtualPosition = {
+
+  // Take a fresh capture so the AI sees the chart AS OF the fill moment.
+  let capture;
+  try {
+    capture = await captureActiveTab(monitoringProfile?.boundWindowId);
+  } catch (error) {
+    throw new Error(`${t(language, "firstExitCaptureFailed") || "First-exit capture failed"}: ${error.message}`);
+  }
+
+  // Build a tentative position object (incomplete — stops will be filled by AI).
+  const tentativePosition = {
     entryPrice: entryPriceRaw,
     entryTime: now.toISOString(),
     tradingDay: getUsTradingDay(now),
-    stopLossPrice: source.stopLossPrice || suggestion.stopLossPrice || null,
-    targetPrice: source.targetPrice || suggestion.targetPrice || null,
-    reason: source.reasoning || source.reason || suggestion.reasoning || null,
-    symbol: currentState.monitoringProfile?.symbolOverride || source.symbol || suggestion.symbol || null,
+    reason: pending?.reasoning || suggestion.reasoning || null,
+    symbol: monitoringProfile?.symbolOverride || pending?.symbol || suggestion.symbol || null,
     sourceRound: pending?.sourceRound ?? currentState.roundCount ?? 0,
     source: pending?.source || "signal",
     sourceReviewId: pending?.sourceReviewId || null,
     entryAction: pending?.action || suggestion.action || null,
-    // Capture the key-level anchor used for entry — passed through from the
-    // pending limit order (preferred, since that's what actually filled) or
-    // falling back to the most recent analysis output.
     entryAnchorSource: pending?.anchorSource || suggestion.anchorSource || null
+  };
+
+  // Run the first-exit analysis. If it fails, we abort markBought so the user
+  // can retry — better than entering a position without stops set.
+  let firstExitAnalysis;
+  try {
+    firstExitAnalysis = await analyzeChartCapture({
+      ...capture,
+      symbolHint: monitoringProfile?.symbolOverride || null,
+      mode: "first_exit",
+      virtualPosition: tentativePosition,
+      lastSignal: null,         // first_exit is fresh — no continuity
+      pendingLimitOrder: null,  // already fulfilled
+      marketContext: currentState.marketContext?.summary || null
+    });
+  } catch (error) {
+    throw new Error(`${t(language, "firstExitAnalysisFailed") || "First-exit analysis failed"}: ${error.message}`);
+  }
+
+  // STEP 2 — Write the complete virtualPosition with stops from AI.
+  // The AI emits either SELL_LIMIT (normal) or SELL_NOW (gap-down).
+  const virtualPosition = {
+    ...tentativePosition,
+    stopLossPrice: firstExitAnalysis.stopLossPrice || null,
+    hardStopPrice: firstExitAnalysis.hardStopPrice || null,
+    // Initial target placeholder — will be re-evaluated each exit round.
+    targetPrice: firstExitAnalysis.targetPrice || firstExitAnalysis.orderPrice || null
+  };
+
+  // Persist the first-exit analysis as the lastResult so the UI shows the
+  // initial SELL_LIMIT immediately.
+  const round = currentState.roundCount + 1;
+  const result = {
+    id: createId(),
+    round,
+    capturedAt: now.toISOString(),
+    pageTitle: capture.pageTitle,
+    pageUrl: capture.pageUrl,
+    monitoringProfile,
+    validation: currentState.lastValidation,
+    analysis: firstExitAnalysis,
+    isFirstExit: true
   };
 
   const state = await patchState({
     virtualPosition,
     pendingLimitOrder: null,
-
+    lastResult: result,
+    results: [result, ...(currentState.results || [])].slice(0, MAX_RESULTS),
+    roundCount: round,
     lastError: null
   });
   await rescheduleMonitoringAlarmIfRunning(state);

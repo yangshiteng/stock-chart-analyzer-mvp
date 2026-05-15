@@ -72,17 +72,35 @@ The scan extracts `regime` (`uptrend` / `range` / `downtrend`), an aggression pr
 
 Action vocabulary the AI is allowed to return:
 
-| Mode | Allowed actions |
-| --- | --- |
-| Entry (no position) | `BUY_LIMIT` only |
-| Exit (holding) | `SELL_LIMIT` (default) or `SELL_NOW` (recorded stop broken) |
-| Force-exit (10 min before close, holding) | `SELL_NOW` only |
+| Mode | Trigger | Allowed actions |
+| --- | --- | --- |
+| Entry (no position) | scheduled rounds | `BUY_LIMIT` only |
+| First-exit (one-shot at fill) | user clicks "Limit filled" | `SELL_LIMIT` (normal) or `SELL_NOW` (gap-down) |
+| Exit (holding) | scheduled rounds | `SELL_LIMIT` (default) or `SELL_NOW` (hard stop broken) |
+| Force-exit (10 min before close) | scheduled rounds | `SELL_NOW` only |
 
 The key-levels strategy: every round always emits a price-bearing action. There is **no WAIT and no HOLD** — limit orders are zero-cost when they don't fill, so always giving a number (anchored to a chart key level) is strictly safer than withholding one. The user decides at the broker whether to actually place the order.
 
 - `BUY_LIMIT` is anchored to the nearest key level strictly **below** current price (static from Market Context or dynamic from EMA / VWAP).
 - `SELL_LIMIT` is anchored to the nearest key level strictly **above** current price.
-- `SELL_NOW` fires only when (a) current price has broken the recorded stop, or (b) we are in the force-exit window.
+- `SELL_NOW` fires only when (a) current price has broken the **hard stop**, or (b) we are in the force-exit window.
+
+### Dual-stop + three-zone exit logic
+
+When a `BUY_LIMIT` fills, the AI runs a one-shot **first-exit analysis** that sets two stops:
+
+- **Soft stop** (`stopLossPrice`) — the nearest key level below entry. Crossing this puts the position in the *Recovery* zone but does NOT auto-sell.
+- **Hard stop** (`hardStopPrice`) — the next key level below the soft stop. Crossing this triggers `SELL_NOW` immediately.
+
+Subsequent exit rounds classify the position by zone:
+
+| Zone | Condition | AI behavior |
+| --- | --- | --- |
+| **Take-Profit** | currentPrice > softStop | `SELL_LIMIT` at nearest key level **above** current price |
+| **Recovery** | hardStop < currentPrice ≤ softStop | `SELL_LIMIT` at nearest key level above current price **at or below entry** (break-even / small-loss target on the bounce) |
+| **Must Exit** | currentPrice ≤ hardStop | `SELL_NOW` immediately |
+
+The two stops are PERMANENT — set at fill time, never trail. See `SELL_STRATEGY.md` for the full spec.
 
 Side panel buttons follow the signal:
 
@@ -93,17 +111,18 @@ Side panel buttons follow the signal:
 
 ## Recommendation schema
 
-The model returns strict JSON with these fields:
+The model returns strict JSON. Schema is **mode-aware**:
 
-- `action` — see vocabulary above
-- `orderPrice` — the exact broker order price for `BUY_LIMIT` (must be < currentPrice) or `SELL_LIMIT` (must be > currentPrice); `null` for `SELL_NOW`
-- `anchorSource` — which key level was chosen (`EMA20` / `EMA50` / `EMA100` / `EMA200` / `VWAP` / `pivot` / `gap` / `prior_high` / `prior_low` / `conservative_estimate` / `stop_broken` / `force_exit`)
-- `entryPrice` — optional reference to the recorded entry price when already holding; not the primary execution price
-- `stopLossPrice` — invalidation level
-- `targetPrice` — profit target
-- `reasoning` — short rationale, must name specific structure / EMAs / VWAP / volume seen on the chart
-- `symbol`
-- `currentPrice`
+**Entry mode** — `BUY_LIMIT` only, no stop/target:
+- `action: "BUY_LIMIT"`, `orderPrice` (< currentPrice), `anchorSource`, `reasoning`, `symbol`, `currentPrice`
+
+**First-exit mode** — sets the dual stops + initial SELL_LIMIT:
+- `action: "SELL_LIMIT" | "SELL_NOW"`, `orderPrice` (> currentPrice or null), `stopLossPrice` (soft), `hardStopPrice` (hard, < soft), `targetPrice`, `anchorSource`, `reasoning`, etc.
+
+**Exit / force-exit mode** — stops are already on virtualPosition, so AI only emits action + orderPrice:
+- `action: "SELL_LIMIT" | "SELL_NOW"`, `orderPrice` (or null), `anchorSource`, `reasoning`, etc.
+
+`anchorSource` values: `EMA20` / `EMA50` / `EMA100` / `EMA200` / `VWAP` / `pivot` / `gap` / `prior_high` / `prior_low` / `conservative_estimate` / `stop_broken` / `force_exit`.
 
 ## Prompt architecture (`lib/llm.js` + `lib/prompt-config.js`)
 
