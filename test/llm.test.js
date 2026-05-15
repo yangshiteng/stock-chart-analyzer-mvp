@@ -511,7 +511,7 @@ test("validateAnalysisResult: first_exit mode validates dual stops + initial SEL
   const firstExit = {
     action: "SELL_LIMIT",
     orderPrice: "31.00",         // SELL_LIMIT at resistance
-    stopLossPrice: "28.50",      // soft
+    stopLossPrice: "28.50",      // soft (below entry)
     hardStopPrice: "27.20",      // hard, must be below soft
     targetPrice: "31.00",
     reasoning: "SELL_LIMIT at prior_high",
@@ -519,24 +519,78 @@ test("validateAnalysisResult: first_exit mode validates dual stops + initial SEL
     currentPrice: "30.00",
     anchorSource: "prior_high"
   };
-  assert.equal(validateAnalysisResult(firstExit, "first_exit"), firstExit);
+  // Fresh fill case: entryPrice ≈ currentPrice (just filled).
+  const context = { entryPrice: 30.00 };
+  assert.equal(validateAnalysisResult(firstExit, "first_exit", context), firstExit);
 
   // hardStop NOT below softStop → fail
   assert.throws(
-    () => validateAnalysisResult({ ...firstExit, hardStopPrice: "28.50" }, "first_exit"),
+    () => validateAnalysisResult({ ...firstExit, hardStopPrice: "28.50" }, "first_exit", context),
     /hardStopPrice.*must be strictly below stopLossPrice/
   );
 
-  // softStop above currentPrice (impossible — soft stop is BELOW entry) → fail
+  // softStop above entryPrice → fail (with entry-based validation)
   assert.throws(
-    () => validateAnalysisResult({ ...firstExit, stopLossPrice: "30.50" }, "first_exit"),
-    /stopLossPrice.*must be strictly below currentPrice/
+    () => validateAnalysisResult({ ...firstExit, stopLossPrice: "30.50" }, "first_exit", context),
+    /stopLossPrice.*must be strictly below entryPrice/
   );
 
   // SELL_LIMIT orderPrice not above currentPrice → fail
   assert.throws(
-    () => validateAnalysisResult({ ...firstExit, orderPrice: "29.50" }, "first_exit"),
+    () => validateAnalysisResult({ ...firstExit, orderPrice: "29.50" }, "first_exit", context),
     /must be strictly above currentPrice/
+  );
+});
+
+test("validateAnalysisResult: first_exit stops anchor on entryPrice (manual position, current < entry)", () => {
+  // Manual existing position: user bought at $25.15 (entry), current is $25.00.
+  // Stops MUST be below entry $25.15, NOT below current $25.00. A softStop
+  // of $25.05 would be invalid because it's ABOVE entry $25.15. Wait — that's
+  // not right. Let me re-state: softStop must be < entry. So softStop $25.20
+  // (above entry) would fail.
+  const manualPosition = {
+    action: "SELL_LIMIT",
+    orderPrice: "25.04",         // SELL_LIMIT above current at EMA20
+    stopLossPrice: "25.00",      // soft, below entry but at current price — OK
+    hardStopPrice: "23.60",      // hard, below soft — OK
+    targetPrice: "25.04",
+    reasoning: "Recovery exit",
+    symbol: "USAR",
+    currentPrice: "25.00",
+    anchorSource: "EMA20"
+  };
+  const context = { entryPrice: 25.15 };
+  // softStop $25.00 < entry $25.15 → OK even though softStop == currentPrice
+  // (the old rule would have FAILED this because softStop wasn't strictly below current).
+  assert.equal(validateAnalysisResult(manualPosition, "first_exit", context), manualPosition);
+
+  // softStop $25.20 > entry $25.15 → must fail
+  assert.throws(
+    () => validateAnalysisResult({ ...manualPosition, stopLossPrice: "25.20" }, "first_exit", context),
+    /stopLossPrice.*must be strictly below entryPrice/
+  );
+});
+
+test("validateAnalysisResult: first_exit falls back to currentPrice when entryPrice unavailable", () => {
+  // Legacy / defensive path: if no entryPrice in context, validator falls
+  // back to currentPrice for the stop sanity check (better than no check).
+  const firstExit = {
+    action: "SELL_LIMIT",
+    orderPrice: "31.00",
+    stopLossPrice: "28.50",
+    hardStopPrice: "27.20",
+    targetPrice: "31.00",
+    reasoning: "fallback path",
+    symbol: "TSLA",
+    currentPrice: "30.00",
+    anchorSource: "prior_high"
+  };
+  // No context passed at all.
+  assert.equal(validateAnalysisResult(firstExit, "first_exit"), firstExit);
+  // softStop $30.50 > currentPrice $30.00 → fails fallback check
+  assert.throws(
+    () => validateAnalysisResult({ ...firstExit, stopLossPrice: "30.50" }, "first_exit"),
+    /stopLossPrice.*must be strictly below currentPrice/
   );
 });
 
