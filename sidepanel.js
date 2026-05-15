@@ -152,7 +152,7 @@ function formatActionLabel(language, action) {
   return action ? t(language, `action_${action}`) : t(language, "unknown");
 }
 
-function getSellLimitIntentFromPrices(action, orderPrice, currentPrice) {
+function getSellLimitIntentFromPrices(action, orderPrice, currentPrice, entryPrice = null) {
   if (action !== "SELL_LIMIT") {
     return null;
   }
@@ -163,17 +163,36 @@ function getSellLimitIntentFromPrices(action, orderPrice, currentPrice) {
     return null;
   }
 
-  return order <= current ? "defensive" : "profit";
+  // "defensive": orderPrice at or below current. Validator forbids this now in
+  // exit mode, but legacy data may still have it; keep the label for safety.
+  if (order <= current) return "defensive";
+
+  // "recovery": SELL_LIMIT is above current price but BELOW entry price — the
+  // position is underwater and we're targeting break-even / small-loss exit
+  // on a bounce (recovery zone). Label this honestly as 减亏 (reduce-loss),
+  // not 止盈 (take-profit), since selling would realize a loss vs entry.
+  const entry = parsePositivePrice(entryPrice);
+  if (entry && order < entry) return "recovery";
+
+  // "profit": orderPrice above current AND at-or-above entry → real take-profit.
+  return "profit";
 }
 
-function getSellLimitIntent(analysis) {
-  return getSellLimitIntentFromPrices(analysis?.action, analysis?.orderPrice, analysis?.currentPrice);
+function getSellLimitIntent(analysis, entryPrice = null) {
+  return getSellLimitIntentFromPrices(analysis?.action, analysis?.orderPrice, analysis?.currentPrice, entryPrice);
 }
 
-function formatAnalysisActionLabel(language, analysis) {
-  const sellLimitIntent = getSellLimitIntent(analysis);
+function getEntryPriceFromState(state) {
+  return state?.virtualPosition?.entryPrice || null;
+}
+
+function formatAnalysisActionLabel(language, analysis, entryPrice = null) {
+  const sellLimitIntent = getSellLimitIntent(analysis, entryPrice);
   if (sellLimitIntent === "defensive") {
     return t(language, "sellLimitDefensiveAction");
+  }
+  if (sellLimitIntent === "recovery") {
+    return t(language, "sellLimitRecoveryAction");
   }
   if (sellLimitIntent === "profit") {
     return t(language, "sellLimitProfitAction");
@@ -236,10 +255,13 @@ function getOrderGuidanceValue(language, analysis) {
   return analysis.orderPrice || t(language, "nA");
 }
 
-function getOrderGuidanceLabel(language, analysis) {
-  const sellLimitIntent = getSellLimitIntent(analysis);
+function getOrderGuidanceLabel(language, analysis, entryPrice = null) {
+  const sellLimitIntent = getSellLimitIntent(analysis, entryPrice);
   if (sellLimitIntent === "defensive") {
     return t(language, "sellLimitFloorPriceLabel");
+  }
+  if (sellLimitIntent === "recovery") {
+    return t(language, "sellLimitRecoveryPriceLabel");
   }
   if (sellLimitIntent === "profit") {
     return t(language, "sellLimitTakeProfitPriceLabel");
@@ -265,8 +287,13 @@ function computeZoneLabel(language, position, state) {
   const softStop = parsePositivePrice(position.stopLossPrice);
   const hardStop = parsePositivePrice(position.hardStopPrice);
   if (current === null) return t(language, "zonePending");
-  if (hardStop !== null && current <= hardStop) return t(language, "zoneHardExit");
-  if (softStop !== null && current <= softStop) return t(language, "zoneRecovery");
+  // If stops aren't set (e.g. legacy position from before v18 / first-exit
+  // failure path), be HONEST about it instead of falling through to a
+  // misleading "Take-Profit" label. The zone framework only makes sense when
+  // both stops exist.
+  if (softStop === null || hardStop === null) return t(language, "zoneStopsNotSet");
+  if (current <= hardStop) return t(language, "zoneHardExit");
+  if (current <= softStop) return t(language, "zoneRecovery");
   return t(language, "zoneTakeProfit");
 }
 
@@ -363,15 +390,17 @@ function renderNearbyMarketLevels(state, analysis, language) {
   `;
 }
 
-function renderSellLimitIntentNotice(language, analysis) {
-  const intent = getSellLimitIntent(analysis);
+function renderSellLimitIntentNotice(language, analysis, entryPrice = null) {
+  const intent = getSellLimitIntent(analysis, entryPrice);
   if (!intent) {
     return "";
   }
 
   const textKey = intent === "defensive"
     ? "sellLimitDefensiveNotice"
-    : "sellLimitProfitNotice";
+    : intent === "recovery"
+      ? "sellLimitRecoveryNotice"
+      : "sellLimitProfitNotice";
   return `
     <section class="sell-limit-intent-note" data-tone="${escapeHtml(intent)}">
       ${escapeHtml(t(language, textKey))}
@@ -439,7 +468,8 @@ function renderAnalysisCard(state, language) {
   }
 
   const tone = getActionTone(analysis.action);
-  const action = formatAnalysisActionLabel(language, analysis);
+  const entryPrice = getEntryPriceFromState(state);
+  const action = formatAnalysisActionLabel(language, analysis, entryPrice);
   const nA = t(language, "nA");
 
   analysisCard.className = "analysis-card";
@@ -452,10 +482,10 @@ function renderAnalysisCard(state, language) {
         </div>
       </div>
       <div class="guidance-grid">
-        ${renderGuidanceCard(getOrderGuidanceLabel(language, analysis), getOrderGuidanceValue(language, analysis))}
+        ${renderGuidanceCard(getOrderGuidanceLabel(language, analysis, entryPrice), getOrderGuidanceValue(language, analysis))}
       </div>
     </section>
-    ${renderSellLimitIntentNotice(language, analysis)}
+    ${renderSellLimitIntentNotice(language, analysis, entryPrice)}
     <div class="analysis-grid">
       ${renderMetricCard(language, t(language, "currentPrice"), analysis.currentPrice || nA)}
       ${renderMetricCard(language, t(language, "stopLossPriceLabel"), analysis.stopLossPrice || nA)}
@@ -617,16 +647,21 @@ function renderPendingLimitCard(state, language, pending) {
     orderPrice: pending.limitPrice,
     currentPrice: state.lastResult?.analysis?.currentPrice || null
   };
-  const actionLabel = formatAnalysisActionLabel(language, pendingAnalysisView);
-  const sellLimitIntent = getSellLimitIntent(pendingAnalysisView);
+  const entryPrice = getEntryPriceFromState(state);
+  const actionLabel = formatAnalysisActionLabel(language, pendingAnalysisView, entryPrice);
+  const sellLimitIntent = getSellLimitIntent(pendingAnalysisView, entryPrice);
   const limitPriceLabel = sellLimitIntent === "defensive"
     ? t(language, "sellLimitFloorPriceLabel")
-    : sellLimitIntent === "profit"
-      ? t(language, "sellLimitTakeProfitPriceLabel")
-      : t(language, "limitPriceLabel");
+    : sellLimitIntent === "recovery"
+      ? t(language, "sellLimitRecoveryPriceLabel")
+      : sellLimitIntent === "profit"
+        ? t(language, "sellLimitTakeProfitPriceLabel")
+        : t(language, "limitPriceLabel");
   const intentNote = sellLimitIntent === "defensive"
     ? `<p class="position-line limit-intent-inline">${escapeHtml(t(language, "sellLimitDefensiveNotice"))}</p>`
-    : "";
+    : sellLimitIntent === "recovery"
+      ? `<p class="position-line limit-intent-inline">${escapeHtml(t(language, "sellLimitRecoveryNotice"))}</p>`
+      : "";
   const held = minutesSinceIso(pending.placedAt);
   const heldText = Number.isFinite(held) ? `${held}m` : nA;
   pendingLimitSummary.innerHTML = `
@@ -693,15 +728,20 @@ function renderMarkLimitPlacedCard(state, language, action) {
   markLimitPlacedSection.classList.remove("hidden");
   const isBuy = action === "BUY_LIMIT";
   const analysis = state.lastResult?.analysis;
-  const sellLimitIntent = getSellLimitIntent(analysis);
+  const entryPrice = getEntryPriceFromState(state);
+  const sellLimitIntent = getSellLimitIntent(analysis, entryPrice);
   const sellTitleKey = sellLimitIntent === "defensive"
     ? "markLimitPlacedTitle_sellDefensive"
-    : sellLimitIntent === "profit"
-      ? "markLimitPlacedTitle_sellProfit"
-      : "markLimitPlacedTitle_sell";
+    : sellLimitIntent === "recovery"
+      ? "markLimitPlacedTitle_sellRecovery"
+      : sellLimitIntent === "profit"
+        ? "markLimitPlacedTitle_sellProfit"
+        : "markLimitPlacedTitle_sell";
   const sellButtonKey = sellLimitIntent === "defensive"
     ? "markLimitPlacedButton_sellDefensive"
-    : "markLimitPlacedButton_sell";
+    : sellLimitIntent === "recovery"
+      ? "markLimitPlacedButton_sellRecovery"
+      : "markLimitPlacedButton_sell";
   markLimitPlacedTitle.textContent = t(language, isBuy ? "markLimitPlacedTitle_buy" : sellTitleKey);
   markLimitPlacedCopy.textContent = sellLimitIntent === "defensive"
     ? t(language, "markLimitPlacedCopy_sellDefensive")
