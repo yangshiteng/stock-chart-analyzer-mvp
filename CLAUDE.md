@@ -381,6 +381,23 @@ Completed (dual-stop + three-zone exit strategy — STATE_VERSION 18, follow-up 
 
 **Design tension we resolved**: the user kept proposing variations that would reintroduce subjective choice (averaging-down, "3 limit candidates", trend-based target selection). Each time, the response was the same: don't let user preference participate in AI decisions; aggregate edge across deterministic rules beats discretionary tuning. This is the same pattern that drove `userContext` / `dipBuyDiscount` / `maxLossDelta` / `confidence` removals.
 
+Completed (v18 follow-up: manual-existing-position now also triggers first-exit analysis):
+
+**Bug caught by user in real trading**: the dual-stop redesign added a 2-step `markBought` (capture → run first_exit analysis → persist position with stops). But it only patched the "Limit filled" code path. The OTHER way to enter a position — user declares "已持仓" at session setup and enters their broker entry price manually — was NOT updated. That path (`confirmMarketContextAndStart` → `buildInitialVirtualPositionFromPayload`) just wrote a virtualPosition with `stopLossPrice: null` and `hardStopPrice: null`, then started monitoring. Result: exit-mode rounds had no zone to compute against, the UI showed `区间: 止盈区` (Take-Profit zone) for a position that was actually underwater, and the AI's SELL_LIMIT was labeled `止盈限价卖单` (Take-Profit Limit Sell) even when the suggested price was BELOW the entry price.
+
+**Three fixes shipped together**:
+
+1. **Architectural — extracted `runFirstExitForPosition()` helper** from `markBought` and called it from BOTH paths:
+   - `markBought` (Limit filled) — unchanged behavior, same flow
+   - `confirmMarketContextAndStart` — when `payload.initialPositionMode === "holding"`, builds the tentative position then runs first_exit AI analysis to set stops, then transitions into monitoring with `lastResult` populated by the first_exit signal (so the side panel shows the initial SELL_LIMIT immediately)
+   - On AI failure the manual-position flow ALSO throws, just like markBought — preserves the invariant "no position without stops"
+
+2. **UI label — new `recovery` SELL_LIMIT intent**. `getSellLimitIntentFromPrices()` was previously binary (`defensive` if orderPrice ≤ currentPrice, `profit` otherwise). Now it takes a third arg `entryPrice` and distinguishes a third case: **`recovery`** when `currentPrice < orderPrice < entryPrice` (i.e., SELL_LIMIT is above current AND below entry → break-even / small-loss exit on the bounce). All call sites updated to thread `entryPrice` from `state.virtualPosition.entryPrice`. New i18n keys per language: `sellLimitRecoveryAction` (`减亏限价卖单` / `Reduce-Loss Limit`), `sellLimitRecoveryPriceLabel`, `sellLimitRecoveryNotice`, `markLimitPlacedTitle_sellRecovery`, `markLimitPlacedButton_sellRecovery`.
+
+3. **Zone label honesty — `computeZoneLabel` no longer falls through to "止盈区"** when stops are missing. New explicit "未设置止损" (Stops not set) label for the case where either soft or hard stop is null (legacy data, first-exit failure path, anything that bypassed `runFirstExitForPosition`).
+
+**Pattern recognized**: when a feature has multiple entry paths to the same state (here: two ways to create a `virtualPosition`), the upgrade story has to cover ALL paths. Missing one path is exactly the kind of bug that real-trade testing catches and unit tests miss — the unit test fixtures all went through markBought. Future architectural changes touching `virtualPosition` should explicitly enumerate both creation paths.
+
 ## Future work / not planned
 
 ### Known risks / follow-ups (small)

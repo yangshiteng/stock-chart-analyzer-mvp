@@ -631,21 +631,12 @@ async function markBought(payload) {
     throw new Error(t(language, "entryPriceInvalid"));
   }
 
-  // STEP 1 — Trigger a one-shot "first-exit" AI analysis right at fill moment.
-  // This is where the soft stop, hard stop, and initial SELL_LIMIT are decided
-  // by the AI looking at the CURRENT chart (not at stale data from the BUY
-  // signal's round). See SELL_STRATEGY.md "首次卖出分析" for full rationale.
+  // Trigger a one-shot "first-exit" AI analysis right at fill moment so the
+  // soft stop, hard stop, and initial SELL_LIMIT are decided by the AI
+  // looking at the CURRENT chart. See SELL_STRATEGY.md.
   const monitoringProfile = currentState.monitoringProfile;
   const suggestion = currentState.lastResult?.analysis || {};
   const now = new Date();
-
-  // Take a fresh capture so the AI sees the chart AS OF the fill moment.
-  let capture;
-  try {
-    capture = await captureActiveTab(monitoringProfile?.boundWindowId);
-  } catch (error) {
-    throw new Error(`${t(language, "firstExitCaptureFailed") || "First-exit capture failed"}: ${error.message}`);
-  }
 
   // Build a tentative position object (incomplete — stops will be filled by AI).
   const tentativePosition = {
@@ -661,32 +652,21 @@ async function markBought(payload) {
     entryAnchorSource: pending?.anchorSource || suggestion.anchorSource || null
   };
 
-  // Run the first-exit analysis. If it fails, we abort markBought so the user
-  // can retry — better than entering a position without stops set.
+  let completedPosition;
   let firstExitAnalysis;
+  let capture;
   try {
-    firstExitAnalysis = await analyzeChartCapture({
-      ...capture,
-      symbolHint: monitoringProfile?.symbolOverride || null,
-      mode: "first_exit",
-      virtualPosition: tentativePosition,
-      lastSignal: null,         // first_exit is fresh — no continuity
-      pendingLimitOrder: null,  // already fulfilled
-      marketContext: currentState.marketContext?.summary || null
-    });
+    ({ completedPosition, firstExitAnalysis, capture } = await runFirstExitForPosition({
+      tentativePosition,
+      monitoringProfile,
+      currentState,
+      language
+    }));
   } catch (error) {
     throw new Error(`${t(language, "firstExitAnalysisFailed") || "First-exit analysis failed"}: ${error.message}`);
   }
 
-  // STEP 2 — Write the complete virtualPosition with stops from AI.
-  // The AI emits either SELL_LIMIT (normal) or SELL_NOW (gap-down).
-  const virtualPosition = {
-    ...tentativePosition,
-    stopLossPrice: firstExitAnalysis.stopLossPrice || null,
-    hardStopPrice: firstExitAnalysis.hardStopPrice || null,
-    // Initial target placeholder — will be re-evaluated each exit round.
-    targetPrice: firstExitAnalysis.targetPrice || firstExitAnalysis.orderPrice || null
-  };
+  const virtualPosition = completedPosition;
 
   // Persist the first-exit analysis as the lastResult so the UI shows the
   // initial SELL_LIMIT immediately.
@@ -1259,7 +1239,10 @@ function buildInitialVirtualPositionFromPayload(payload, monitoringProfile, lang
     entryPrice: entryPriceRaw,
     entryTime: now.toISOString(),
     tradingDay: getUsTradingDay(now),
+    // stopLossPrice / hardStopPrice / targetPrice are populated by the
+    // first-exit AI analysis that fires below in confirmMarketContextAndStart.
     stopLossPrice: null,
+    hardStopPrice: null,
     targetPrice: null,
     reason: "User declared an existing broker position before monitoring started.",
     symbol: monitoringProfile.symbolOverride || null,
@@ -1269,6 +1252,36 @@ function buildInitialVirtualPositionFromPayload(payload, monitoringProfile, lang
     entryAction: "manual_existing_position",
     entryAnchorSource: "manual_existing_position"
   };
+}
+
+// Runs a one-shot first-exit AI analysis to populate softStop / hardStop /
+// initial SELL_LIMIT on a virtualPosition that was just created (either via
+// markBought after Limit filled, or via confirmMarketContextAndStart when
+// the user declared an existing holding). Returns the completed
+// virtualPosition + the analysis result (the latter is used to populate
+// state.lastResult so the UI shows the initial SELL_LIMIT immediately).
+async function runFirstExitForPosition({ tentativePosition, monitoringProfile, currentState, language }) {
+  const capture = await captureActiveTab(monitoringProfile?.boundWindowId);
+
+  const firstExitAnalysis = await analyzeChartCapture({
+    ...capture,
+    symbolHint: monitoringProfile?.symbolOverride || null,
+    mode: "first_exit",
+    virtualPosition: tentativePosition,
+    lastSignal: null,
+    pendingLimitOrder: null,
+    marketContext: currentState.marketContext?.summary || null
+  });
+
+  const completedPosition = {
+    ...tentativePosition,
+    stopLossPrice: firstExitAnalysis.stopLossPrice || null,
+    hardStopPrice: firstExitAnalysis.hardStopPrice || null,
+    targetPrice: firstExitAnalysis.targetPrice || firstExitAnalysis.orderPrice || null
+  };
+
+  void language; // reserved for future per-language error messages
+  return { completedPosition, firstExitAnalysis, capture };
 }
 
 async function confirmMarketContextAndStart(payload = {}) {
@@ -1290,16 +1303,48 @@ async function confirmMarketContextAndStart(payload = {}) {
   }
 
   const initialVirtualPosition = buildInitialVirtualPositionFromPayload(payload, monitoringProfile, language);
-  const state = await beginMonitoringRounds(
-    monitoringProfile,
-    currentState,
-    initialVirtualPosition
-      ? {
-          virtualPosition: initialVirtualPosition,
-          pendingLimitOrder: null
-        }
-      : {}
-  );
+
+  // If the user declared they're already holding, run a first-exit analysis
+  // RIGHT NOW so the manually-declared position gets a proper softStop +
+  // hardStop. Without this, the position would sit in exit mode with no
+  // stops, the zone calculation would fall through to a misleading "Take
+  // Profit" label, and the AI's SELL_LIMIT would just be the next resistance
+  // above current price with no notion of which zone applies.
+  let overrides = {};
+  if (initialVirtualPosition) {
+    try {
+      const { completedPosition, firstExitAnalysis, capture } = await runFirstExitForPosition({
+        tentativePosition: initialVirtualPosition,
+        monitoringProfile,
+        currentState,
+        language
+      });
+      const now = new Date();
+      const firstExitResult = {
+        id: createId(),
+        round: 0,
+        capturedAt: now.toISOString(),
+        pageTitle: capture.pageTitle,
+        pageUrl: capture.pageUrl,
+        monitoringProfile,
+        validation: currentState.lastValidation,
+        analysis: firstExitAnalysis,
+        isFirstExit: true
+      };
+      overrides = {
+        virtualPosition: completedPosition,
+        pendingLimitOrder: null,
+        lastResult: firstExitResult,
+        results: [firstExitResult, ...(currentState.results || [])].slice(0, MAX_RESULTS)
+      };
+    } catch (error) {
+      // First-exit failed (network / API / capture). Don't enter monitoring
+      // without stops — return an error so the user can retry.
+      throw new Error(`${t(language, "firstExitAnalysisFailed") || "First-exit analysis failed"}: ${error.message}`);
+    }
+  }
+
+  const state = await beginMonitoringRounds(monitoringProfile, currentState, overrides);
   return { ok: true, state };
 }
 
