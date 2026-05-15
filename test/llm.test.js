@@ -122,15 +122,26 @@ test("buildAnalysisPromptFromConfig: force_exit includes FORCE_EXIT_RULES", () =
   assert.match(prompt, /FORCE_EXIT/);
 });
 
-test("buildAnalysisPromptFromConfig: required schema fields present", () => {
+test("buildAnalysisPromptFromConfig: required schema fields present in entry mode", () => {
+  // Entry mode schema NO LONGER includes stop/target — those are set by the
+  // first-exit analysis at fill time. See SELL_STRATEGY.md.
   const prompt = buildAnalysisPromptFromConfig(getAnalysisPromptConfig(), samplePayload, "en");
-  for (const key of ["orderPrice", "entryPrice", "stopLossPrice", "targetPrice", "anchorSource"]) {
-    assert.ok(prompt.includes(key), `prompt should mention ${key}`);
+  for (const key of ["orderPrice", "anchorSource"]) {
+    assert.ok(prompt.includes(key), `entry prompt should mention ${key}`);
   }
-  // Confidence field was removed entirely — schema, prompt, UI, stats — because
-  // LLM self-rated confidence didn't differentiate winners from losers in
-  // multi-week real-trade testing. Lock the regression here.
   assert.ok(!/confidence/i.test(prompt), "confidence field must not be re-introduced into the prompt");
+});
+
+test("buildAnalysisPromptFromConfig: first_exit mode requires stopLossPrice + hardStopPrice in schema", () => {
+  const prompt = buildAnalysisPromptFromConfig(getAnalysisPromptConfig(), {
+    ...samplePayload,
+    mode: "first_exit",
+    virtualPosition: { entryPrice: "30.00", entryTime: "2026-05-14T14:00:00Z", entryAnchorSource: "EMA20" }
+  }, "en");
+  for (const key of ["stopLossPrice", "hardStopPrice", "anchorSource"]) {
+    assert.ok(prompt.includes(key), `first_exit prompt should mention ${key}`);
+  }
+  assert.match(prompt, /\[FIRST_EXIT_MODE_RULES\]/);
 });
 
 test("buildAnalysisPromptFromConfig: no capital/position-size leakage", () => {
@@ -483,11 +494,65 @@ test("validateAnalysisResult: rejects BUY_LIMIT orderPrice >= currentPrice (must
   );
 });
 
-test("validateAnalysisResult: rejects entry setups whose stop is not below orderPrice", () => {
+test("validateAnalysisResult: entry mode no longer validates stop/target (set by first-exit)", () => {
+  // Entry mode schema dropped stop/target — they're set by the first-exit
+  // analysis at fill time. Any stop/target in the entry output is ignored.
+  const noStop = { ...validEntryAnalysis };
+  delete noStop.stopLossPrice;
+  delete noStop.targetPrice;
+  assert.equal(validateAnalysisResult(noStop, "entry"), noStop);
+  // Even nonsense stop/target values shouldn't fail entry validation now —
+  // they're not in the entry schema's required fields.
+  const bogusStop = { ...validEntryAnalysis, stopLossPrice: "999.99", targetPrice: "0.01" };
+  assert.equal(validateAnalysisResult(bogusStop, "entry"), bogusStop);
+});
+
+test("validateAnalysisResult: first_exit mode validates dual stops + initial SELL_LIMIT", () => {
+  const firstExit = {
+    action: "SELL_LIMIT",
+    orderPrice: "31.00",         // SELL_LIMIT at resistance
+    stopLossPrice: "28.50",      // soft
+    hardStopPrice: "27.20",      // hard, must be below soft
+    targetPrice: "31.00",
+    reasoning: "SELL_LIMIT at prior_high",
+    symbol: "TSLA",
+    currentPrice: "30.00",
+    anchorSource: "prior_high"
+  };
+  assert.equal(validateAnalysisResult(firstExit, "first_exit"), firstExit);
+
+  // hardStop NOT below softStop → fail
   assert.throws(
-    () => validateAnalysisResult({ ...validEntryAnalysis, stopLossPrice: "180.50" }, "entry"),
-    /stopLossPrice must be below orderPrice/
+    () => validateAnalysisResult({ ...firstExit, hardStopPrice: "28.50" }, "first_exit"),
+    /hardStopPrice.*must be strictly below stopLossPrice/
   );
+
+  // softStop above currentPrice (impossible — soft stop is BELOW entry) → fail
+  assert.throws(
+    () => validateAnalysisResult({ ...firstExit, stopLossPrice: "30.50" }, "first_exit"),
+    /stopLossPrice.*must be strictly below currentPrice/
+  );
+
+  // SELL_LIMIT orderPrice not above currentPrice → fail
+  assert.throws(
+    () => validateAnalysisResult({ ...firstExit, orderPrice: "29.50" }, "first_exit"),
+    /must be strictly above currentPrice/
+  );
+});
+
+test("validateAnalysisResult: first_exit mode allows SELL_NOW for catastrophic gap-down", () => {
+  const gapDown = {
+    action: "SELL_NOW",
+    orderPrice: null,
+    stopLossPrice: "28.50",
+    hardStopPrice: "27.20",
+    targetPrice: null,
+    reasoning: "Gap-down below any reasonable stop",
+    symbol: "TSLA",
+    currentPrice: "27.00",
+    anchorSource: "stop_broken"
+  };
+  assert.equal(validateAnalysisResult(gapDown, "first_exit"), gapDown);
 });
 
 test("validateAnalysisResult: R:R 1:1 hard floor removed (key-levels redesign)", () => {
