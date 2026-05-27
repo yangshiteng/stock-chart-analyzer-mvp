@@ -1233,6 +1233,56 @@ test("validateAnalysisResult: v19 reasoning chose=<price>@<anchor> cross-check w
   assert.equal(validateAnalysisResult(withinTolerance, "entry"), withinTolerance);
 });
 
+test("validateAnalysisResult: v19 cross-check handles R1=/R2= and conservative=/aggressive= prefix variants", () => {
+  // Healthy-zone reasoning often uses inline rank labels like
+  // `target=R1=28.20@prior_high` or `target=R2=29.00@gap`. Caution-zone
+  // aggressive uses `target=aggressive=27.55@aggressive_recovery`. The
+  // cross-check regex must accept these prefixes and still extract
+  // PRICE + ANCHOR correctly.
+
+  // R1=PRICE@ANCHOR variant (healthy zone style)
+  const r1Variant = {
+    action: "SELL_LIMIT",
+    orderPrice: "28.20",
+    currentPrice: "27.50",
+    symbol: "TSLA",
+    anchorSource: "prior_high",
+    reasoning: "zone=healthy; trend=normal; target=R1=28.20@prior_high"
+  };
+  assert.equal(validateAnalysisResult(r1Variant, "exit"), r1Variant);
+
+  // R2 variant
+  const r2Variant = {
+    ...r1Variant,
+    orderPrice: "29.00",
+    anchorSource: "gap",
+    reasoning: "zone=healthy; trend=strong (3 green + rising); target=R2=29.00@gap (skip R1=28.50@prior_high)"
+  };
+  assert.equal(validateAnalysisResult(r2Variant, "exit"), r2Variant);
+
+  // aggressive= prefix variant (caution zone)
+  const aggVariant = {
+    action: "SELL_LIMIT",
+    orderPrice: "27.55",
+    currentPrice: "26.95",
+    symbol: "TSLA",
+    anchorSource: "aggressive_recovery",
+    reasoning: "zone=caution; target=aggressive=27.55@aggressive_recovery (evidence: (1) 3-bar pattern rising; (2) reclaimed EMA20)"
+  };
+  const cautionContext = { entryPrice: 27.50, softStop: 27.00, hardStop: 26.30 };
+  assert.equal(validateAnalysisResult(aggVariant, "exit", cautionContext), aggVariant);
+
+  // Prefix variant with MISMATCHED anchor should still fail cross-check
+  const r1Mismatch = {
+    ...r1Variant,
+    anchorSource: "EMA200"  // reasoning says @prior_high, field says EMA200
+  };
+  assert.throws(
+    () => validateAnalysisResult(r1Mismatch, "exit"),
+    /Cross-check failed/
+  );
+});
+
 test("validateAnalysisResult: v19 cross-check is skipped when reasoning has no chose=/target= clause", () => {
   // If reasoning happens to lack a "chose=" or "target=" clause (rare —
   // the forced format requires it, but validateReasoningFormat catches that
