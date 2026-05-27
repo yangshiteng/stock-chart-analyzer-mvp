@@ -1147,12 +1147,12 @@ UI 显示信号变化 warning,用户在券商替换卖单。
 
 ### 8. STATE_VERSION + migration(v18 → v19)
 - **STATE_VERSION 升到 19**(从 18)。即使 state shape 没改,语义版本变化(zone 名重命名、anchorSource enum 扩展、recovery intent 扩展覆盖三种场景)需要新版本号触发 migration 钩子。
-- **migration v18 → v19 主要工作**:
-  - **i18n key 重命名**(向后兼容必需):存储里的 `lastResult.analysis.zone`(以及 `results[].analysis.zone`)如果是 `zoneTakeProfit`,改为 `zoneHealthy`。这是历史 trade 数据,影响渲染。
-  - **历史 `results[]` / `tradeHistory[]` 的 zone 字串映射**: 老的 `zoneTakeProfit / zoneRecovery / zoneHardExit / zoneStopsNotSet` 在显示时映射到新名 `zoneHealthy / zoneCaution / zoneHardExit / zoneStopsNotSet`(后两个不变)。
-  - **anchorSource enum 扩展不需要 data migration**:新增 enum 值只在新 state 出现,老 state 不会有,渲染时未知 enum fallback 到 "unknown"。
-  - **recovery intent 扩展不需要 data migration**:逻辑改动在代码层(`getSellLimitIntentFromPrices` 判断更复杂),不影响存储格式。
-- **测试**: `storage.test.js` 加 v19 migration 用例,验证 `zoneTakeProfit → zoneHealthy` 等字串映射。
+- **migration v18 → v19 实际工作**: **no-op**(纯版本号变更,不需数据迁移)
+  - **zone 名称是 render-time 计算的**(`sidepanel.js::computeZoneLabel` 每次根据 currentPrice + entryPrice + stops 重算),**从不存储**在 state 里。所以 `zoneTakeProfit → zoneHealthy` 重命名只影响 i18n 字典 + sidepanel UI 调用点,无需迁移 state。
+  - **anchorSource enum 扩展是 additive**,老 state 里的旧 enum 值(`EMA20`, `prior_high`, `conservative_estimate` 等)在新 enum 集合里仍合法,无需 rewrite。
+  - **recovery intent 扩展不影响存储格式**,逻辑改动只在 `getSellLimitIntentFromPrices`。
+  - **virtualPosition.hardStopPrice 等结构字段在 v18 已就位**,v19 不动 state shape。
+- **测试**: `storage.test.js` 加 v19 migration 用例,验证 v18 state 字段在 v19 下完全保留(`virtualPosition.entryPrice / stopLossPrice / hardStopPrice / entryAnchorSource` + `lastResult.analysis.anchorSource` + `tradeHistory[].entryAnchorSource`)。
 
 ### 9. 测试
 - `llm.test.js`: 观察区主观判断测试

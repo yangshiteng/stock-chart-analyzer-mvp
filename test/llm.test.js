@@ -1043,6 +1043,27 @@ test("validateAnalysisResult: v19 empty reasoning rejected in all non-force-exit
   }
 });
 
+test("validateAnalysisResult: v19 reasoning markers are case-insensitive (R4 fix)", () => {
+  // AI occasionally capitalizes markers (Current=, Mode=, Zone=). Strict
+  // case-sensitive check would force a retry for cosmetic differences only.
+  // Validator accepts mixed case to avoid that.
+  const capitalizedEntry = {
+    ...validEntryAnalysis,
+    reasoning: "Current=180.70; Candidates=[R1=180.20@EMA20]; MODE=conservative; chose=180.20@EMA20"
+  };
+  assert.equal(validateAnalysisResult(capitalizedEntry, "entry"), capitalizedEntry);
+
+  const capitalizedExit = {
+    action: "SELL_LIMIT",
+    orderPrice: "28.20",
+    currentPrice: "27.50",
+    symbol: "TSLA",
+    anchorSource: "prior_high",
+    reasoning: "Zone=healthy; trend=normal; target=28.20@prior_high"
+  };
+  assert.equal(validateAnalysisResult(capitalizedExit, "exit"), capitalizedExit);
+});
+
 test("validateAnalysisResult: v19 force_exit exempt from reasoning format requirements", () => {
   // force_exit is single-purpose (SELL_NOW only). Reasoning can be free-form
   // since action is locked and there's no judgment to audit.
@@ -1158,6 +1179,13 @@ test("validateAnalysisResult: v19 exit caution target=aggressive requires ≥2 n
 test("validateAnalysisResult: v19 fuzzy word blacklist enforced on aggressive reasoning", () => {
   // Even with (1) and (2) markers, fuzzy adjectives without numeric backing
   // are rejected. Forces AI to express evidence concretely.
+  //
+  // NOTE: standalone `bullish` / `bearish` are NOT in the blacklist because
+  // they appear in legitimate pattern names ("bullish engulfing 26.5→27.0",
+  // "bearish flag broken at 27.20"). The blacklist targets only the bare
+  // fuzzy phrases that DON'T require numbers ("looks bullish", "feels strong",
+  // "momentum building" etc.) — see test below for confirmation that the
+  // compound forms ARE banned and the standalone forms now pass.
   const fuzzyWords = [
     "looks like a reversal",
     "looks bullish here",
@@ -1166,9 +1194,7 @@ test("validateAnalysisResult: v19 fuzzy word blacklist enforced on aggressive re
     "should rebound soon",
     "probably continues up",
     "likely to bounce",
-    "momentum building nicely",
-    " bullish setup forming",
-    " bearish flag breaking"
+    "momentum building nicely"
   ];
 
   for (const phrase of fuzzyWords) {
@@ -1183,6 +1209,29 @@ test("validateAnalysisResult: v19 fuzzy word blacklist enforced on aggressive re
       /fuzzy word\/phrase/,
       `phrase "${phrase}" should be rejected`
     );
+  }
+});
+
+test("validateAnalysisResult: v19 standalone bullish/bearish allowed in aggressive reasoning (legitimate pattern names)", () => {
+  // R2 fix: standalone "bullish" / "bearish" are common in technical pattern
+  // names (bullish engulfing, bearish flag, bullish reclaim) which ARE
+  // concrete observations backed by numbers. Banning the standalone words
+  // would block compliant reasoning. The blacklist only targets the
+  // compound forms (looks bullish, feels strong, momentum building) which
+  // are the actual failure mode.
+  const legitimateCompounds = [
+    "bullish engulfing 26.5->27.0 with 1.8x volume",
+    "bearish flag broken at 27.20 down to 26.50",
+    "bullish reclaim of EMA20=26.92 with rising lows 26.5->26.7->26.9"
+  ];
+  for (const phrase of legitimateCompounds) {
+    const compliant = {
+      ...validEntryAnalysis,
+      reasoning: `current=180.70; candidates=[R1=180.20@EMA20, R2=179.50@VWAP]; mode=aggressive (evidence: (1) ${phrase}; (2) 3-bar lower highs 30.40->30.20->30.10); chose=179.50@VWAP`,
+      orderPrice: "179.50",
+      anchorSource: "VWAP"
+    };
+    assert.equal(validateAnalysisResult(compliant, "entry"), compliant);
   }
 });
 

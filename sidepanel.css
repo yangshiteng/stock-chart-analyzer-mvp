@@ -532,6 +532,31 @@ h2 {
   align-items: center;
 }
 
+/* v19 sub-judgment pill — shows AI's mode/flow/target/trend on signal banner
+   so the user can see the reasoning category at a glance (e.g.,
+   "走止盈" / "走解套" / "保守" / "激进" / "普通" / "强劲"). */
+.sub-judgment-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  background: rgba(255, 255, 255, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.32);
+  white-space: nowrap;
+}
+
+.sub-judgment-pill.aggressive {
+  background: rgba(255, 255, 255, 0.26);
+  border-color: rgba(255, 255, 255, 0.48);
+}
+
+.sub-judgment-pill.conservative {
+  /* default lighter pill — uses base style */
+}
+
 .signal-label {
   margin: 0;
   font-size: 12px;

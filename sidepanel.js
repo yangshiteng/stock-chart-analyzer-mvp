@@ -399,6 +399,86 @@ function renderNearbyMarketLevels(state, analysis, language) {
   `;
 }
 
+// v19: extract AI's sub-judgment (mode/flow/trend/target) from the
+// structured reasoning text and surface it as a pill on the recommendation
+// card so the user can see WHY this action — without having to read the
+// reasoning paragraph.
+//
+// Reasoning forced format (per prompt-config.js per-mode rules) puts one of
+// the following marker patterns in the reasoning text:
+//   - entry:           `mode=conservative` / `mode=aggressive (依据)`
+//   - exit observation:`flow=push-rebound (依据)` / `flow=recovery (default)`
+//   - exit caution:    `target=conservative (依据)` / `target=aggressive (依据)`
+//                      OR anchorSource=aggressive_recovery (same semantic)
+//   - exit healthy:    `trend=normal` / `trend=strong (3-bar pattern ...)`
+//
+// One sub-judgment per analysis (at most). The four kinds are mutually
+// exclusive because each fires only in its respective zone/mode.
+function extractSubJudgment(analysis) {
+  const reasoning = `${analysis?.reasoning || ""}`;
+
+  // entry mode: mode=conservative | aggressive
+  const modeMatch = reasoning.match(/\bmode\s*=\s*(conservative|aggressive)\b/i);
+  if (modeMatch) {
+    return { kind: "entryMode", value: modeMatch[1].toLowerCase() };
+  }
+
+  // exit observation: flow=push-rebound | recovery
+  const flowMatch = reasoning.match(/\bflow\s*=\s*(push-rebound|recovery)\b/i);
+  if (flowMatch) {
+    return { kind: "flow", value: flowMatch[1].toLowerCase() };
+  }
+
+  // exit caution: target=conservative | aggressive
+  // Also: anchorSource=aggressive_recovery is the deterministic caution-zone
+  // aggressive marker (in case reasoning lacks the literal target= clause).
+  if (analysis?.anchorSource === "aggressive_recovery") {
+    return { kind: "target", value: "aggressive" };
+  }
+  const targetMatch = reasoning.match(/\btarget\s*=\s*(conservative|aggressive)\b/i);
+  if (targetMatch) {
+    return { kind: "target", value: targetMatch[1].toLowerCase() };
+  }
+
+  // exit healthy: trend=normal | strong
+  const trendMatch = reasoning.match(/\btrend\s*=\s*(normal|strong)\b/i);
+  if (trendMatch) {
+    return { kind: "trend", value: trendMatch[1].toLowerCase() };
+  }
+
+  return null;
+}
+
+function getSubJudgmentLabelKey(kind, value) {
+  if (kind === "entryMode") {
+    return value === "aggressive" ? "entryModeAggressive" : "entryModeConservative";
+  }
+  if (kind === "flow") {
+    return value === "push-rebound" ? "flowPushRebound" : "flowRecovery";
+  }
+  if (kind === "target") {
+    return value === "aggressive" ? "targetAggressive" : "targetConservative";
+  }
+  if (kind === "trend") {
+    return value === "strong" ? "trendStrong" : "trendNormal";
+  }
+  return null;
+}
+
+function renderSubJudgmentPill(language, analysis) {
+  const judgment = extractSubJudgment(analysis);
+  if (!judgment) return "";
+  const labelKey = getSubJudgmentLabelKey(judgment.kind, judgment.value);
+  if (!labelKey) return "";
+  // tone class lets CSS hint the aggressive (warm) vs conservative (cool)
+  // variant without adding another inline style. Both still inherit the
+  // banner's overall background.
+  const toneClass = judgment.value === "aggressive" || judgment.value === "strong" || judgment.value === "push-rebound"
+    ? "sub-judgment-pill aggressive"
+    : "sub-judgment-pill conservative";
+  return `<span class="${toneClass}">${escapeHtml(t(language, labelKey))}</span>`;
+}
+
 function renderSellLimitIntentNotice(language, analysis, entryPrice = null) {
   const intent = getSellLimitIntent(analysis, entryPrice);
   if (!intent) {
@@ -480,6 +560,7 @@ function renderAnalysisCard(state, language) {
   const entryPrice = getEntryPriceFromState(state);
   const action = formatAnalysisActionLabel(language, analysis, entryPrice);
   const nA = t(language, "nA");
+  const subJudgmentPill = renderSubJudgmentPill(language, analysis);
 
   analysisCard.className = "analysis-card";
   analysisCard.innerHTML = `
@@ -489,6 +570,7 @@ function renderAnalysisCard(state, language) {
           <p class="signal-label">${escapeHtml(t(language, "actionNow"))}</p>
           <h3 class="signal-value">${escapeHtml(action)}</h3>
         </div>
+        ${subJudgmentPill}
       </div>
       <div class="guidance-grid">
         ${renderGuidanceCard(getOrderGuidanceLabel(language, analysis, entryPrice), getOrderGuidanceValue(language, analysis))}
