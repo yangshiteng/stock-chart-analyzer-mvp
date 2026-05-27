@@ -278,23 +278,32 @@ function parsePositivePrice(value) {
   return Number.isFinite(price) && price > 0 ? price : null;
 }
 
-// Compute which of the three exit zones the current position is in.
+// Compute which of the four exit zones the current position is in (v19).
 // Used purely for UI labeling — actual zone logic lives in the prompt
 // (lib/prompt-config.js -> exitModeRules).
 function computeZoneLabel(language, position, state) {
   if (!position) return t(language, "nA");
   const current = parsePositivePrice(state?.lastResult?.analysis?.currentPrice);
+  const entry = parsePositivePrice(position.entryPrice);
   const softStop = parsePositivePrice(position.stopLossPrice);
   const hardStop = parsePositivePrice(position.hardStopPrice);
   if (current === null) return t(language, "zonePending");
   // If stops aren't set (e.g. legacy position from before v18 / first-exit
   // failure path), be HONEST about it instead of falling through to a
-  // misleading "Take-Profit" label. The zone framework only makes sense when
-  // both stops exist.
+  // misleading zone label. The zone framework only makes sense when both
+  // stops exist.
   if (softStop === null || hardStop === null) return t(language, "zoneStopsNotSet");
+  // v19 four-zone classification:
+  //   - HARD-EXIT: current ≤ hardStop  (thesis dead)
+  //   - CAUTION:   hardStop < current ≤ softStop  (soft stop broken, recovery flow)
+  //   - OBSERVATION: softStop < current ≤ entry   (underwater but stops intact)
+  //   - HEALTHY:   current > entry  (in profit)
   if (current <= hardStop) return t(language, "zoneHardExit");
-  if (current <= softStop) return t(language, "zoneRecovery");
-  return t(language, "zoneTakeProfit");
+  if (current <= softStop) return t(language, "zoneCaution");
+  // Observation requires entryPrice to distinguish from Healthy. If entry is
+  // missing (defensive), treat current > softStop as healthy.
+  if (entry !== null && current <= entry) return t(language, "zoneObservation");
+  return t(language, "zoneHealthy");
 }
 
 function formatDollar(value) {
