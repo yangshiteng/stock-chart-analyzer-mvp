@@ -724,3 +724,199 @@ test("validateAnalysisResult: WAIT and HOLD are no longer valid actions", () => 
     /only allows SELL_NOW, SELL_LIMIT/
   );
 });
+
+// ===== v19 anchorSource enum scope tests =====================================
+
+test("validateAnalysisResult: v19 entry mode accepts intraday static anchors", () => {
+  // v19 added intraday_high / intraday_low / opening_range_* / intraday_pivot
+  // as legitimate anchorSource values for entry mode (formed during the
+  // trading day, complement the static + dynamic anchors).
+  for (const anchor of ["intraday_high", "intraday_low", "opening_range_high", "opening_range_low", "intraday_pivot"]) {
+    const analysis = { ...validEntryAnalysis, anchorSource: anchor };
+    assert.equal(validateAnalysisResult(analysis, "entry"), analysis);
+  }
+});
+
+test("validateAnalysisResult: v19 entry mode rejects post-position anchors (fixed_*, aggressive_recovery)", () => {
+  // fixed_soft_stop / fixed_hard_stop refer to virtualPosition.stopLossPrice /
+  // hardStopPrice which don't exist in entry mode (user is flat, no position).
+  // aggressive_recovery is a caution-zone exit-mode-only anchor.
+  // Schema + validator both reject these in entry mode.
+  for (const badAnchor of ["fixed_soft_stop", "fixed_hard_stop", "aggressive_recovery"]) {
+    const analysis = { ...validEntryAnalysis, anchorSource: badAnchor };
+    assert.throws(
+      () => validateAnalysisResult(analysis, "entry"),
+      /not allowed in entry mode/
+    );
+  }
+});
+
+test("validateAnalysisResult: v19 entry mode rejects SELL_NOW-only anchors (stop_broken, force_exit)", () => {
+  // stop_broken and force_exit are SELL_NOW-only anchors. Entry mode only
+  // allows BUY_LIMIT — these anchors can never appear there.
+  for (const badAnchor of ["stop_broken", "force_exit"]) {
+    const analysis = { ...validEntryAnalysis, anchorSource: badAnchor };
+    assert.throws(
+      () => validateAnalysisResult(analysis, "entry"),
+      /not allowed in entry mode/
+    );
+  }
+});
+
+test("validateAnalysisResult: v19 first_exit mode rejects fixed_* and aggressive_recovery", () => {
+  // first_exit is the analysis that WRITES virtualPosition.stopLossPrice /
+  // hardStopPrice for the first time — it can't refer to them via fixed_*
+  // because they don't exist yet. aggressive_recovery is also forbidden in
+  // first_exit (forced conservative defaults per zone, no subjective upgrade).
+  const baseFirstExit = {
+    action: "SELL_LIMIT",
+    orderPrice: "31.00",
+    stopLossPrice: "28.50",
+    hardStopPrice: "27.20",
+    targetPrice: "31.00",
+    reasoning: "valid first-exit",
+    symbol: "TSLA",
+    currentPrice: "30.00",
+    anchorSource: "prior_high"
+  };
+  for (const badAnchor of ["fixed_soft_stop", "fixed_hard_stop", "aggressive_recovery"]) {
+    assert.throws(
+      () => validateAnalysisResult({ ...baseFirstExit, anchorSource: badAnchor }, "first_exit", { entryPrice: 30.00 }),
+      /not allowed in first_exit mode/
+    );
+  }
+});
+
+test("validateAnalysisResult: v19 first_exit accepts intraday static + stop_broken (for gap-down)", () => {
+  const baseFirstExit = {
+    action: "SELL_LIMIT",
+    orderPrice: "31.00",
+    stopLossPrice: "28.50",
+    hardStopPrice: "27.20",
+    targetPrice: "31.00",
+    reasoning: "valid first-exit",
+    symbol: "TSLA",
+    currentPrice: "30.00",
+    anchorSource: "intraday_high"
+  };
+  assert.equal(validateAnalysisResult(baseFirstExit, "first_exit", { entryPrice: 30.00 }), baseFirstExit);
+
+  // stop_broken accepted in first_exit for gap-down SELL_NOW
+  const gapDown = {
+    action: "SELL_NOW",
+    orderPrice: null,
+    stopLossPrice: "28.50",
+    hardStopPrice: "27.20",
+    targetPrice: null,
+    reasoning: "gap-down",
+    symbol: "TSLA",
+    currentPrice: "27.00",
+    anchorSource: "stop_broken"
+  };
+  assert.equal(validateAnalysisResult(gapDown, "first_exit"), gapDown);
+});
+
+test("validateAnalysisResult: v19 exit mode accepts fixed_* and aggressive_recovery (in correct zone)", () => {
+  // exit mode is the only mode where these anchors are valid.
+  // fixed_soft_stop / fixed_hard_stop can appear in any exit zone where
+  // they're geometrically valid candidates.
+  const baseExit = {
+    action: "SELL_LIMIT",
+    orderPrice: "27.00",
+    reasoning: "caution conservative",
+    symbol: "TSLA",
+    currentPrice: "26.80",
+    anchorSource: "fixed_soft_stop"
+  };
+  // Caution zone: hardStop=26.30 < current=26.80 ≤ softStop=27.00
+  const cautionContext = { entryPrice: 27.50, softStop: 27.00, hardStop: 26.30 };
+  assert.equal(validateAnalysisResult(baseExit, "exit", cautionContext), baseExit);
+
+  // aggressive_recovery accepted in caution zone
+  const aggressive = {
+    ...baseExit,
+    orderPrice: "27.55",
+    anchorSource: "aggressive_recovery"
+  };
+  assert.equal(validateAnalysisResult(aggressive, "exit", cautionContext), aggressive);
+});
+
+test("validateAnalysisResult: v19 aggressive_recovery rejected when not in caution zone", () => {
+  // aggressive_recovery is ONLY valid in caution zone (hardStop < current ≤ softStop).
+  // In observation zone (current > softStop) or hard-exit zone (current ≤ hardStop)
+  // it's a semantic error.
+  const aggressive = {
+    action: "SELL_LIMIT",
+    orderPrice: "27.55",
+    reasoning: "trying aggressive outside caution",
+    symbol: "TSLA",
+    currentPrice: "27.20",  // ABOVE softStop=27.00 — observation zone
+    anchorSource: "aggressive_recovery"
+  };
+  const observationContext = { entryPrice: 27.50, softStop: 27.00, hardStop: 26.30 };
+  assert.throws(
+    () => validateAnalysisResult(aggressive, "exit", observationContext),
+    /aggressive_recovery.*ABOVE softStop/
+  );
+
+  // Below hardStop = hard-exit zone, also rejected (must be SELL_NOW there)
+  const aggressiveBelowHard = {
+    ...aggressive,
+    currentPrice: "26.20"  // BELOW hardStop=26.30
+  };
+  assert.throws(
+    () => validateAnalysisResult(aggressiveBelowHard, "exit", observationContext),
+    /aggressive_recovery.*AT OR BELOW hardStop/
+  );
+});
+
+test("validateAnalysisResult: v19 aggressive_recovery zone check is skipped when stops missing (defensive)", () => {
+  // If validationContext doesn't include softStop/hardStop (legacy callers,
+  // null virtualPosition), the zone check defensively skips rather than
+  // throwing. Better to allow a possibly-wrong anchor than to fail the round
+  // when context is incomplete.
+  const aggressive = {
+    action: "SELL_LIMIT",
+    orderPrice: "27.55",
+    reasoning: "no stops in context",
+    symbol: "TSLA",
+    currentPrice: "27.20",
+    anchorSource: "aggressive_recovery"
+  };
+  // No softStop/hardStop in context → defensive skip
+  assert.equal(validateAnalysisResult(aggressive, "exit"), aggressive);
+});
+
+test("validateAnalysisResult: v19 force_exit rejects any anchor except force_exit", () => {
+  // force_exit mode locks anchorSource to "force_exit" only.
+  const baseForce = {
+    action: "SELL_NOW",
+    orderPrice: null,
+    reasoning: "close window",
+    symbol: "TSLA",
+    currentPrice: "180.50",
+    anchorSource: "force_exit"
+  };
+  assert.equal(validateAnalysisResult(baseForce, "force_exit"), baseForce);
+
+  // Any other anchor — even valid in other modes — rejected in force_exit
+  for (const badAnchor of ["EMA20", "prior_high", "stop_broken", "fixed_soft_stop"]) {
+    assert.throws(
+      () => validateAnalysisResult({ ...baseForce, anchorSource: badAnchor }, "force_exit"),
+      /not allowed in force_exit mode/
+    );
+  }
+});
+
+test("validateAnalysisResult: v19 invalid anchor values (typos, hallucinations) rejected in all modes", () => {
+  // Catches AI hallucinations like "support" / "resistance" / "rsi_oversold".
+  for (const badAnchor of ["support", "resistance", "rsi_oversold", "bullish_engulfing", ""]) {
+    const analysis = { ...validEntryAnalysis, anchorSource: badAnchor };
+    assert.throws(
+      () => validateAnalysisResult(analysis, "entry"),
+      // empty string fails the "missing anchorSource" check; non-empty bad
+      // values fail the enum scope check
+      /(missing anchorSource|not allowed in entry mode)/
+    );
+  }
+});
