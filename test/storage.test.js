@@ -339,3 +339,48 @@ test("migrateState: caps large arrays to storage limits", () => {
   assert.equal(state.results.at(0).id, "r0");
   assert.equal(state.tradeHistory.at(0).id, "t0");
 });
+
+test("migrateState: v18 state is upgraded to v19 preserving structural fields", () => {
+  // v19 is a prompt/validator/UI redesign with no state-shape changes —
+  // it just bumps the version. v18 fields (hardStopPrice, stopLossPrice,
+  // anchorSource enum values, tradeHistory entries, etc.) all carry over
+  // intact. anchorSource enum was extended additively (new intraday_*,
+  // fixed_*, aggressive_recovery values), so old values like "EMA20" /
+  // "prior_high" / "conservative_estimate" remain valid without rewrite.
+  const state = migrateState({
+    stateVersion: 18,
+    virtualPosition: {
+      symbol: "TSLA",
+      entryPrice: "27.50",
+      stopLossPrice: "27.00",
+      hardStopPrice: "26.30",
+      entryAnchorSource: "EMA20"
+    },
+    lastResult: {
+      analysis: {
+        action: "SELL_LIMIT",
+        orderPrice: "28.20",
+        anchorSource: "prior_high",
+        reasoning: "v18 result preserved"
+      }
+    },
+    tradeHistory: [
+      {
+        id: "trade-v18-1",
+        symbol: "TSLA",
+        entryPrice: "27.50",
+        exitPrice: "28.20",
+        entryAnchorSource: "EMA20"
+      }
+    ]
+  });
+
+  assert.equal(state.stateVersion, STATE_VERSION);
+  assert.equal(state.virtualPosition.entryPrice, "27.50");
+  assert.equal(state.virtualPosition.stopLossPrice, "27.00");
+  assert.equal(state.virtualPosition.hardStopPrice, "26.30");
+  assert.equal(state.virtualPosition.entryAnchorSource, "EMA20");
+  assert.equal(state.lastResult.analysis.anchorSource, "prior_high");
+  assert.equal(state.tradeHistory.length, 1);
+  assert.equal(state.tradeHistory[0].entryAnchorSource, "EMA20");
+});
