@@ -449,7 +449,8 @@ const validEntryAnalysis = {
   entryPrice: null,
   stopLossPrice: "179.80",
   targetPrice: "182.00",
-  reasoning: "BUY_LIMIT at EMA20 below current; price above all EMAs (strong)",
+  // v19 reasoning forced format: must contain current=, candidates, mode=
+  reasoning: "current=180.70; candidates=[R1=180.20@EMA20, R2=179.50@VWAP]; mode=conservative (default); chose=180.20@EMA20",
   symbol: "TSLA",
   currentPrice: "180.70",
   anchorSource: "EMA20"
@@ -514,7 +515,7 @@ test("validateAnalysisResult: first_exit mode validates dual stops + initial SEL
     stopLossPrice: "28.50",      // soft (below entry)
     hardStopPrice: "27.20",      // hard, must be below soft
     targetPrice: "31.00",
-    reasoning: "SELL_LIMIT at prior_high",
+    reasoning: "zone=healthy; first-exit defaults to R1 (no post-entry bars); target=31.00@prior_high",
     symbol: "TSLA",
     currentPrice: "30.00",
     anchorSource: "prior_high"
@@ -554,7 +555,7 @@ test("validateAnalysisResult: first_exit stops anchor on entryPrice (manual posi
     stopLossPrice: "25.00",      // soft, below entry but at current price — OK
     hardStopPrice: "23.60",      // hard, below soft — OK
     targetPrice: "25.04",
-    reasoning: "Recovery exit",
+    reasoning: "zone=observation; manual position first-exit defaults to R1; target=25.04@EMA20",
     symbol: "USAR",
     currentPrice: "25.00",
     anchorSource: "EMA20"
@@ -580,7 +581,7 @@ test("validateAnalysisResult: first_exit falls back to currentPrice when entryPr
     stopLossPrice: "28.50",
     hardStopPrice: "27.20",
     targetPrice: "31.00",
-    reasoning: "fallback path",
+    reasoning: "zone=healthy; fallback path (no entryPrice in context)",
     symbol: "TSLA",
     currentPrice: "30.00",
     anchorSource: "prior_high"
@@ -601,7 +602,7 @@ test("validateAnalysisResult: first_exit mode allows SELL_NOW for catastrophic g
     stopLossPrice: "28.50",
     hardStopPrice: "27.20",
     targetPrice: null,
-    reasoning: "Gap-down below any reasonable stop",
+    reasoning: "zone=hard-exit; gap-down below any reasonable stop",
     symbol: "TSLA",
     currentPrice: "27.00",
     anchorSource: "stop_broken"
@@ -618,7 +619,9 @@ test("validateAnalysisResult: R:R 1:1 hard floor removed (key-levels redesign)",
     orderPrice: "180.50",
     stopLossPrice: "180.30",
     targetPrice: "180.80",
-    currentPrice: "180.70"
+    currentPrice: "180.70",
+    // Reasoning must declare chose= matching orderPrice (cross-check)
+    reasoning: "current=180.70; candidates=[R1=180.50@EMA20, R2=180.20@VWAP]; mode=conservative (default); chose=180.50@EMA20"
   };
   // R:R from orderPrice perspective: reward 0.30 / risk 0.20 = 1.5:1 — OK
   // (chosen so all other validations still pass). Now flatten the target.
@@ -661,7 +664,9 @@ test("validateAnalysisResult: SELL_LIMIT requires an executable orderPrice", () 
     action: "SELL_LIMIT",
     orderPrice: "182.00",
     entryPrice: "180.50",
-    anchorSource: "prior_high"
+    anchorSource: "prior_high",
+    // exit mode requires zone= marker, not entry's current=/candidates=/mode=
+    reasoning: "zone=healthy; trend=normal; target=182.00@prior_high"
   };
 
   assert.equal(validateAnalysisResult(sellLimit, "exit"), sellLimit);
@@ -678,7 +683,8 @@ test("validateAnalysisResult: exit SELL_NOW accepts immediate exits and rejects 
     orderPrice: null,
     entryPrice: "180.50",
     currentPrice: "180.70",
-    anchorSource: "stop_broken"
+    anchorSource: "stop_broken",
+    reasoning: "zone=hard-exit; hardStop broken; next deep support=178.00@EMA200"
   };
 
   assert.equal(validateAnalysisResult(sellNow, "exit"), sellNow);
@@ -694,7 +700,8 @@ test("validateAnalysisResult: exit SELL_LIMIT must be above currentPrice", () =>
     action: "SELL_LIMIT",
     orderPrice: "181.25",
     entryPrice: "180.50",
-    currentPrice: "180.70"
+    currentPrice: "180.70",
+    reasoning: "zone=healthy; trend=normal; target=181.25@EMA20"
   };
 
   assert.equal(validateAnalysisResult(takeProfit, "exit"), takeProfit);
@@ -730,9 +737,14 @@ test("validateAnalysisResult: WAIT and HOLD are no longer valid actions", () => 
 test("validateAnalysisResult: v19 entry mode accepts intraday static anchors", () => {
   // v19 added intraday_high / intraday_low / opening_range_* / intraday_pivot
   // as legitimate anchorSource values for entry mode (formed during the
-  // trading day, complement the static + dynamic anchors).
+  // trading day, complement the static + dynamic anchors). For each anchor,
+  // construct reasoning whose chose= matches the anchor (cross-check).
   for (const anchor of ["intraday_high", "intraday_low", "opening_range_high", "opening_range_low", "intraday_pivot"]) {
-    const analysis = { ...validEntryAnalysis, anchorSource: anchor };
+    const analysis = {
+      ...validEntryAnalysis,
+      anchorSource: anchor,
+      reasoning: `current=180.70; candidates=[R1=180.20@${anchor}, R2=179.50@VWAP]; mode=conservative (default); chose=180.20@${anchor}`
+    };
     assert.equal(validateAnalysisResult(analysis, "entry"), analysis);
   }
 });
@@ -774,7 +786,7 @@ test("validateAnalysisResult: v19 first_exit mode rejects fixed_* and aggressive
     stopLossPrice: "28.50",
     hardStopPrice: "27.20",
     targetPrice: "31.00",
-    reasoning: "valid first-exit",
+    reasoning: "zone=healthy; first-exit defaults to R1; target=31.00@prior_high",
     symbol: "TSLA",
     currentPrice: "30.00",
     anchorSource: "prior_high"
@@ -794,7 +806,7 @@ test("validateAnalysisResult: v19 first_exit accepts intraday static + stop_brok
     stopLossPrice: "28.50",
     hardStopPrice: "27.20",
     targetPrice: "31.00",
-    reasoning: "valid first-exit",
+    reasoning: "zone=healthy; first-exit defaults to R1; target=31.00@intraday_high",
     symbol: "TSLA",
     currentPrice: "30.00",
     anchorSource: "intraday_high"
@@ -808,7 +820,7 @@ test("validateAnalysisResult: v19 first_exit accepts intraday static + stop_brok
     stopLossPrice: "28.50",
     hardStopPrice: "27.20",
     targetPrice: null,
-    reasoning: "gap-down",
+    reasoning: "zone=hard-exit; gap-down below hardStop",
     symbol: "TSLA",
     currentPrice: "27.00",
     anchorSource: "stop_broken"
@@ -823,7 +835,7 @@ test("validateAnalysisResult: v19 exit mode accepts fixed_* and aggressive_recov
   const baseExit = {
     action: "SELL_LIMIT",
     orderPrice: "27.00",
-    reasoning: "caution conservative",
+    reasoning: "zone=caution; target=conservative=27.00@fixed_soft_stop (default)",
     symbol: "TSLA",
     currentPrice: "26.80",
     anchorSource: "fixed_soft_stop"
@@ -832,11 +844,15 @@ test("validateAnalysisResult: v19 exit mode accepts fixed_* and aggressive_recov
   const cautionContext = { entryPrice: 27.50, softStop: 27.00, hardStop: 26.30 };
   assert.equal(validateAnalysisResult(baseExit, "exit", cautionContext), baseExit);
 
-  // aggressive_recovery accepted in caution zone
+  // aggressive_recovery accepted in caution zone — but reasoning must satisfy
+  // v19 evidence constraints (numbered list + no fuzzy words) since this is
+  // an aggressive choice. Compliant reasoning provides 2 concrete evidence
+  // items each with a number.
   const aggressive = {
     ...baseExit,
     orderPrice: "27.55",
-    anchorSource: "aggressive_recovery"
+    anchorSource: "aggressive_recovery",
+    reasoning: "zone=caution; target=aggressive=27.55@aggressive_recovery (evidence: (1) reclaimed EMA20=26.92; (2) volume 1.8x of down bars)"
   };
   assert.equal(validateAnalysisResult(aggressive, "exit", cautionContext), aggressive);
 });
@@ -848,7 +864,7 @@ test("validateAnalysisResult: v19 aggressive_recovery rejected when not in cauti
   const aggressive = {
     action: "SELL_LIMIT",
     orderPrice: "27.55",
-    reasoning: "trying aggressive outside caution",
+    reasoning: "zone=observation; target=aggressive=27.55@aggressive_recovery (evidence: (1) test only; (2) test only)",
     symbol: "TSLA",
     currentPrice: "27.20",  // ABOVE softStop=27.00 — observation zone
     anchorSource: "aggressive_recovery"
@@ -878,7 +894,7 @@ test("validateAnalysisResult: v19 aggressive_recovery zone check is skipped when
   const aggressive = {
     action: "SELL_LIMIT",
     orderPrice: "27.55",
-    reasoning: "no stops in context",
+    reasoning: "zone=caution; target=aggressive=27.55@aggressive_recovery (evidence: (1) defensive case; (2) defensive case)",
     symbol: "TSLA",
     currentPrice: "27.20",
     anchorSource: "aggressive_recovery"
@@ -919,4 +935,318 @@ test("validateAnalysisResult: v19 invalid anchor values (typos, hallucinations) 
       /(missing anchorSource|not allowed in entry mode)/
     );
   }
+});
+
+// ===== v19 Stage 4b: reasoning format / aggressive evidence / cross-check =====
+//
+// These validators enforce the strategy docs' "reasoning forced format" +
+// "aggressive choice requires ≥2 numeric evidence + no fuzzy words" +
+// "anchor cross-check between reasoning and field" rules. See
+// SELL_STRATEGY.md observation/caution zone CONSTRAINT sections and the
+// BUY_STRATEGY.md R1/R2 subjective judgment section for full rationale.
+
+test("validateAnalysisResult: v19 entry reasoning missing required markers (current=/candidates/mode=) rejected", () => {
+  // Each required entry-mode marker missing → fail with clear error.
+  const missingCurrent = {
+    ...validEntryAnalysis,
+    reasoning: "candidates=[R1=180.20@EMA20]; mode=conservative; chose=180.20@EMA20"
+  };
+  assert.throws(
+    () => validateAnalysisResult(missingCurrent, "entry"),
+    /missing required v19 marker.*current=/
+  );
+
+  const missingCandidates = {
+    ...validEntryAnalysis,
+    reasoning: "current=180.70; mode=conservative; chose=180.20@EMA20"
+  };
+  assert.throws(
+    () => validateAnalysisResult(missingCandidates, "entry"),
+    /missing required v19 marker.*candidates/
+  );
+
+  const missingMode = {
+    ...validEntryAnalysis,
+    reasoning: "current=180.70; candidates=[R1=180.20@EMA20]; chose=180.20@EMA20"
+  };
+  assert.throws(
+    () => validateAnalysisResult(missingMode, "entry"),
+    /missing required v19 marker.*mode=/
+  );
+});
+
+test("validateAnalysisResult: v19 exit/first_exit reasoning missing 'zone=' marker rejected", () => {
+  const missingZoneExit = {
+    action: "SELL_LIMIT",
+    orderPrice: "181.25",
+    currentPrice: "180.70",
+    symbol: "TSLA",
+    anchorSource: "prior_high",
+    reasoning: "trend=normal; target=181.25@prior_high" // no zone=
+  };
+  assert.throws(
+    () => validateAnalysisResult(missingZoneExit, "exit"),
+    /missing required v19 marker.*zone=/
+  );
+
+  const missingZoneFirstExit = {
+    action: "SELL_LIMIT",
+    orderPrice: "31.00",
+    stopLossPrice: "28.50",
+    hardStopPrice: "27.20",
+    targetPrice: "31.00",
+    currentPrice: "30.00",
+    symbol: "TSLA",
+    anchorSource: "prior_high",
+    reasoning: "first-exit defaults to R1; target=31.00@prior_high" // no zone=
+  };
+  assert.throws(
+    () => validateAnalysisResult(missingZoneFirstExit, "first_exit", { entryPrice: 30.00 }),
+    /missing required v19 marker.*zone=/
+  );
+});
+
+test("validateAnalysisResult: v19 empty reasoning rejected in all non-force-exit modes", () => {
+  // Empty reasoning means AI didn't think — should never happen but
+  // explicit check is cheap and catches regressions. Need per-mode fixtures
+  // (different actions allowed per mode) so the action check passes first
+  // and we exercise the reasoning empty-string check.
+  const fixturesPerMode = {
+    entry: { ...validEntryAnalysis, reasoning: "" },
+    exit: {
+      action: "SELL_LIMIT",
+      orderPrice: "181.25",
+      currentPrice: "180.70",
+      symbol: "TSLA",
+      anchorSource: "prior_high",
+      reasoning: ""
+    },
+    first_exit: {
+      action: "SELL_LIMIT",
+      orderPrice: "31.00",
+      stopLossPrice: "28.50",
+      hardStopPrice: "27.20",
+      targetPrice: "31.00",
+      currentPrice: "30.00",
+      symbol: "TSLA",
+      anchorSource: "prior_high",
+      reasoning: ""
+    }
+  };
+  for (const [mode, analysis] of Object.entries(fixturesPerMode)) {
+    const ctx = mode === "first_exit" ? { entryPrice: 30.00 } : undefined;
+    assert.throws(
+      () => validateAnalysisResult(analysis, mode, ctx),
+      /empty reasoning/,
+      `mode ${mode} should reject empty reasoning`
+    );
+  }
+});
+
+test("validateAnalysisResult: v19 force_exit exempt from reasoning format requirements", () => {
+  // force_exit is single-purpose (SELL_NOW only). Reasoning can be free-form
+  // since action is locked and there's no judgment to audit.
+  const forceExit = {
+    action: "SELL_NOW",
+    orderPrice: null,
+    currentPrice: "180.50",
+    symbol: "TSLA",
+    anchorSource: "force_exit",
+    reasoning: "close window"  // no markers, but force_exit is exempt
+  };
+  assert.equal(validateAnalysisResult(forceExit, "force_exit"), forceExit);
+});
+
+test("validateAnalysisResult: v19 entry mode=aggressive without ≥2 numbered evidence rejected", () => {
+  // mode=aggressive must include at least (1) and (2) numbered evidence
+  // markers in reasoning. Bare assertion fails.
+  const noEvidence = {
+    ...validEntryAnalysis,
+    reasoning: "current=180.70; candidates=[R1=180.20@EMA20, R2=179.50@VWAP]; mode=aggressive; chose=179.50@VWAP",
+    orderPrice: "179.50",
+    anchorSource: "VWAP"
+  };
+  assert.throws(
+    () => validateAnalysisResult(noEvidence, "entry"),
+    /requires ≥2 numbered evidence items/
+  );
+
+  // Only (1), no (2) → still fail
+  const oneEvidence = {
+    ...noEvidence,
+    reasoning: "current=180.70; candidates=[R1=180.20@EMA20, R2=179.50@VWAP]; mode=aggressive (evidence: (1) 3-bar lower highs); chose=179.50@VWAP"
+  };
+  assert.throws(
+    () => validateAnalysisResult(oneEvidence, "entry"),
+    /requires ≥2 numbered evidence items/
+  );
+
+  // Both (1) and (2) → pass
+  const compliant = {
+    ...noEvidence,
+    reasoning: "current=180.70; candidates=[R1=180.20@EMA20, R2=179.50@VWAP]; mode=aggressive (evidence: (1) 3-bar lower highs 180.9->180.8->180.7; (2) R1-R2 spread 0.70 > R1-dist 0.50 × 1.4); chose=179.50@VWAP"
+  };
+  assert.equal(validateAnalysisResult(compliant, "entry"), compliant);
+});
+
+test("validateAnalysisResult: v19 entry mode=conservative does not require numbered evidence (default action)", () => {
+  // Default conservative needs no extra justification — the prompt explicitly
+  // allows a brief reasoning. Only aggressive requires numbered evidence.
+  const conservativeBrief = {
+    ...validEntryAnalysis,
+    reasoning: "current=180.70; candidates=[R1=180.20@EMA20]; mode=conservative (default); chose=180.20@EMA20"
+  };
+  assert.equal(validateAnalysisResult(conservativeBrief, "entry"), conservativeBrief);
+});
+
+test("validateAnalysisResult: v19 exit observation flow=push-rebound requires ≥2 numbered evidence", () => {
+  // Observation zone 走止盈 = aggressive choice (default is 走解套). Needs
+  // numbered evidence in reasoning.
+  const noEvidence = {
+    action: "SELL_LIMIT",
+    orderPrice: "28.20",
+    currentPrice: "27.20",
+    symbol: "TSLA",
+    anchorSource: "prior_high",
+    reasoning: "zone=observation; flow=push-rebound; target=28.20@prior_high"
+  };
+  assert.throws(
+    () => validateAnalysisResult(noEvidence, "exit"),
+    /requires ≥2 numbered evidence items/
+  );
+
+  const compliant = {
+    ...noEvidence,
+    reasoning: "zone=observation; flow=push-rebound (evidence: (1) 3-bar lows 27.15->27.18->27.20; (2) reclaimed EMA20=27.10 with VWAP=27.15); target=28.20@prior_high"
+  };
+  assert.equal(validateAnalysisResult(compliant, "exit"), compliant);
+
+  // Default recovery flow doesn't need numbered evidence
+  const recoveryBrief = {
+    ...noEvidence,
+    orderPrice: "27.55",
+    anchorSource: "conservative_estimate",
+    reasoning: "zone=observation; flow=recovery (default: evidence not conclusive); target=27.55@conservative_estimate"
+  };
+  assert.equal(validateAnalysisResult(recoveryBrief, "exit"), recoveryBrief);
+});
+
+test("validateAnalysisResult: v19 exit caution target=aggressive requires ≥2 numbered evidence", () => {
+  // Caution zone 激进 (anchorSource=aggressive_recovery) is an active choice.
+  // Needs numbered evidence in reasoning.
+  const cautionContext = { entryPrice: 27.50, softStop: 27.00, hardStop: 26.30 };
+  const noEvidence = {
+    action: "SELL_LIMIT",
+    orderPrice: "27.55",
+    currentPrice: "26.95",  // caution zone
+    symbol: "TSLA",
+    anchorSource: "aggressive_recovery",
+    reasoning: "zone=caution; target=aggressive=27.55@aggressive_recovery"
+  };
+  assert.throws(
+    () => validateAnalysisResult(noEvidence, "exit", cautionContext),
+    /requires ≥2 numbered evidence items/
+  );
+
+  const compliant = {
+    ...noEvidence,
+    reasoning: "zone=caution; target=aggressive=27.55@aggressive_recovery (evidence: (1) 3-bar lows 26.55->26.78->26.95 rising; (2) reclaimed EMA20=26.92 + 1.8x volume); only 0.05 from softStop"
+  };
+  assert.equal(validateAnalysisResult(compliant, "exit", cautionContext), compliant);
+});
+
+test("validateAnalysisResult: v19 fuzzy word blacklist enforced on aggressive reasoning", () => {
+  // Even with (1) and (2) markers, fuzzy adjectives without numeric backing
+  // are rejected. Forces AI to express evidence concretely.
+  const fuzzyWords = [
+    "looks like a reversal",
+    "looks bullish here",
+    "feels strong on this bar",
+    "seems like recovery",
+    "should rebound soon",
+    "probably continues up",
+    "likely to bounce",
+    "momentum building nicely",
+    " bullish setup forming",
+    " bearish flag breaking"
+  ];
+
+  for (const phrase of fuzzyWords) {
+    const fuzzy = {
+      ...validEntryAnalysis,
+      reasoning: `current=180.70; candidates=[R1=180.20@EMA20, R2=179.50@VWAP]; mode=aggressive (evidence: (1) 3-bar pattern; (2) ${phrase}); chose=179.50@VWAP`,
+      orderPrice: "179.50",
+      anchorSource: "VWAP"
+    };
+    assert.throws(
+      () => validateAnalysisResult(fuzzy, "entry"),
+      /fuzzy word\/phrase/,
+      `phrase "${phrase}" should be rejected`
+    );
+  }
+});
+
+test("validateAnalysisResult: v19 fuzzy words allowed in conservative/default reasoning (no enforcement)", () => {
+  // The fuzzy-word ban only fires for aggressive choices. Conservative
+  // reasoning can use natural language freely since it's the default
+  // action and doesn't need defensive constraints.
+  const conservativeWithFuzzy = {
+    ...validEntryAnalysis,
+    reasoning: "current=180.70; candidates=[R1=180.20@EMA20]; mode=conservative (looks fine, default); chose=180.20@EMA20"
+  };
+  assert.equal(validateAnalysisResult(conservativeWithFuzzy, "entry"), conservativeWithFuzzy);
+});
+
+test("validateAnalysisResult: v19 reasoning chose=<price>@<anchor> cross-check with orderPrice + anchorSource fields", () => {
+  // Cross-check: declared chose=<price>@<anchor> in reasoning text must
+  // match orderPrice + anchorSource fields (price tolerance ±$0.05 for
+  // placement micro-adjust, anchor must match exactly).
+
+  // Mismatched price (beyond tolerance): reasoning says 180.20, field says 179.00
+  const priceMismatch = {
+    ...validEntryAnalysis,
+    orderPrice: "179.00",  // out of tolerance vs reasoning's 180.20
+    reasoning: "current=180.70; candidates=[R1=180.20@EMA20]; mode=conservative; chose=180.20@EMA20"
+  };
+  assert.throws(
+    () => validateAnalysisResult(priceMismatch, "entry"),
+    /Cross-check failed.*tolerance/
+  );
+
+  // Mismatched anchor: reasoning says @EMA20, field says VWAP
+  const anchorMismatch = {
+    ...validEntryAnalysis,
+    anchorSource: "VWAP",
+    reasoning: "current=180.70; candidates=[R1=180.20@EMA20]; mode=conservative; chose=180.20@EMA20"
+  };
+  assert.throws(
+    () => validateAnalysisResult(anchorMismatch, "entry"),
+    /Cross-check failed — reasoning anchor and field anchor must match/
+  );
+
+  // Within tolerance: reasoning 180.20, field 180.22 (2 cents = placement micro-adjust)
+  const withinTolerance = {
+    ...validEntryAnalysis,
+    orderPrice: "180.22",
+    reasoning: "current=180.70; candidates=[R1=180.20@EMA20]; mode=conservative; chose=180.20@EMA20"
+  };
+  assert.equal(validateAnalysisResult(withinTolerance, "entry"), withinTolerance);
+});
+
+test("validateAnalysisResult: v19 cross-check is skipped when reasoning has no chose=/target= clause", () => {
+  // If reasoning happens to lack a "chose=" or "target=" clause (rare —
+  // the forced format requires it, but validateReasoningFormat catches that
+  // separately), the cross-check defensively does nothing rather than
+  // throwing a misleading error.
+  //
+  // We can't construct this case via valid v19 entry reasoning (current=/
+  // candidates/mode= markers don't include chose=), so we test it via a
+  // pathological "all markers but no chose=" reasoning. Cross-check should
+  // pass silently because there's nothing to compare.
+  const noChose = {
+    ...validEntryAnalysis,
+    reasoning: "current=180.70; candidates=[R1=180.20@EMA20]; mode=conservative (default)"
+    // intentionally lacks "chose=" — cross-check has nothing to match
+  };
+  assert.equal(validateAnalysisResult(noChose, "entry"), noChose);
 });
