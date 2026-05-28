@@ -688,11 +688,13 @@ reasoning 应该提一句**下一深支撑**在哪,让用户在决定**市价 vs
 
 **处理**:首次分析照样跑,根据成交瞬间的 `currentPrice` 判断区间,**所有情况都不做主观判断**(理由见下),只走默认方向:
 
+> **绝对规则(所有区通用)**: 任何 SELL_LIMIT 的 orderPrice 必须**严格高于 currentPrice**(挂在 current 下方的卖单会立刻以劣于市价成交)。选点位时先过滤掉 ≤ current 的。
+
 | current 所在区 | 首个 SELL_LIMIT | 理由 |
 |---|---|---|
-| 健康区(current > entry) | **走止盈,挂 R1**(走势强弱判据强制按"普通"处理) | 延续 buy thesis,反弹目标在 entry 上方 |
-| 观察区(softStop < current ≤ entry) | **走止盈,挂 R1**(与健康区对称处理) | 同上——刚买入时的微小漂移恰恰是你期待的"反弹前的最后一震",强制走解套等于刚买入就用「认怂」逻辑出场,会被 fresh-fill 噪声卖飞 |
-| 警戒区(hardStop < current ≤ softStop) | **保守 target = softStop**(强制保守模式) | thesis 已被市场否定(price 直接破软止损),挂 softStop 求平本是正确响应 |
+| 健康区(current > entry) | **走止盈,挂 current 上方最近的未突破关键位**(走势强弱判据强制按"普通"处理) | 延续 buy thesis。**注意:浮盈时(current > entry)entry 和 current 之间的关键位已被突破,不能选——必须选 current 上方的**(否则 orderPrice ≤ current 被 validator 拒) |
+| 观察区(softStop < current ≤ entry) | **走止盈,挂 R1 = entry 上方最近未突破关键位**(此时 R1 天然在 current 上方,因 current ≤ entry) | 刚买入时的微小漂移恰恰是你期待的"反弹前的最后一震",强制走解套等于刚买入就用「认怂」逻辑出场,会被 fresh-fill 噪声卖飞 |
+| 警戒区(hardStop < current ≤ softStop) | **保守 target = softStop 价格**(softStop 在 current 上方,因 current ≤ softStop)。**anchorSource = 软止损所对应的底层关键位名(如 'EMA50' / 'prior_low'),不能用 'fixed_soft_stop'**——首次分析正在创建这个止损,还不能引用它 | thesis 已被市场否定(price 直接破软止损),挂 softStop 求平本是正确响应 |
 | 必须离场区(current ≤ hardStop) | **SELL_NOW** | thesis 已死,首次分析直接 SELL_NOW |
 
 > **健康区 / 观察区首次分析的子边界:R1 距 current 几个 tick 以内** —— 同每轮 exit 分析的健康区规则,挂略高于 R1 几个 tick,避免 SELL_LIMIT 立即被噪声成交。

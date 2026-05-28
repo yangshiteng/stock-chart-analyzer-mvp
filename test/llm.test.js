@@ -144,6 +144,33 @@ test("buildAnalysisPromptFromConfig: first_exit mode requires stopLossPrice + ha
   assert.match(prompt, /\[FIRST_EXIT_MODE_RULES\]/);
 });
 
+test("buildAnalysisPromptFromConfig: first_exit prompt guards manual-holding bugs (above-current + no fixed_* in caution)", () => {
+  // Regression for two real first_exit bugs hit when a user declares an
+  // EXISTING position (manual_existing_position) that isn't a fresh fill:
+  //
+  // BUG 1 (caution zone, deterministic): prompt previously told AI to emit
+  // "SELL_LIMIT @ fixed_soft_stop", but fixed_* is NOT in the first_exit
+  // anchorSource enum (this analysis is WRITING the stop, can't reference a
+  // stored value). AI following that instruction → guaranteed validator
+  // rejection → position never recorded → "no reaction" on Start.
+  //
+  // BUG 2 (healthy zone w/ profit): prompt said "R1 = first level above
+  // ENTRY". When current ran above entry, that level can be BELOW current,
+  // and a SELL_LIMIT below current is invalid (would fill immediately). Must
+  // pick the nearest level above CURRENT.
+  const prompt = buildAnalysisPromptFromConfig(getAnalysisPromptConfig(), {
+    ...samplePayload,
+    mode: "first_exit",
+    virtualPosition: { entryPrice: "27.50", entryTime: "2026-05-14T14:00:00Z", entryAnchorSource: "EMA20" }
+  }, "en");
+
+  // BUG 2 guard: the absolute "above currentPrice" rule must be present.
+  assert.match(prompt, /strictly ABOVE currentPrice/);
+  // BUG 1 guard: caution zone must explicitly forbid fixed_soft_stop and tell
+  // AI to use the underlying level name.
+  assert.match(prompt, /do NOT use 'fixed_soft_stop'/);
+});
+
 test("buildAnalysisPromptFromConfig: no capital/position-size leakage", () => {
   const prompt = buildAnalysisPromptFromConfig(getAnalysisPromptConfig(), samplePayload, "en");
   assert.ok(!/availableCash/i.test(prompt));
