@@ -1179,6 +1179,74 @@ test("validateAnalysisResult: v19 entry mode=conservative does not require numbe
   assert.equal(validateAnalysisResult(conservativeBrief, "entry"), conservativeBrief);
 });
 
+test("validateAnalysisResult: v19 healthy-zone trend=strong requires ≥2 numbered evidence (now AI subjective)", () => {
+  // v19 follow-up: healthy zone R1/R2 is now AI subjective, not mechanical.
+  // trend=strong (→ R2) is the aggressive choice and must carry ≥2 numbered
+  // evidence items, same as observation 走止盈 / caution 激进 / buy aggressive.
+  const base = {
+    action: "SELL_LIMIT",
+    orderPrice: "29.00",
+    currentPrice: "28.30",
+    symbol: "TSLA",
+    anchorSource: "gap"
+  };
+
+  // trend=strong with no numbered evidence → reject
+  const noEvidence = {
+    ...base,
+    reasoning: "zone=healthy; trend=strong; target=29.00@gap"
+  };
+  assert.throws(
+    () => validateAnalysisResult(noEvidence, "exit"),
+    /requires ≥2 numbered evidence items/
+  );
+
+  // trend=strong with only (1) → reject
+  const oneEvidence = {
+    ...base,
+    reasoning: "zone=healthy; trend=strong (evidence: (1) 3 green bars); target=29.00@gap"
+  };
+  assert.throws(
+    () => validateAnalysisResult(oneEvidence, "exit"),
+    /requires ≥2 numbered evidence items/
+  );
+
+  // trend=strong with (1) and (2) → pass
+  const compliant = {
+    ...base,
+    reasoning: "zone=healthy; trend=strong (evidence: (1) 3 green closes 28.1->28.3->28.5 strictly rising; (2) R1-R2 spread 0.70 vs R1-dist 0.30); target=29.00@gap"
+  };
+  assert.equal(validateAnalysisResult(compliant, "exit"), compliant);
+});
+
+test("validateAnalysisResult: v19 healthy-zone trend=normal does not require numbered evidence (default)", () => {
+  // trend=normal (→ R1) is the conservative default — no extra justification.
+  const normalBrief = {
+    action: "SELL_LIMIT",
+    orderPrice: "28.20",
+    currentPrice: "27.50",
+    symbol: "TSLA",
+    anchorSource: "prior_high",
+    reasoning: "zone=healthy; trend=normal; target=28.20@prior_high"
+  };
+  assert.equal(validateAnalysisResult(normalBrief, "exit"), normalBrief);
+});
+
+test("validateAnalysisResult: v19 healthy-zone trend=strong rejects fuzzy words without numbers", () => {
+  const fuzzy = {
+    action: "SELL_LIMIT",
+    orderPrice: "29.00",
+    currentPrice: "28.30",
+    symbol: "TSLA",
+    anchorSource: "gap",
+    reasoning: "zone=healthy; trend=strong (evidence: (1) looks strong; (2) momentum building); target=29.00@gap"
+  };
+  assert.throws(
+    () => validateAnalysisResult(fuzzy, "exit"),
+    /fuzzy word\/phrase/
+  );
+});
+
 test("validateAnalysisResult: v19 exit observation flow=push-rebound requires ≥2 numbered evidence", () => {
   // Observation zone 走止盈 = aggressive choice (default is 走解套). Needs
   // numbered evidence in reasoning.
@@ -1364,7 +1432,8 @@ test("validateAnalysisResult: v19 cross-check handles R1=/R2= and conservative=/
     ...r1Variant,
     orderPrice: "29.00",
     anchorSource: "gap",
-    reasoning: "zone=healthy; trend=strong (3 green + rising); target=R2=29.00@gap (skip R1=28.50@prior_high)"
+    // trend=strong is now an aggressive choice → needs ≥2 numbered evidence.
+    reasoning: "zone=healthy; trend=strong (evidence: (1) 3 green bars closes 28.1->28.3->28.5 strictly rising; (2) R1-R2 spread 0.50 = R1-dist 0.30 × 1.67); target=R2=29.00@gap (skip R1=28.50@prior_high)"
   };
   assert.equal(validateAnalysisResult(r2Variant, "exit"), r2Variant);
 
