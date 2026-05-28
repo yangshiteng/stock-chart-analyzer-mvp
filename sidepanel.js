@@ -1372,9 +1372,15 @@ pendingLimitFilledButton.addEventListener("click", async () => {
     return;
   }
 
+  const type = pending.action === "BUY_LIMIT" ? "mark-bought" : "mark-sold";
   pendingLimitFilledButton.disabled = true;
+  // mark-bought triggers a first-exit AI analysis that can take ~10s. Show a
+  // loading label so the user gets immediate feedback instead of a silently
+  // disabled button (which reads as "no reaction").
+  if (type === "mark-bought") {
+    pendingLimitFilledButton.textContent = t(language, "firstExitAnalyzing");
+  }
   try {
-    const type = pending.action === "BUY_LIMIT" ? "mark-bought" : "mark-sold";
     const payload = type === "mark-bought" ? { entryPrice: price } : { exitPrice: price };
     const response = await chrome.runtime.sendMessage({ type, ...payload });
     if (!response?.ok) {
@@ -1382,6 +1388,15 @@ pendingLimitFilledButton.addEventListener("click", async () => {
         response?.error || t(language, type === "mark-bought" ? "couldNotMarkBought" : "couldNotMarkSold");
       pendingLimitError.classList.remove("hidden");
     }
+  } catch (error) {
+    // chrome.runtime.sendMessage can REJECT (service worker evicted mid-call,
+    // message port closed before the long first-exit analysis responded).
+    // Without this catch the rejection propagated past `await render()`,
+    // leaving the button re-enabled but no error shown — the "no reaction"
+    // symptom. Surface it.
+    pendingLimitError.textContent =
+      error?.message || t(language, type === "mark-bought" ? "couldNotMarkBought" : "couldNotMarkSold");
+    pendingLimitError.classList.remove("hidden");
   } finally {
     pendingLimitFilledButton.disabled = false;
   }
@@ -1509,6 +1524,13 @@ confirmMarketContextButton.addEventListener("click", async () => {
       marketContextError.textContent = response?.error || t(language, "marketContextNotComplete");
       marketContextError.classList.remove("hidden");
     }
+  } catch (error) {
+    // sendMessage can reject (service worker evicted during the holding-path
+    // first-exit analysis, or port closed). Without this catch the rejection
+    // propagated past the final render(), leaving the button stuck on
+    // "Starting monitoring..." with no error — the "no reaction" symptom.
+    marketContextError.textContent = error?.message || t(language, "marketContextNotComplete");
+    marketContextError.classList.remove("hidden");
   } finally {
     isConfirmingMarketContext = false;
   }
