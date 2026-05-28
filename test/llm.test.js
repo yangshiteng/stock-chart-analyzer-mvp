@@ -149,7 +149,7 @@ test("buildAnalysisPromptFromConfig: entry prompt pushes active intraday-structu
   // value as 'nearest support' and skips a clearer, nearer intraday
   // consolidation shelf / reaction low between current and EMA20. The fix
   // broadens the intraday level definition and adds active-scan instructions
-  // so such intraday levels correctly enter the R1/R2 ranking.
+  // so such intraday levels correctly enter the S1/S2 ranking (buy-side supports).
   const prompt = buildAnalysisPromptFromConfig(getAnalysisPromptConfig(), {
     ...samplePayload,
     mode: "entry"
@@ -509,7 +509,7 @@ const validEntryAnalysis = {
   stopLossPrice: "179.80",
   targetPrice: "182.00",
   // v19 reasoning forced format: must contain current=, candidates, mode=
-  reasoning: "current=180.70; candidates=[R1=180.20@EMA20, R2=179.50@VWAP]; mode=conservative (default); chose=180.20@EMA20",
+  reasoning: "current=180.70; candidates=[S1=180.20@EMA20, S2=179.50@VWAP]; mode=conservative (default); chose=180.20@EMA20",
   symbol: "TSLA",
   currentPrice: "180.70",
   anchorSource: "EMA20"
@@ -680,7 +680,7 @@ test("validateAnalysisResult: R:R 1:1 hard floor removed (key-levels redesign)",
     targetPrice: "180.80",
     currentPrice: "180.70",
     // Reasoning must declare chose= matching orderPrice (cross-check)
-    reasoning: "current=180.70; candidates=[R1=180.50@EMA20, R2=180.20@VWAP]; mode=conservative (default); chose=180.50@EMA20"
+    reasoning: "current=180.70; candidates=[S1=180.50@EMA20, S2=180.20@VWAP]; mode=conservative (default); chose=180.50@EMA20"
   };
   // R:R from orderPrice perspective: reward 0.30 / risk 0.20 = 1.5:1 — OK
   // (chosen so all other validations still pass). Now flatten the target.
@@ -802,7 +802,7 @@ test("validateAnalysisResult: v19 entry mode accepts intraday static anchors", (
     const analysis = {
       ...validEntryAnalysis,
       anchorSource: anchor,
-      reasoning: `current=180.70; candidates=[R1=180.20@${anchor}, R2=179.50@VWAP]; mode=conservative (default); chose=180.20@${anchor}`
+      reasoning: `current=180.70; candidates=[S1=180.20@${anchor}, S2=179.50@VWAP]; mode=conservative (default); chose=180.20@${anchor}`
     };
     assert.equal(validateAnalysisResult(analysis, "entry"), analysis);
   }
@@ -1002,13 +1002,13 @@ test("validateAnalysisResult: v19 invalid anchor values (typos, hallucinations) 
 // "aggressive choice requires ≥2 numeric evidence + no fuzzy words" +
 // "anchor cross-check between reasoning and field" rules. See
 // SELL_STRATEGY.md observation/caution zone CONSTRAINT sections and the
-// BUY_STRATEGY.md R1/R2 subjective judgment section for full rationale.
+// BUY_STRATEGY.md S1/S2 subjective judgment section for full rationale.
 
 test("validateAnalysisResult: v19 entry reasoning missing required markers (current=/candidates/mode=) rejected", () => {
   // Each required entry-mode marker missing → fail with clear error.
   const missingCurrent = {
     ...validEntryAnalysis,
-    reasoning: "candidates=[R1=180.20@EMA20]; mode=conservative; chose=180.20@EMA20"
+    reasoning: "candidates=[S1=180.20@EMA20]; mode=conservative; chose=180.20@EMA20"
   };
   assert.throws(
     () => validateAnalysisResult(missingCurrent, "entry"),
@@ -1026,7 +1026,7 @@ test("validateAnalysisResult: v19 entry reasoning missing required markers (curr
 
   const missingMode = {
     ...validEntryAnalysis,
-    reasoning: "current=180.70; candidates=[R1=180.20@EMA20]; chose=180.20@EMA20"
+    reasoning: "current=180.70; candidates=[S1=180.20@EMA20]; chose=180.20@EMA20"
   };
   assert.throws(
     () => validateAnalysisResult(missingMode, "entry"),
@@ -1108,7 +1108,7 @@ test("validateAnalysisResult: v19 reasoning markers are case-insensitive (R4 fix
   // Validator accepts mixed case to avoid that.
   const capitalizedEntry = {
     ...validEntryAnalysis,
-    reasoning: "Current=180.70; Candidates=[R1=180.20@EMA20]; MODE=conservative; chose=180.20@EMA20"
+    reasoning: "Current=180.70; Candidates=[S1=180.20@EMA20]; MODE=conservative; chose=180.20@EMA20"
   };
   assert.equal(validateAnalysisResult(capitalizedEntry, "entry"), capitalizedEntry);
 
@@ -1142,7 +1142,7 @@ test("validateAnalysisResult: v19 entry mode=aggressive without ≥2 numbered ev
   // markers in reasoning. Bare assertion fails.
   const noEvidence = {
     ...validEntryAnalysis,
-    reasoning: "current=180.70; candidates=[R1=180.20@EMA20, R2=179.50@VWAP]; mode=aggressive; chose=179.50@VWAP",
+    reasoning: "current=180.70; candidates=[S1=180.20@EMA20, S2=179.50@VWAP]; mode=aggressive; chose=179.50@VWAP",
     orderPrice: "179.50",
     anchorSource: "VWAP"
   };
@@ -1154,7 +1154,7 @@ test("validateAnalysisResult: v19 entry mode=aggressive without ≥2 numbered ev
   // Only (1), no (2) → still fail
   const oneEvidence = {
     ...noEvidence,
-    reasoning: "current=180.70; candidates=[R1=180.20@EMA20, R2=179.50@VWAP]; mode=aggressive (evidence: (1) 3-bar lower highs); chose=179.50@VWAP"
+    reasoning: "current=180.70; candidates=[S1=180.20@EMA20, S2=179.50@VWAP]; mode=aggressive (evidence: (1) 3-bar lower highs); chose=179.50@VWAP"
   };
   assert.throws(
     () => validateAnalysisResult(oneEvidence, "entry"),
@@ -1164,7 +1164,7 @@ test("validateAnalysisResult: v19 entry mode=aggressive without ≥2 numbered ev
   // Both (1) and (2) → pass
   const compliant = {
     ...noEvidence,
-    reasoning: "current=180.70; candidates=[R1=180.20@EMA20, R2=179.50@VWAP]; mode=aggressive (evidence: (1) 3-bar lower highs 180.9->180.8->180.7; (2) R1-R2 spread 0.70 > R1-dist 0.50 × 1.4); chose=179.50@VWAP"
+    reasoning: "current=180.70; candidates=[S1=180.20@EMA20, S2=179.50@VWAP]; mode=aggressive (evidence: (1) 3-bar lower highs 180.9->180.8->180.7; (2) S1-S2 spread 0.70 > S1-dist 0.50 × 1.4); chose=179.50@VWAP"
   };
   assert.equal(validateAnalysisResult(compliant, "entry"), compliant);
 });
@@ -1174,7 +1174,7 @@ test("validateAnalysisResult: v19 entry mode=conservative does not require numbe
   // allows a brief reasoning. Only aggressive requires numbered evidence.
   const conservativeBrief = {
     ...validEntryAnalysis,
-    reasoning: "current=180.70; candidates=[R1=180.20@EMA20]; mode=conservative (default); chose=180.20@EMA20"
+    reasoning: "current=180.70; candidates=[S1=180.20@EMA20]; mode=conservative (default); chose=180.20@EMA20"
   };
   assert.equal(validateAnalysisResult(conservativeBrief, "entry"), conservativeBrief);
 });
@@ -1259,7 +1259,7 @@ test("validateAnalysisResult: v19 fuzzy word blacklist enforced on aggressive re
   for (const phrase of fuzzyWords) {
     const fuzzy = {
       ...validEntryAnalysis,
-      reasoning: `current=180.70; candidates=[R1=180.20@EMA20, R2=179.50@VWAP]; mode=aggressive (evidence: (1) 3-bar pattern; (2) ${phrase}); chose=179.50@VWAP`,
+      reasoning: `current=180.70; candidates=[S1=180.20@EMA20, S2=179.50@VWAP]; mode=aggressive (evidence: (1) 3-bar pattern; (2) ${phrase}); chose=179.50@VWAP`,
       orderPrice: "179.50",
       anchorSource: "VWAP"
     };
@@ -1286,7 +1286,7 @@ test("validateAnalysisResult: v19 standalone bullish/bearish allowed in aggressi
   for (const phrase of legitimateCompounds) {
     const compliant = {
       ...validEntryAnalysis,
-      reasoning: `current=180.70; candidates=[R1=180.20@EMA20, R2=179.50@VWAP]; mode=aggressive (evidence: (1) ${phrase}; (2) 3-bar lower highs 30.40->30.20->30.10); chose=179.50@VWAP`,
+      reasoning: `current=180.70; candidates=[S1=180.20@EMA20, S2=179.50@VWAP]; mode=aggressive (evidence: (1) ${phrase}; (2) 3-bar lower highs 30.40->30.20->30.10); chose=179.50@VWAP`,
       orderPrice: "179.50",
       anchorSource: "VWAP"
     };
@@ -1300,7 +1300,7 @@ test("validateAnalysisResult: v19 fuzzy words allowed in conservative/default re
   // action and doesn't need defensive constraints.
   const conservativeWithFuzzy = {
     ...validEntryAnalysis,
-    reasoning: "current=180.70; candidates=[R1=180.20@EMA20]; mode=conservative (looks fine, default); chose=180.20@EMA20"
+    reasoning: "current=180.70; candidates=[S1=180.20@EMA20]; mode=conservative (looks fine, default); chose=180.20@EMA20"
   };
   assert.equal(validateAnalysisResult(conservativeWithFuzzy, "entry"), conservativeWithFuzzy);
 });
@@ -1314,7 +1314,7 @@ test("validateAnalysisResult: v19 reasoning chose=<price>@<anchor> cross-check w
   const priceMismatch = {
     ...validEntryAnalysis,
     orderPrice: "179.00",  // out of tolerance vs reasoning's 180.20
-    reasoning: "current=180.70; candidates=[R1=180.20@EMA20]; mode=conservative; chose=180.20@EMA20"
+    reasoning: "current=180.70; candidates=[S1=180.20@EMA20]; mode=conservative; chose=180.20@EMA20"
   };
   assert.throws(
     () => validateAnalysisResult(priceMismatch, "entry"),
@@ -1325,7 +1325,7 @@ test("validateAnalysisResult: v19 reasoning chose=<price>@<anchor> cross-check w
   const anchorMismatch = {
     ...validEntryAnalysis,
     anchorSource: "VWAP",
-    reasoning: "current=180.70; candidates=[R1=180.20@EMA20]; mode=conservative; chose=180.20@EMA20"
+    reasoning: "current=180.70; candidates=[S1=180.20@EMA20]; mode=conservative; chose=180.20@EMA20"
   };
   assert.throws(
     () => validateAnalysisResult(anchorMismatch, "entry"),
@@ -1336,7 +1336,7 @@ test("validateAnalysisResult: v19 reasoning chose=<price>@<anchor> cross-check w
   const withinTolerance = {
     ...validEntryAnalysis,
     orderPrice: "180.22",
-    reasoning: "current=180.70; candidates=[R1=180.20@EMA20]; mode=conservative; chose=180.20@EMA20"
+    reasoning: "current=180.70; candidates=[S1=180.20@EMA20]; mode=conservative; chose=180.20@EMA20"
   };
   assert.equal(validateAnalysisResult(withinTolerance, "entry"), withinTolerance);
 });
@@ -1403,7 +1403,7 @@ test("validateAnalysisResult: v19 cross-check is skipped when reasoning has no c
   // pass silently because there's nothing to compare.
   const noChose = {
     ...validEntryAnalysis,
-    reasoning: "current=180.70; candidates=[R1=180.20@EMA20]; mode=conservative (default)"
+    reasoning: "current=180.70; candidates=[S1=180.20@EMA20]; mode=conservative (default)"
     // intentionally lacks "chose=" — cross-check has nothing to match
   };
   assert.equal(validateAnalysisResult(noChose, "entry"), noChose);

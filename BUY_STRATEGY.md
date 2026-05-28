@@ -10,12 +10,12 @@
 
 **两个关键设计**:
 
-1. **R1 / R2 二选一 + AI 主观综合判断(带证据约束)**: 收集所有"低于现价的关键点位",按距离 current 从近到远排序成 `R1, R2, R3, ...`。AI 在 `R1` (保守) / `R2` (激进) 之间二选一,**R3+ 完全禁止**。默认保守(挂 R1),AI 看到证据支持深回踩才升级到激进(挂 R2)。**带三条结构约束**:
-   - 不确定 = 默认保守(挂 R1)
+1. **S1 / S2 二选一 + AI 主观综合判断(带证据约束)**: 收集所有"低于现价的关键点位",按距离 current 从近到远排序成 `S1, S2, S3, ...`。AI 在 `S1` (保守) / `S2` (激进) 之间二选一,**S3+ 完全禁止**。默认保守(挂 S1),AI 看到证据支持深回踩才升级到激进(挂 S2)。**带三条结构约束**:
+   - 不确定 = 默认保守(挂 S1)
    - 激进选项必须列 ≥2 条数字证据
    - validator 拒绝模糊词
    
-   这是 sell strategy 浮亏区(观察区/警戒区)主观判断设计的镜像。买入也允许主观因为入场前 K 线/EMA/VWAP/量能/大盘信号确实丰富,机械"永远 R1"会丢失"明显该等深回踩"的信号。但要避免重蹈 confidence 字段覆辙,主观必须配证据约束。
+   这是 sell strategy 浮亏区(观察区/警戒区)主观判断设计的镜像。买入也允许主观因为入场前 K 线/EMA/VWAP/量能/大盘信号确实丰富,机械"永远 S1"会丢失"明显该等深回踩"的信号。但要避免重蹈 confidence 字段覆辙,主观必须配证据约束。
 2. **永远输出 BUY_LIMIT**:即使最近支撑距离 -10%,也照样挂;即使关键点位看起来"弱",也照样挂——用户在券商端是 gatekeeper,他读 reasoning 自己决定要不要真去挂单。插件这边的责任是"给出图形上最合理的候选",不是替用户做风险决策。
 
 ---
@@ -90,27 +90,27 @@ validator 应在 entry mode 拒绝这些 enum 值出现在 BUY_LIMIT 输出里�
 
 ---
 
-## 第二步:R1 / R2 编号 + AI 主观判断保守 vs 激进
+## 第二步:S1 / S2 编号 + AI 主观判断保守 vs 激进
 
-### R1 / R2 候选编号
+### S1 / S2 候选编号
 
-收集第一步分出的所有支撑候选(低于 current 的关键点位),按距离 current **从近到远**排序,记为 `R1, R2, R3, ...`:
-- `R1` = 距 current **最近**的支撑(默认保守目标)
-- `R2` = 第二近的支撑(激进目标)
-- `R3+` = 更远的支撑,**禁止**挂单(同 sell strategy 健康区设计原则:R3+ 距离过远,成交概率剧降,长期 EV 不见得正)
+收集第一步分出的所有支撑候选(低于 current 的关键点位),按距离 current **从近到远**排序,记为 `S1, S2, S3, ...`:
+- `S1` = 距 current **最近**的支撑(默认保守目标)
+- `S2` = 第二近的支撑(激进目标)
+- `S3+` = 更远的支撑,**禁止**挂单(同 sell strategy 健康区设计原则:S3+ 距离过远,成交概率剧降,长期 EV 不见得正)
 
-候选去重: 如果多个锚点价位几乎相同(差距 ≤ 1-2 个 tick),按 confluence 优先级规则合并为 1 个 R 项(详见"同一价位多个锚点时的优先级"节)。
+候选去重: 如果多个锚点价位几乎相同(差距 ≤ 1-2 个 tick),按 confluence 优先级规则合并为 1 个 S 项(详见"同一价位多个锚点时的优先级"节)。
 
 ### AI 判断:保守 vs 激进(主观综合判断,带证据约束)
 
-买入是 4 个区间外**第三个**(continued from sell strategy 观察区/警戒区)允许 AI 主观综合判断的环节。机械"永远 R1"会丢失关键信号——比如大盘明显偏弱 + 5 分钟图反弹乏力时,深回踩到 R2 的概率显著高于反弹守 R1,这时挂 R1 的预期成交价反而比 R2 差。
+买入是 4 个区间外**第三个**(continued from sell strategy 观察区/警戒区)允许 AI 主观综合判断的环节。机械"永远 S1"会丢失关键信号——比如大盘明显偏弱 + 5 分钟图反弹乏力时,深回踩到 S2 的概率显著高于反弹守 S1,这时挂 S1 的预期成交价反而比 S2 差。
 
 #### 保守 vs 激进定义
 
 | 模式 | target | 适用场景 | 兑现结果 |
 |------|--------|---------|---------|
-| **保守(默认)** | `R1`(最近支撑) | 默认;深回踩证据不清晰 / 偏多 / R1 vs R2 间距小 | 成交概率较高,成本中等 |
-| **激进** | `R2`(次近支撑) | 深回踩证据清晰一致 + R1 vs R2 间距明显 | 成交概率较低,成本明显更好 |
+| **保守(默认)** | `S1`(最近支撑) | 默认;深回踩证据不清晰 / 偏多 / S1 vs S2 间距小 | 成交概率较高,成本中等 |
+| **激进** | `S2`(次近支撑) | 深回踩证据清晰一致 + S1 vs S2 间距明显 | 成交概率较低,成本明显更好 |
 
 #### 证据 checklist(AI 综合考虑的 7 个维度,与 sell 浮亏区对称)
 
@@ -122,28 +122,28 @@ validator 应在 entry mode 拒绝这些 enum 值出现在 BUY_LIMIT 输出里�
 | 2 | **均线关系** | current 相对 EMA20/50 的位置、EMA 排列(多头/空头/纠缠)、EMA 斜率 |
 | 3 | **VWAP** | current 相对 VWAP 的位置、最近是否有 reclaim / reject |
 | 4 | **量能** | 当前 K 线量能扩张 / 萎缩;下跌根 vs 反弹根的量比 |
-| 5 | **距 R1 的远近** | R1 越远 = 等小回调要等更久,押激进 R2 边际成本不大;R1 越近(贴脸) = 押激进的 ROI 更明显 |
-| 6 | **R1 vs R2 间距** | 间距小 = 押激进 ROI 小,不值得;间距明显(例如 ≥ R1 距 current 的 1.5 倍) = 押激进收益显著 |
+| 5 | **距 S1 的远近** | S1 越远 = 等小回调要等更久,押激进 S2 边际成本不大;S1 越近(贴脸) = 押激进的 ROI 更明显 |
+| 6 | **S1 vs S2 间距** | 间距小 = 押激进 ROI 小,不值得;间距明显(例如 ≥ S1 距 current 的 1.5 倍) = 押激进收益显著 |
 | 7 | **市场大势 (Market Context)** | 大盘 regime / 同行业方向 / 整体风险偏好 |
 
-> **方向**: 与 sell 浮亏区**反向**——sell 浮亏区是"反弹证据强 → 升级到激进";买入是"**下跌证据强** → 升级到激进 R2"。理由对称:sell 浮亏区已浮亏,强反弹说明值得押更大反弹;买入还没买,深下跌信号说明值得等更深的 R2。
+> **方向**: 与 sell 浮亏区**反向**——sell 浮亏区是"反弹证据强 → 升级到激进";买入是"**下跌证据强** → 升级到激进 S2"。理由对称:sell 浮亏区已浮亏,强反弹说明值得押更大反弹;买入还没买,深下跌信号说明值得等更深的 S2。
 
-> **冲突时的决策原则**: 当短期形态(维度 1-4)和大盘/中期信号(维度 5-7)冲突时——比如「5 分钟反弹强」但「大盘 regime 下跌中」——**以更悲观的一方为准,走默认(保守 R1)**。理由:买入是零成本挂单,激进的好处只有在多方面证据一致时才显著大于"挂 R1 但市场反弹守住"的机会成本。
+> **冲突时的决策原则**: 当短期形态(维度 1-4)和大盘/中期信号(维度 5-7)冲突时——比如「5 分钟反弹强」但「大盘 regime 下跌中」——**以更悲观的一方为准,走默认(保守 S1)**。理由:买入是零成本挂单,激进的好处只有在多方面证据一致时才显著大于"挂 S1 但市场反弹守住"的机会成本。
 
 #### 三条结构约束(防止主观判断退化,与 sell 浮亏区相同)
 
 **约束 1: 默认保守是硬规则**
-> 如果证据**不构成清晰一致的深回踩信号**(指标互相打架、全部中性、或明显偏多),**必须**挂 R1。「不确定 = 保守」不可妥协。
+> 如果证据**不构成清晰一致的深回踩信号**(指标互相打架、全部中性、或明显偏多),**必须**挂 S1。「不确定 = 保守」不可妥协。
 
 **约束 2: 激进必须列 ≥2 条 observable evidence**
 > 激进 target 时 reasoning 必须列出**至少 2 条具体证据**,每条带**数字或位置参照**。不允许 "looks weak" / "downtrend strong" / "expect deeper pullback" 这类形容词。
 >
-> 合规例子: `"mode=aggressive=R2 (evidence: (1) 5-min 3-bar lower highs 30.40→30.30→30.20 with red bars; (2) current=30.20 below all EMAs, R1=29.70 vs R2=28.80 spread=0.90 ≈ R1-distance 0.50 × 1.8)"`
+> 合规例子: `"mode=aggressive=S2 (evidence: (1) 5-min 3-bar lower highs 30.40→30.30→30.20 with red bars; (2) current=30.20 below all EMAs, S1=29.70 vs S2=28.80 spread=0.90 ≈ S1-distance 0.50 × 1.8)"`
 >
 > 违规例子: `"mode=aggressive (looks weak, expect deeper pullback)"`
 
 **约束 3: validator 拒绝模糊证据**
-> validator 检查激进 reasoning:必须包含**至少 2 个独立的数值参照**;不允许模糊词黑名单(同 sell strategy:`looks like / feels / seems / should / probably / likely / momentum / bullish / bearish / strong / weak`,裸用拒绝;紧跟具体数字证据允许)。不达标 → validator 强制改回 R1 (保守)。
+> validator 检查激进 reasoning:必须包含**至少 2 个独立的数值参照**;不允许模糊词黑名单(同 sell strategy:`looks like / feels / seems / should / probably / likely / momentum / bullish / bearish / strong / weak`,裸用拒绝;紧跟具体数字证据允许)。不达标 → validator 强制改回 S1 (保守)。
 
 #### 保守时的 reasoning 可以简短
 > 默认动作不需要重论证。reasoning 只需简短说明判断结果(例如 `"mode=conservative (default: evidence not conclusive for deep pullback)"`)。
@@ -152,27 +152,27 @@ validator 应在 entry mode 拒绝这些 enum 值出现在 BUY_LIMIT 输出里�
 
 等运行一段时间后(预计 30-50 笔成交样本),从 tradeHistory 里看:
 
-| 指标 | 激进(挂 R2)应该 | 保守(挂 R1)应该 |
+| 指标 | 激进(挂 S2)应该 | 保守(挂 S1)应该 |
 |------|----------------|------------------|
 | 成交率 | 较低(等更深回踩) | 较高(小回踩就到) |
 | 平均买入成本 | 应当显著优于保守(实际进价更低) | 标准成本 |
 | 持仓后 P&L | 应显著优于保守(成本好则 P&L 上限高) | 标准 |
-| 反例信号 | 如果激进成交率 < 保守 + P&L 没显著优势,**回退到机械永远 R1**(已有 v18 fallback) |
+| 反例信号 | 如果激进成交率 < 保守 + P&L 没显著优势,**回退到机械永远 S1**(已有 v18 fallback) |
 
 ### 输出
 
 ```json
 {
   "action": "BUY_LIMIT",
-  "orderPrice": "<R1 或 R2 价格(可能加 placement 微调)>",
+  "orderPrice": "<S1 或 S2 价格(可能加 placement 微调)>",
   "anchorSource": "<选定 R 的锚点来源>",
   "reasoning": "<≤120 字,见下方'reasoning 强制格式'节>"
 }
 ```
 
-### 关于"挂在支撑位"的微调(placement,与 R1/R2 选择**正交**)
+### 关于"挂在支撑位"的微调(placement,与 S1/S2 选择**正交**)
 
-AI 在选定锚点后(R1 或 R2,通过上面 AI 主观判断),可以根据**机械判据**微调具体落点 1-3 个 tick。这是机械判断,不进 AI 主观空间——所以最终 SELL_LIMIT 价格 = `R选择(主观) ± placement微调(机械)`,两层独立:
+AI 在选定锚点后(S1 或 S2,通过上面 AI 主观判断),可以根据**机械判据**微调具体落点 1-3 个 tick。这是机械判断,不进 AI 主观空间——所以最终 BUY_LIMIT 价格 = `S选择(主观) ± placement微调(机械)`,两层独立:
 
 | 判据(K 线形态硬条件) | 微调 | 理由 |
 |---|---|---|
@@ -236,34 +236,34 @@ AI 在选定锚点后(R1 或 R2,通过上面 AI 主观判断),可以根据**机�
 
 罕见(美股最小 tick $0.01,精准持平概率极小)。按"分类规则"表第 3 行,**本轮忽略**该点位(既不算支撑也不算压力),其他候选正常分类。
 
-### 边界 5:候选池只有 1 个候选(R1 存在,R2 不存在)
+### 边界 5:候选池只有 1 个候选(S1 存在,S2 不存在)
 
 **场景**: 价格刚反弹一段,下方只剩 1 个有意义的支撑(其他候选都还在更深位置,但 EMA 群和静态点位都不在那段空间)。
 
 **处理**:
-- AI **不能**选激进 mode(无 R2 可挂)
-- 强制 mode=conservative,挂 R1
+- AI **不能**选激进 mode(无 S2 可挂)
+- 强制 mode=conservative,挂 S1
 - 即使 AI 错误输出 `mode=aggressive`,validator 会强制改写回 conservative(详见"validator 检查项")
-- reasoning 标注 "only R1 available, conservative forced"
+- reasoning 标注 "only S1 available, conservative forced"
 
-### 边界 6:R1 vs R2 间距过小(差距 ≤ 几个 tick)
+### 边界 6:S1 vs S2 间距过小(差距 ≤ 几个 tick)
 
-例: current = $30.00, R1 = $29.70, R2 = $29.65(差距仅 $0.05)。
+例: current = $30.00, S1 = $29.70, S2 = $29.65(差距仅 $0.05)。
 
 **处理**:
-- 按 confluence 规则,R1 和 R2 应该合并为 1 个 R 项(按"同一价位多个锚点时的优先级")
+- 按 confluence 规则,S1 和 S2 应该合并为 1 个 S 项(按"同一价位多个锚点时的优先级")
 - 合并后只剩 1 个候选,等同边界 5 → 强制 conservative
-- 这种情况 AI 应该在 reasoning 里标注 "R1/R2 confluence within tick range, treated as single R; aggressive mode unavailable"
+- 这种情况 AI 应该在 reasoning 里标注 "S1/S2 confluence within tick range, treated as single R; aggressive mode unavailable"
 
-### 边界 7:R1 距 current 几个 tick 以内(几乎贴脸)
+### 边界 7:S1 距 current 几个 tick 以内(几乎贴脸)
 
-**场景**: current = $30.00, R1 = $29.99(差 $0.01),R2 = $28.50(差 $1.50)。
+**场景**: current = $30.00, S1 = $29.99(差 $0.01),S2 = $28.50(差 $1.50)。
 
 **处理**(由 AI 在主观判断时考虑):
-- R1 离 current 极近,挂 R1 几乎是"立刻成交价",可能被噪声触发即填,失去等回踩的意义
-- 这种场景**反而是激进 mode 的强信号** —— 既然 R1 几乎等于 current,等回踩到 R1 跟"市价"差别不大;不如等回踩到 R2(更明显的回撤)
-- AI 应在 reasoning 里把这点列为激进的核心证据之一:`"evidence: R1=29.99 within tick of current=30.00 (no real wait); R2=28.50 offers genuine pullback target"`
-- placement 微调原本会处理"R1 几个 tick 内贴脸"的情况(挂略高),但在 R1 vs R2 间距悬殊时,直接选 R2 更合理——这是 AI 主观判断价值所在
+- S1 离 current 极近,挂 S1 几乎是"立刻成交价",可能被噪声触发即填,失去等回踩的意义
+- 这种场景**反而是激进 mode 的强信号** —— 既然 S1 几乎等于 current,等回踩到 S1 跟"市价"差别不大;不如等回踩到 S2(更明显的回撤)
+- AI 应在 reasoning 里把这点列为激进的核心证据之一:`"evidence: S1=29.99 within tick of current=30.00 (no real wait); S2=28.50 offers genuine pullback target"`
+- placement 微调原本会处理"S1 几个 tick 内贴脸"的情况(挂略高),但在 S1 vs S2 间距悬殊时,直接选 S2 更合理——这是 AI 主观判断价值所在
 
 ---
 
@@ -289,7 +289,7 @@ AI 在选定锚点后(R1 或 R2,通过上面 AI 主观判断),可以根据**机�
 reasoning ≤ 120 字,必须包含以下信息段(顺序可调):
 
 1. **current 价格**: `current=X`(必须)
-2. **R1 / R2 候选**: `candidates: [R1=A@anchor1, R2=B@anchor2]`(必须列出 R1;如有 R2 也列出,validator 用于 mode=aggressive 检查)
+2. **S1 / S2 候选**: `candidates: [S1=A@anchor1, S2=B@anchor2]`(必须列出 S1;如有 S2 也列出,validator 用于 mode=aggressive 检查)
 3. **mode 选择 + 依据**:
    - 保守: `mode=conservative (default)` 或 `mode=conservative (依据简短一句)`
    - 激进: `mode=aggressive (evidence: (1) ...; (2) ...)`(必须 ≥2 数字证据)
@@ -301,12 +301,12 @@ reasoning ≤ 120 字,必须包含以下信息段(顺序可调):
 
 **完整示例(保守模式,默认)**:
 ```
-current=27.85; candidates: [R1=27.70@VWAP, R2=27.50@EMA20]; mode=conservative (default); chose=27.70@VWAP; placement=tick-higher=27.72 (strong: 5 green bars); continuity=anchor unchanged
+current=27.85; candidates: [S1=27.70@VWAP, S2=27.50@EMA20]; mode=conservative (default); chose=27.70@VWAP; placement=tick-higher=27.72 (strong: 5 green bars); continuity=anchor unchanged
 ```
 
 **完整示例(激进模式,带证据)**:
 ```
-current=30.20; candidates: [R1=29.70@EMA20, R2=28.80@prior_low]; mode=aggressive (evidence: (1) 3-bar lower highs 30.40→30.30→30.20 red bars; (2) R1-R2 spread=0.90 > R1-dist 0.50 × 1.5); chose=28.80@prior_low; placement=default; first round
+current=30.20; candidates: [S1=29.70@EMA20, S2=28.80@prior_low]; mode=aggressive (evidence: (1) 3-bar lower highs 30.40→30.30→30.20 red bars; (2) S1-S2 spread=0.90 > S1-dist 0.50 × 1.5); chose=28.80@prior_low; placement=default; first round
 ```
 
 ### validator 必须做的 sanity check
@@ -326,10 +326,10 @@ current=30.20; candidates: [R1=29.70@EMA20, R2=28.80@prior_low]; mode=aggressive
 
 | 检查项 | 不达标时的处理 |
 |--------|---------------|
-| `mode=conservative` 时,`orderPrice` 应该对应 R1 价格(±placement 微调) | 拒绝 |
-| `mode=aggressive` 时,`orderPrice` 应该对应 R2 价格(±placement 微调) | 拒绝 |
-| `mode=aggressive` 但 R2 在候选池里不存在(只有 R1) | 强制改写为 `mode=conservative`,orderPrice 改为 R1,reasoning 标注 "validator forced fallback: aggressive but no R2 available" |
-| `mode=aggressive` reasoning 包含 ≥2 个独立数值参照(同 sell strategy 模糊词黑名单 + 强制改写规则) | 不达标 → 强制改写为 `mode=conservative` + R1 + reasoning 标注 "validator forced fallback: insufficient evidence for aggressive mode" |
+| `mode=conservative` 时,`orderPrice` 应该对应 S1 价格(±placement 微调) | 拒绝 |
+| `mode=aggressive` 时,`orderPrice` 应该对应 S2 价格(±placement 微调) | 拒绝 |
+| `mode=aggressive` 但 S2 在候选池里不存在(只有 S1) | 强制改写为 `mode=conservative`,orderPrice 改为 S1,reasoning 标注 "validator forced fallback: aggressive but no S2 available" |
+| `mode=aggressive` reasoning 包含 ≥2 个独立数值参照(同 sell strategy 模糊词黑名单 + 强制改写规则) | 不达标 → 强制改写为 `mode=conservative` + S1 + reasoning 标注 "validator forced fallback: insufficient evidence for aggressive mode" |
 | 保守 reasoning 无证据约束 | 通过(默认动作不需重论证) |
 
 ---
@@ -382,12 +382,12 @@ current=30.20; candidates: [R1=29.70@EMA20, R2=28.80@prior_low]; mode=aggressive
 | **锚点不变 + 数值不变** | 重复同样的 BUY_LIMIT,用户保持挂单不动 | "continuity=anchor unchanged" |
 | **锚点不变 + 数值移动** | 给新的 orderPrice(锚点同步移动后的新位置),用户在券商端替换挂单 | "continuity=anchor realigned, EMA20 27.50→27.55" |
 | **锚点失效** | 切换到不同的关键点位(可能是另一个 EMA、或某个静态 pivot)| "continuity=anchor switched, EMA20 broken → EMA50" |
-| **mode 切换(本次更新新增)** | AI 主观判断从保守 ↔ 激进切换,target 从 R1 ↔ R2 跳。reasoning 必须解释切换依据 | "continuity=mode changed (conservative→aggressive: 5-min downtrend strengthened); switching from R1=27.70@VWAP to R2=26.80@gap" |
+| **mode 切换(本次更新新增)** | AI 主观判断从保守 ↔ 激进切换,target 从 S1 ↔ S2 跳。reasoning 必须解释切换依据 | "continuity=mode changed (conservative→aggressive: 5-min downtrend strengthened); switching from S1=27.70@VWAP to S2=26.80@gap" |
 
 **关键点:这是 chart-driven 的调整,不是 currentPrice-driven 的 chase。** EMA 是平滑的(基于多根 K 线),它的移动反映的是图形结构变化,不是价格的瞬时抖动。
 
 > **与 sell strategy 三分连续性的差异**:
-> - **buy mode**: 没有 zone 概念(只有一个状态 "scanning for entry"),所以连续性元组是 `(anchorSource, orderPrice, mode)`——`mode` 加进去防止"保守 R1=X" vs "激进 R2=X"(罕见同价但语义不同)被误判重复。
+> - **buy mode**: 没有 zone 概念(只有一个状态 "scanning for entry"),所以连续性元组是 `(anchorSource, orderPrice, mode)`——`mode` 加进去防止"保守 S1=X" vs "激进 S2=X"(罕见同价但语义不同)被误判重复。
 > - **sell strategy**: 有 4 个 zone,连续性元组是 `(zone, anchorSource, orderPrice)`,跨区切换专门处理。
 >
 > 两者都通过把"主观决策维度"(buy 的 mode / sell 的 zone)加进连续性元组,避免主观判断变化被误判为"重复信号"。
@@ -402,13 +402,13 @@ current=30.20; candidates: [R1=29.70@EMA20, R2=28.80@prior_low]; mode=aggressive
 |------|------|
 | 不要求"突破放量确认" | 预测派,不是确认派 |
 | 不要求"VWAP reclaim" | 关键点位触发不需要 VWAP 配合 |
-| **不允许 R3+**(只能在 R1 / R2 中选) | R3+ 距离过远,成交概率剧降,长期 EV 不见得正(同 sell strategy 健康区设计原则) |
+| **不允许 S3+**(只能在 S1 / S2 中选) | S3+ 距离过远,成交概率剧降,长期 EV 不见得正(同 sell strategy 健康区设计原则) |
 | **不允许用户参数控制保守/激进偏好** | 主观选择必须由 AI 基于证据做,不由用户预设——避免重蹈 `userContext` / `quickProfitDelta` 等已删除特性的覆辙 |
 | 不分关键点位强 / 中 / 弱 | 全部平等 |
 | 不硬编码百分比距离阈值(挑锚时) | AI 看图自判可达性,无 magic number;远距离场景只 reasoning 标 note + validator warning,不拒绝 |
 | 不输出 `stopLossPrice` / `hardStopPrice` / `targetPrice` | **属于卖出策略,Limit filled 后由 first_exit sell 分析产生** |
 | 不参考用户的任何主观偏好参数 | 全部已删除 |
-| AI 主观"保守/激进"判断**只在 R1 / R2 间二选一**,不允许更复杂的"挂在 R1 和 R2 之间的中间价"或"先挂 R1 再调整到 R2"等组合 | 单一决策点 + 二元选择是为了便于 validator + 监测指标设计;复杂组合会让评估变模糊 |
+| AI 主观"保守/激进"判断**只在 S1 / S2 间二选一**,不允许更复杂的"挂在 S1 和 S2 之间的中间价"或"先挂 S1 再调整到 S2"等组合 | 单一决策点 + 二元选择是为了便于 validator + 监测指标设计;复杂组合会让评估变模糊 |
 
 ---
 
@@ -432,19 +432,19 @@ current=30.20; candidates: [R1=29.70@EMA20, R2=28.80@prior_low]; mode=aggressive
 
 **`prior_high $32.00` 不参与**——它在 current $30.00 **上方**,本轮属于压力候选(留给卖出策略处理,买入策略本轮不管)。
 
-**步骤 2: R1 / R2 编号 + AI 主观判断**
+**步骤 2: S1 / S2 编号 + AI 主观判断**
 
 排序后:
-- R1 = VWAP @ $29.70(最近,差 $0.30)
-- R2 = EMA20 @ $29.40(次近,差 $0.60)
-- R3+ = gap $28.80, EMA50 $28.50, prior_low $27.50 等(禁止挂)
+- S1 = VWAP @ $29.70(最近,差 $0.30)
+- S2 = EMA20 @ $29.40(次近,差 $0.60)
+- S3+ = gap $28.80, EMA50 $28.50, prior_low $27.50 等(禁止挂)
 
 证据 checklist:
 - K 线: 假设过去 5 根 K 线收盘 strictly 抬高 → 偏多
 - EMA: 多头排列 → 偏多
 - VWAP: current 站上 VWAP → 偏多
 - 量能: 反弹根放量 → 偏多
-- R1 vs R2 间距: $0.30(R1)vs $0.30(R1→R2 间距)= 1:1,**间距不悬殊**
+- S1 vs S2 间距: $0.30(S1)vs $0.30(S1→S2 间距)= 1:1,**间距不悬殊**
 - 大盘: 假设大盘也偏多
 
 AI 判定 → **mode=conservative**(证据偏多,无深回踩信号)
@@ -455,7 +455,7 @@ AI 判定 → **mode=conservative**(证据偏多,无深回踩信号)
   "action": "BUY_LIMIT",
   "orderPrice": "29.70",
   "anchorSource": "VWAP",
-  "reasoning": "current=30.00; candidates: [R1=29.70@VWAP, R2=29.40@EMA20]; mode=conservative (default: bullish 5-bar rise, EMAs aligned, R1-R2 spread 0.30 not significant); chose=29.70@VWAP; placement=default; first round",
+  "reasoning": "current=30.00; candidates: [S1=29.70@VWAP, S2=29.40@EMA20]; mode=conservative (default: bullish 5-bar rise, EMAs aligned, S1-S2 spread 0.30 not significant); chose=29.70@VWAP; placement=default; first round",
   "currentPrice": "30.00"
 }
 ```
@@ -486,7 +486,7 @@ AI 判定 → **mode=conservative**(证据偏多,无深回踩信号)
 
 (注意 reasoning 里的 "5-min downtrend" 是给用户的中期信号提示——不影响机械挑选,但帮助用户决定要不要真去挂单)
 
-### 例 2b:激进 mode(明显下跌中,押 R2)
+### 例 2b:激进 mode(明显下跌中,押 S2)
 
 **现状(在例 2 基础上演化):**
 - 当前价 $26.20(全天跌势中)
@@ -498,20 +498,20 @@ AI 判定 → **mode=conservative**(证据偏多,无深回踩信号)
 - gap $24.50 ✓
 - EMA200 $24.00 ✓
 
-**步骤 2: R1 / R2 编号:**
-- R1 = prior_low @ $25.80(差 $0.40)
-- R2 = gap @ $24.50(差 $1.70)
-- R3 = EMA200 @ $24.00(禁止)
+**步骤 2: S1 / S2 编号:**
+- S1 = prior_low @ $25.80(差 $0.40)
+- S2 = gap @ $24.50(差 $1.70)
+- S3 = EMA200 @ $24.00(禁止)
 
 **证据 checklist 扫描:**
 - K 线: 过去 3 根 K 线最高点 $26.80 → $26.50 → $26.30(strictly 降低,阴线为主)→ **偏空**
 - 均线: current 远低于所有 EMA → **强空头排列**
 - VWAP: current 在 VWAP = $27.10 下方,无 reclaim → **偏空**
 - 量能: 下跌根放量 → **偏空**
-- R1 vs R2 间距: R1 距 current $0.40,R1→R2 间距 $1.30,**间距 = 3.25 × R1 距离,非常悬殊**
+- S1 vs S2 间距: S1 距 current $0.40,S1→S2 间距 $1.30,**间距 = 3.25 × S1 距离,非常悬殊**
 - 大盘: 假设大盘也下跌中 → **偏空**
 
-AI 判定 → **mode=aggressive**(多条证据一致偏空 + R1/R2 间距悬殊,深回踩到 R2 概率明显)
+AI 判定 → **mode=aggressive**(多条证据一致偏空 + S1/S2 间距悬殊,深回踩到 S2 概率明显)
 
 **输出(激进):**
 ```json
@@ -519,12 +519,12 @@ AI 判定 → **mode=aggressive**(多条证据一致偏空 + R1/R2 间距悬殊,
   "action": "BUY_LIMIT",
   "orderPrice": "24.50",
   "anchorSource": "gap",
-  "reasoning": "current=26.20; candidates: [R1=25.80@prior_low, R2=24.50@gap]; mode=aggressive (evidence: (1) 3-bar lower highs 26.80→26.50→26.30 red bars + below all EMAs; (2) R1-R2 spread 1.30 vs R1-dist 0.40, ratio 3.25× signals deep pullback likely); chose=24.50@gap; placement=default; first round",
+  "reasoning": "current=26.20; candidates: [S1=25.80@prior_low, S2=24.50@gap]; mode=aggressive (evidence: (1) 3-bar lower highs 26.80→26.50→26.30 red bars + below all EMAs; (2) S1-S2 spread 1.30 vs S1-dist 0.40, ratio 3.25× signals deep pullback likely); chose=24.50@gap; placement=default; first round",
   "currentPrice": "26.20"
 }
 ```
 
-**对比例 2(保守版)**: 同样下跌环境,如果没有 R1/R2 悬殊证据,默认还是挂 R1 prior_low @ $25.80。**例 2b 展示了"AI 主观判断升级到激进"的核心场景——多条证据指向深跌,且 R2 比 R1 显著更远(成本提升明显)**,这时激进 ROI 才有意义。
+**对比例 2(保守版)**: 同样下跌环境,如果没有 S1/S2 悬殊证据,默认还是挂 S1 prior_low @ $25.80。**例 2b 展示了"AI 主观判断升级到激进"的核心场景——多条证据指向深跌,且 S2 比 S1 显著更远(成本提升明显)**,这时激进 ROI 才有意义。
 
 ### 例 3:新高场景(下方真空)
 
@@ -561,7 +561,7 @@ AI 判定 → **mode=aggressive**(多条证据一致偏空 + R1/R2 间距悬殊,
 | 决策 | 属于 | 何时产生 |
 |------|------|---------|
 | 要不要挂买入限价 | **买入策略** | 每轮入场分析 |
-| 挂在哪个价位(R1/R2 选择) | **买入策略** | 每轮入场分析 |
+| 挂在哪个价位(S1/S2 选择) | **买入策略** | 每轮入场分析 |
 | 保守 / 激进 mode 判断 | **买入策略** | 每轮入场分析(AI 主观综合判断) |
 | 选用哪个锚点 + placement 微调 | **买入策略** | 每轮入场分析 |
 | **`stopLossPrice` (软止损)** | **卖出策略** | **首次卖出分析(Limit filled / 已持仓声明触发);永久固定,no trailing** |
@@ -599,19 +599,19 @@ AI 判定 → **mode=aggressive**(多条证据一致偏空 + R1/R2 间距悬殊,
 - AI 必须在 reasoning 里说明选了哪种 placement 及依据
 - validator 加约束:placement 与正价位差异 > 3 个 tick 时拒绝
 
-### 3.5 R1 / R2 二选一 + AI 主观判断(本次更新核心)
-- `entryModeRules` 显式说明 R1 / R2 编号规则(候选按距 current 从近到远排序;R3+ 完全禁止)
-- 新增 mode 概念:`mode=conservative`(默认,挂 R1)/ `mode=aggressive`(挂 R2)
+### 3.5 S1 / S2 二选一 + AI 主观判断(本次更新核心)
+- `entryModeRules` 显式说明 S1 / S2 编号规则(候选按距 current 从近到远排序;S3+ 完全禁止)
+- 新增 mode 概念:`mode=conservative`(默认,挂 S1)/ `mode=aggressive`(挂 S2)
 - 7 维度证据 checklist 写入 prompt
 - 三条结构约束:默认保守是硬规则;激进必须 ≥2 数字证据;validator 拒绝模糊词
 - 短期/中期冲突时默认保守
 - validator 强制改写(同 sell strategy 浮亏区):
-  - aggressive 不达标 → 改回 conservative R1
-  - aggressive 但 R2 不存在 → 强制 conservative R1
-  - aggressive 但 R1/R2 confluence(差距 ≤ 1-2 tick)→ 合并后只剩 R1,强制 conservative
+  - aggressive 不达标 → 改回 conservative S1
+  - aggressive 但 S2 不存在 → 强制 conservative S1
+  - aggressive 但 S1/S2 confluence(差距 ≤ 1-2 tick)→ 合并后只剩 S1,强制 conservative
 
 ### 4. reasoning 强制格式(与 sell 对称)
-- `entryModeRules` 显式要求 reasoning 必须包含:`current=X; candidates: [R1=...@..., R2=...@...]; mode=conservative | aggressive (依据); chose=Y@<anchor>; placement=...; continuity=...`
+- `entryModeRules` 显式要求 reasoning 必须包含:`current=X; candidates: [S1=...@..., S2=...@...]; mode=conservative | aggressive (依据); chose=Y@<anchor>; placement=...; continuity=...`
 - validator sanity check:
   - reasoning 必须包含 `current=` + `candidates:` + `mode=` 三个字串
   - reasoning 里 `chose=<price>@<anchor>` 的 `<price>` 必须等于 `orderPrice` 字段(允许 placement 微调差异 1-3 tick)
@@ -626,7 +626,7 @@ AI 判定 → **mode=aggressive**(多条证据一致偏空 + R1/R2 间距悬殊,
 ### 6. UI label 新增(与 sell 对称)
 - 新增 i18n key(en + zh):
   - `entryModeConservative` / `entryModeAggressive` — 入场 mode 标签(显示在 recommendation 卡片上)
-- recommendation 卡片显式展示 AI 判断的 mode(保守/激进)+ 当前 R1 / R2 价格
+- recommendation 卡片显式展示 AI 判断的 mode(保守/激进)+ 当前 S1 / S2 价格
 
 ### 7. 测试
 - `llm.test.js`: entry 模式 anchorSource 黑名单测试(fixed_* / aggressive_recovery / stop_broken / force_exit 出现 → validator 拒绝)
@@ -634,14 +634,14 @@ AI 判定 → **mode=aggressive**(多条证据一致偏空 + R1/R2 间距悬殊,
 - `llm.test.js`: entry reasoning 交叉检查测试(chose 价格/锚名与字段不一致 → 拒绝)
 - `llm.test.js`: placement 微调测试(strong trend → tick-higher placement)
 - `llm.test.js`: 远距离 warning 测试
-- `llm.test.js`: R1 / R2 主观判断测试
-  - mode=conservative + 任何 reasoning → 通过,orderPrice = R1
-  - mode=aggressive + reasoning 含 ≥2 数字证据 → 通过,orderPrice = R2
-  - mode=aggressive + reasoning 缺数字 → validator 强制改回 conservative,orderPrice = R1
+- `llm.test.js`: S1 / S2 主观判断测试
+  - mode=conservative + 任何 reasoning → 通过,orderPrice = S1
+  - mode=aggressive + reasoning 含 ≥2 数字证据 → 通过,orderPrice = S2
+  - mode=aggressive + reasoning 缺数字 → validator 强制改回 conservative,orderPrice = S1
   - mode=aggressive + reasoning 含模糊词(looks/feels/seems 等)无数字 → 强制改回 conservative
-  - mode=aggressive 但 R2 不存在(候选池只有 1 个)→ validator 强制改回 conservative + reasoning 标注 fallback
-  - mode=aggressive 但 R1/R2 confluence 差距 ≤ tick → validator 视为合并候选,强制 conservative
-- `llm.test.js`: R3+ 禁止测试——AI 输出 orderPrice 对应 R3 → validator 拒绝
+  - mode=aggressive 但 S2 不存在(候选池只有 1 个)→ validator 强制改回 conservative + reasoning 标注 fallback
+  - mode=aggressive 但 S1/S2 confluence 差距 ≤ tick → validator 视为合并候选,强制 conservative
+- `llm.test.js`: S3+ 禁止测试——AI 输出 orderPrice 对应 S3 → validator 拒绝
 - 不需要 storage migration(state shape 没变,STATE_VERSION 升级与 sell strategy v19 共用 v18→v19 migration)
 
 ---
@@ -650,10 +650,10 @@ AI 判定 → **mode=aggressive**(多条证据一致偏空 + R1/R2 间距悬殊,
 
 | 功能 | 为什么不在 v1 |
 |------|------|
-| **R1 / R2 主观判断回退到机械永远 R1** | 主观判断是本版的试验性设计(与 sell strategy 浮亏区对称)。如果运行 30-50 笔成交后,激进 R2 的成交率太低 + P&L 没显著优于保守,**回退到机械永远 R1**。回退方案就是 pre-v19 的"就近原则",路径已知 |
+| **S1 / S2 主观判断回退到机械永远 S1** | 主观判断是本版的试验性设计(与 sell strategy 浮亏区对称)。如果运行 30-50 笔成交后,激进 S2 的成交率太低 + P&L 没显著优于保守,**回退到机械永远 S1**。回退方案就是 pre-v19 的"就近原则",路径已知 |
 | **confluence 加权** | 多锚重叠时(EMA50 + prior_low 同价位)目前只是 anchorSource 优先静态 + reasoning 标注。未来可考虑给 confluence 信号一些额外权重(比如 placement 更敢挂正价位、给用户 confidence indicator),但需要实测 confluence 锚的兑现率显著高于单锚才值得加 |
 | **自适应"距离过远"动作** | 目前远距离场景只在 reasoning 标 note,validator 仅 warning。未来可考虑:超过一定距离阈值(例如 -10%)自动跳过本轮,不输出 BUY_LIMIT?但这违反"永远输出 BUY_LIMIT"的原则,需要实测验证 |
-| **多档同时挂单**(例如 R1 和 R2 都挂) | 单仓假设;先确认基础策略后再说。当前架构 pendingLimitOrder 只能记录一个挂单 |
-| **R3+ 引入** | 已明确禁止。如果未来发现"激进升级到 R3"在某些极端市场有 EV(例如恐慌性下跌中真到 R3 都填得上),再考虑加 R3 作为第三档,但需要充分实测数据支持 |
+| **多档同时挂单**(例如 S1 和 S2 都挂) | 单仓假设;先确认基础策略后再说。当前架构 pendingLimitOrder 只能记录一个挂单 |
+| **S3+ 引入** | 已明确禁止。如果未来发现"激进升级到 S3"在某些极端市场有 EV(例如恐慌性下跌中真到 S3 都填得上),再考虑加 S3 作为第三档,但需要充分实测数据支持 |
 
-这些都是"实测后才决定要不要做"的功能。**v1 先把 R1/R2 + AI 主观判断 + 三条结构约束跑起来,采集数据**。
+这些都是"实测后才决定要不要做"的功能。**v1 先把 S1/S2 + AI 主观判断 + 三条结构约束跑起来,采集数据**。
