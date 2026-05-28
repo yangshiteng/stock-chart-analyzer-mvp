@@ -144,6 +144,38 @@ test("buildAnalysisPromptFromConfig: first_exit mode requires stopLossPrice + ha
   assert.match(prompt, /\[FIRST_EXIT_MODE_RULES\]/);
 });
 
+test("buildAnalysisPromptFromConfig: entry prompt pushes active intraday-structure scan (anti EMA-default bias)", () => {
+  // Regression for the observed bias where AI defaults to the labeled EMA20
+  // value as 'nearest support' and skips a clearer, nearer intraday
+  // consolidation shelf / reaction low between current and EMA20. The fix
+  // broadens the intraday level definition and adds active-scan instructions
+  // so such intraday levels correctly enter the R1/R2 ranking.
+  const prompt = buildAnalysisPromptFromConfig(getAnalysisPromptConfig(), {
+    ...samplePayload,
+    mode: "entry"
+  }, "en");
+  // Broadened intraday definition present (consolidation shelf / reaction low).
+  assert.match(prompt, /consolidation shelf/i);
+  assert.match(prompt, /reaction low/i);
+  // Anti-default-to-EMA instruction present.
+  assert.match(prompt, /do NOT skip straight to the labeled EMA\/VWAP|defaulting to EMA20 as the nearest support/i);
+});
+
+test("buildAnalysisPromptFromConfig: exit prompt also pushes active intraday-structure scan", () => {
+  const prompt = buildAnalysisPromptFromConfig(getAnalysisPromptConfig(), {
+    ...samplePayload,
+    mode: "exit",
+    virtualPosition: {
+      entryPrice: "27.50",
+      stopLossPrice: "27.00",
+      hardStopPrice: "26.30",
+      entryAnchorSource: "EMA20"
+    }
+  }, "en");
+  assert.match(prompt, /INTRADAY STRUCTURE note/i);
+  assert.match(prompt, /do NOT default to the labeled EMA\/VWAP/i);
+});
+
 test("buildAnalysisPromptFromConfig: first_exit prompt guards manual-holding bugs (above-current + no fixed_* in caution)", () => {
   // Regression for two real first_exit bugs hit when a user declares an
   // EXISTING position (manual_existing_position) that isn't a fresh fill:
