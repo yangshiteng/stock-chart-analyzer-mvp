@@ -1137,9 +1137,11 @@ test("validateAnalysisResult: v19 force_exit exempt from reasoning format requir
   assert.equal(validateAnalysisResult(forceExit, "force_exit"), forceExit);
 });
 
-test("validateAnalysisResult: v19 entry mode=aggressive without ≥2 numbered evidence rejected", () => {
-  // mode=aggressive must include at least (1) and (2) numbered evidence
-  // markers in reasoning. Bare assertion fails.
+test("validateAnalysisResult: v19 entry mode=aggressive without ≥2 numeric evidence rejected", () => {
+  // mode=aggressive must include ≥2 numeric evidence references in the
+  // evidence region (from the aggressive marker onward). The exact syntax is
+  // flexible — "(1)/(2)", commas, dashes all OK — but bare or prose-only
+  // aggressive calls fail.
   const noEvidence = {
     ...validEntryAnalysis,
     reasoning: "current=180.70; candidates=[S1=180.20@EMA20, S2=179.50@VWAP]; mode=aggressive; chose=179.50@VWAP",
@@ -1148,25 +1150,40 @@ test("validateAnalysisResult: v19 entry mode=aggressive without ≥2 numbered ev
   };
   assert.throws(
     () => validateAnalysisResult(noEvidence, "entry"),
-    /requires ≥2 numbered evidence items/
+    /requires ≥2 numeric evidence references/
   );
 
-  // Only (1), no (2) → still fail
-  const oneEvidence = {
+  // Prose evidence with no numbers → still fail (only the chose price is a
+  // number, which is 1 < 2).
+  const proseEvidence = {
     ...noEvidence,
-    reasoning: "current=180.70; candidates=[S1=180.20@EMA20, S2=179.50@VWAP]; mode=aggressive (evidence: (1) 3-bar lower highs); chose=179.50@VWAP"
+    reasoning: "current=180.70; candidates=[S1=180.20@EMA20, S2=179.50@VWAP]; mode=aggressive (deeper pullback ahead); chose=179.50@VWAP"
   };
   assert.throws(
-    () => validateAnalysisResult(oneEvidence, "entry"),
-    /requires ≥2 numbered evidence items/
+    () => validateAnalysisResult(proseEvidence, "entry"),
+    /requires ≥2 numeric evidence references/
   );
 
-  // Both (1) and (2) → pass
+  // Numbered "(1)/(2)" format → pass
   const compliant = {
     ...noEvidence,
     reasoning: "current=180.70; candidates=[S1=180.20@EMA20, S2=179.50@VWAP]; mode=aggressive (evidence: (1) 3-bar lower highs 180.9->180.8->180.7; (2) S1-S2 spread 0.70 > S1-dist 0.50 × 1.4); chose=179.50@VWAP"
   };
   assert.equal(validateAnalysisResult(compliant, "entry"), compliant);
+});
+
+test("validateAnalysisResult: v19 aggressive evidence accepts non-(1)(2) numeric formats (real-world regression)", () => {
+  // Regression for a real round that auto-paused: the AI gave valid evidence
+  // in a comma-separated Chinese format without literal (1)/(2) markers, and
+  // the old rigid marker check rejected it. The S1-too-close boundary case:
+  // S1 only 0.01 from current → pick aggressive S2; spread 0.04.
+  const chineseCommaFormat = {
+    ...validEntryAnalysis,
+    reasoning: "current=27.51; candidates=[S1=27.50@EMA100,S2=27.46@EMA50]; mode=aggressive(距S1仅0.01,S1-S2差0.04); chose=27.46@EMA50; placement=贴锚点; continuity=横盘回踩",
+    orderPrice: "27.46",
+    anchorSource: "EMA50"
+  };
+  assert.equal(validateAnalysisResult(chineseCommaFormat, "entry"), chineseCommaFormat);
 });
 
 test("validateAnalysisResult: v19 entry mode=conservative does not require numbered evidence (default action)", () => {
@@ -1191,24 +1208,24 @@ test("validateAnalysisResult: v19 healthy-zone trend=strong requires ≥2 number
     anchorSource: "gap"
   };
 
-  // trend=strong with no numbered evidence → reject
+  // trend=strong with no numeric evidence → reject (only target price = 1 number)
   const noEvidence = {
     ...base,
     reasoning: "zone=healthy; trend=strong; target=29.00@gap"
   };
   assert.throws(
     () => validateAnalysisResult(noEvidence, "exit"),
-    /requires ≥2 numbered evidence items/
+    /requires ≥2 numeric evidence references/
   );
 
-  // trend=strong with only (1) → reject
-  const oneEvidence = {
+  // trend=strong with prose-only evidence (no numbers) → reject
+  const proseEvidence = {
     ...base,
-    reasoning: "zone=healthy; trend=strong (evidence: (1) 3 green bars); target=29.00@gap"
+    reasoning: "zone=healthy; trend=strong (strong uptrend continuing); target=29.00@gap"
   };
   assert.throws(
-    () => validateAnalysisResult(oneEvidence, "exit"),
-    /requires ≥2 numbered evidence items/
+    () => validateAnalysisResult(proseEvidence, "exit"),
+    /requires ≥2 numeric evidence references/
   );
 
   // trend=strong with (1) and (2) → pass
@@ -1260,7 +1277,7 @@ test("validateAnalysisResult: v19 exit observation flow=push-rebound requires �
   };
   assert.throws(
     () => validateAnalysisResult(noEvidence, "exit"),
-    /requires ≥2 numbered evidence items/
+    /requires ≥2 numeric evidence references/
   );
 
   const compliant = {
@@ -1293,7 +1310,7 @@ test("validateAnalysisResult: v19 exit caution target=aggressive requires ≥2 n
   };
   assert.throws(
     () => validateAnalysisResult(noEvidence, "exit", cautionContext),
-    /requires ≥2 numbered evidence items/
+    /requires ≥2 numeric evidence references/
   );
 
   const compliant = {
