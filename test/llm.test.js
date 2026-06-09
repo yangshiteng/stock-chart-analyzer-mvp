@@ -441,6 +441,34 @@ test("buildAnalysisPromptFromConfig: injects Market Context Scan summary when pr
   assert.ok(!/Profit-taking style/.test(prompt));
 });
 
+test("buildAnalysisPromptFromConfig: entry prompt instructs cross-type confluence merge before S1/S2", () => {
+  const prompt = buildAnalysisPromptFromConfig(getAnalysisPromptConfig(), {
+    ...samplePayload,
+    mode: "entry"
+  }, "en");
+  // The AI is told to collapse near-coincident levels (any source) into one
+  // candidate before labeling S1/S2, using the ~0.2% threshold, and to note
+  // the confluence.
+  assert.match(prompt, /CONFLUENCE MERGE/);
+  assert.match(prompt, /0\.2%/);
+  assert.match(prompt, /occupy ONE slot|one slot/i);
+});
+
+test("buildAnalysisPromptFromConfig: exit prompt also instructs cross-type confluence merge", () => {
+  const prompt = buildAnalysisPromptFromConfig(getAnalysisPromptConfig(), {
+    ...samplePayload,
+    mode: "exit",
+    virtualPosition: {
+      entryPrice: "27.50",
+      stopLossPrice: "27.00",
+      hardStopPrice: "26.30",
+      entryAnchorSource: "EMA20"
+    }
+  }, "en");
+  assert.match(prompt, /CONFLUENCE MERGE/);
+  assert.match(prompt, /same zone|one slot/i);
+});
+
 test("buildAnalysisPromptFromConfig: surfaces confluence count on stacked key levels", () => {
   const prompt = buildAnalysisPromptFromConfig(
     getAnalysisPromptConfig(),
