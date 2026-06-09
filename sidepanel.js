@@ -66,6 +66,10 @@ const hourlyContextStep = document.getElementById("hourlyContextStep");
 const hourlyContextTitle = document.getElementById("hourlyContextTitle");
 const hourlyContextInstructions = document.getElementById("hourlyContextInstructions");
 const scanHourlyContextButton = document.getElementById("scanHourlyContextButton");
+const minute15ContextStep = document.getElementById("minute15ContextStep");
+const minute15ContextTitle = document.getElementById("minute15ContextTitle");
+const minute15ContextInstructions = document.getElementById("minute15ContextInstructions");
+const scanMinute15ContextButton = document.getElementById("scanMinute15ContextButton");
 const marketContextSummary = document.getElementById("marketContextSummary");
 const initialPositionPanel = document.getElementById("initialPositionPanel");
 const initialPositionTitle = document.getElementById("initialPositionTitle");
@@ -1136,6 +1140,7 @@ function renderMarketContextSection(state, language, apiReady) {
   const marketContext = state.marketContext || {};
   const dailyDone = Boolean(marketContext.dailyScan);
   const hourlyDone = Boolean(marketContext.hourlyScan);
+  const minute15Done = Boolean(marketContext.minute15Scan);
   const complete = marketContext.status === MARKET_CONTEXT_STATUS.COMPLETE && Boolean(marketContext.summary);
 
   marketContextTitle.textContent = t(language, "marketContextTitle");
@@ -1146,20 +1151,27 @@ function renderMarketContextSection(state, language, apiReady) {
   dailyContextInstructions.textContent = t(language, "marketContextDailyInstructions");
   hourlyContextTitle.textContent = t(language, "marketContextHourlyTitle");
   hourlyContextInstructions.textContent = t(language, "marketContextHourlyInstructions");
+  minute15ContextTitle.textContent = t(language, "marketContext15mTitle");
+  minute15ContextInstructions.textContent = t(language, "marketContext15mInstructions");
   scanDailyContextButton.textContent = scanningMarketContextTimeframe === "daily"
     ? t(language, "marketContextScanning")
     : (dailyDone ? t(language, "rescanDailyContext") : t(language, "scanDailyContext"));
   scanHourlyContextButton.textContent = scanningMarketContextTimeframe === "1h"
     ? t(language, "marketContextScanning")
     : (hourlyDone ? t(language, "rescanHourlyContext") : t(language, "scanHourlyContext"));
+  scanMinute15ContextButton.textContent = scanningMarketContextTimeframe === "15m"
+    ? t(language, "marketContextScanning")
+    : (minute15Done ? t(language, "rescan15mContext") : t(language, "scan15mContext"));
   confirmMarketContextButton.textContent = isConfirmingMarketContext
     ? t(language, "startMonitoringProgress")
     : t(language, "confirmMarketContext");
 
   dailyContextStep.dataset.status = dailyDone ? "done" : "pending";
   hourlyContextStep.dataset.status = hourlyDone ? "done" : "pending";
+  minute15ContextStep.dataset.status = minute15Done ? "done" : "pending";
   scanDailyContextButton.disabled = !apiReady || scanningMarketContextTimeframe !== null || isConfirmingMarketContext;
   scanHourlyContextButton.disabled = !apiReady || !dailyDone || scanningMarketContextTimeframe !== null || isConfirmingMarketContext;
+  scanMinute15ContextButton.disabled = !apiReady || !hourlyDone || scanningMarketContextTimeframe !== null || isConfirmingMarketContext;
   const initialPosition = renderInitialPositionPanel(language, complete);
   const initialPositionInvalid = complete && !initialPosition.entryPriceValid;
   confirmMarketContextButton.disabled = !apiReady
@@ -1168,6 +1180,7 @@ function renderMarketContextSection(state, language, apiReady) {
     || scanningMarketContextTimeframe !== null
     || isConfirmingMarketContext;
   scanHourlyContextButton.title = dailyDone ? "" : t(language, "marketContextDailyRequired");
+  scanMinute15ContextButton.title = hourlyDone ? "" : t(language, "marketContextHourlyRequired");
   confirmMarketContextButton.title = initialPositionInvalid
     ? t(language, "initialEntryPriceInvalid")
     : (complete ? "" : t(language, "marketContextNotComplete"));
@@ -1495,6 +1508,10 @@ scanDailyContextButton.addEventListener("click", async () => {
 
 scanHourlyContextButton.addEventListener("click", async () => {
   await runMarketContextScan("1h");
+});
+
+scanMinute15ContextButton.addEventListener("click", async () => {
+  await runMarketContextScan("15m");
 });
 
 confirmMarketContextButton.addEventListener("click", async () => {

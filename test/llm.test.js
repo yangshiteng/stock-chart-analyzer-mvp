@@ -510,6 +510,16 @@ test("buildMarketContextScanPrompt: 1H scan makes VWAP optional", () => {
   assert.match(prompt, /VWAP is optional on 1H/);
 });
 
+test("buildMarketContextScanPrompt: 15m scan covers recent days + intraday structure", () => {
+  const prompt = buildMarketContextScanPrompt({ ...samplePayload, timeframe: "15m" }, "en");
+  assert.match(prompt, /Expected timeframe: 15m/);
+  assert.match(prompt, /15-minute/);
+  assert.match(prompt, /3-5 trading days/);
+  assert.match(prompt, /consolidation shelves/i);
+  // timeframe enum in the output rules includes 15m
+  assert.match(prompt, /"daily" \| "1h" \| "15m"/);
+});
+
 test("validateMarketContextScanResult: accepts a valid scan and rejects wrong timeframe", () => {
   const scan = {
     timeframe: "daily",

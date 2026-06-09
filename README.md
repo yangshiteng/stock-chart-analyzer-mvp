@@ -8,7 +8,7 @@ This is an execution assistant, not a fundamental screener. It assumes the user 
 
 - Captures the visible chart of the bound tab on a fixed interval (`chrome.alarms`).
 - Sends each screenshot to OpenAI Responses API with a strict JSON schema and gets back one execution signal per round.
-- Requires a pre-session Market Context Scan (Daily + 1H TradingView screenshots) so 5-minute entries know the higher-timeframe regime and key support / resistance levels.
+- Requires a pre-session Market Context Scan (Daily + 1H + 15m TradingView screenshots) so 5-minute entries know the higher-timeframe regime and key support / resistance levels.
 - Tracks a virtual position lifecycle (entry → hold → exit) inside the extension so the AI prompt is mode-aware.
 - Logs each closed trade to a journal (entry/exit prices, planned stop/target, held minutes, P&L) for human review.
 - Surfaces a real-trade performance stats card (win rate, avg PnL, total PnL, avg held minutes, best/worst trade) once trade history is non-empty.
@@ -46,12 +46,13 @@ Show roughly **1.5–2 trading sessions** of 5-min bars. Each candle should be a
 
 ### Market Context Scan setup
 
-Before 5-minute monitoring starts, the side panel requires two higher-timeframe screenshots:
+Before 5-minute monitoring starts, the side panel requires three higher-timeframe screenshots:
 
 1. **Daily / 1D**: show roughly **3-6 months**. Keep candlesticks, Volume, and EMA 20 / 50 / 100 / 200 visible. Temporarily hide session VWAP, because it is not useful on a Daily chart. Hide TradingView visible-range High / Low labels; they are only the high/low of the current viewport and can be misleading.
 2. **1H / 60m**: show roughly **5-20 trading days**. Keep candlesticks, Volume, and EMA 20 / 50 / 100 / 200 visible. VWAP is optional here and should be treated as secondary context. Hide visible-range High / Low labels here too.
+3. **15m**: show roughly **3-5 trading days**. Keep candlesticks, Volume, and EMA 20 / 50 / 100 / 200 visible. Focus on recent intraday structure (consolidation shelves, reaction highs / lows) that the 1H smooths over and the live 5-minute window does not reach. VWAP optional; hide visible-range High / Low labels.
 
-The scan extracts `regime` (`uptrend` / `range` / `downtrend`), an aggression profile, a dip-buy policy, profit-taking style, and up to 10 key levels classified by type and strength.
+The scan extracts `regime` (`uptrend` / `range` / `downtrend`) and up to 10 key levels (merged across timeframes, with confluence count). Regime is resolved from Daily + 1H only; the 15m scan contributes key levels, not regime.
 
 ## User flow
 
@@ -62,7 +63,7 @@ The scan extracts `regime` (`uptrend` / `range` / `downtrend`), an aggression pr
    - **Ticker symbol** (auto-guessed from title/URL when possible, but user input wins)
    - **Entry / pending-order / position scan frequency**
 5. Click `Start Monitoring`. The side panel moves to the mandatory Market Context Scan.
-6. Switch the TradingView chart to Daily / 1D and click `Scan Daily`, then switch to 1H / 60m and click `Scan 1H`.
+6. Switch the TradingView chart to Daily / 1D and click `Scan Daily`, then 1H / 60m and `Scan 1H`, then 15m and `Scan 15m`.
 7. Review the extracted context summary, declare whether you already hold the stock, and switch TradingView back to the 5-minute chart.
 8. If already holding, enter the broker entry price; the first round starts in exit mode. If flat, the first round starts in entry mode.
 9. Click `Start Monitoring`. The first 5-minute round fires immediately if the regular session is open; otherwise monitoring waits and retries on the selected cadence. Monitoring continues until the user pauses/stops it or the regular session ends at 16:00 ET.
@@ -126,7 +127,7 @@ The model returns strict JSON. Schema is **mode-aware**:
 
 ## Prompt architecture (`lib/llm.js` + `lib/prompt-config.js`)
 
-The pre-session Market Context Scan uses two separate vision calls (`analyzeMarketContextScan`) for Daily and 1H screenshots, then merges them into `state.marketContext.summary`.
+The pre-session Market Context Scan uses three separate vision calls (`analyzeMarketContextScan`) for Daily, 1H, and 15m screenshots, then merges them into `state.marketContext.summary` (levels merged across timeframes with a confluence count; regime from Daily + 1H only).
 
 The 5-minute execution loop uses a single OpenAI call per round, language-aware (Chinese-mode output is generated in one shot — no separate translation step). Prompt is assembled from these sections, in order:
 
@@ -137,10 +138,10 @@ Mode is derived (no ad-hoc flags): `virtualPosition === null && !nearClose` → 
 Notable injected sections:
 
 - `LAST_SIGNAL_AND_ORDER` — the prior round's action plus any resting limit order (action, price, age in minutes, full snapshot) so the next round either reuses the same numbers or explicitly flags invalidation in `reasoning`. Omitted in force-exit mode.
-- `MARKET_CONTEXT` — mandatory same-symbol, same-trading-day Daily + 1H context. The prompt uses it as a higher-timeframe map for regime, support/resistance, dip-buy aggressiveness, and profit-taking style; the final action still must be executable from the current 5-minute screenshot.
+- `MARKET_CONTEXT` — mandatory same-symbol, same-trading-day Daily + 1H + 15m context. The prompt uses it as a higher-timeframe map for regime and key levels (merged across timeframes with a confluence count); the final action still must be executable from the current 5-minute screenshot.
 - Post-response validation checks that the returned action is legal for the current mode, `BUY_LIMIT` has `orderPrice` strictly below `currentPrice` with `stopLossPrice` below that and `targetPrice` above `currentPrice`, `SELL_LIMIT` has `orderPrice` strictly above `currentPrice`, `SELL_NOW` has `orderPrice=null`, and `anchorSource` is present on every output. Per-trade R:R floor was removed — the user's edge is aggregate across many key-level attempts. Invalid analysis output gets one fresh model retry before the session pauses with the validation error.
 
-Legacy optional Daily / Weekly long-term context was removed. The current design reintroduces higher-timeframe information only as a mandatory, structured Market Context Scan for intraday execution: Daily + 1H regime and key levels, not swing-trading thesis text.
+Legacy optional Daily / Weekly long-term context was removed. The current design reintroduces higher-timeframe information only as a mandatory, structured Market Context Scan for intraday execution: Daily + 1H + 15m regime and key levels, not swing-trading thesis text.
 
 ## State model
 
@@ -148,7 +149,7 @@ Single source of truth: `STATUS` enum (`IDLE` / `VALIDATING` / `AWAITING_CONTEXT
 
 - `virtualPosition` — `null` when scanning for entry, `{ entryPrice, stopLossPrice, targetPrice, entryAction, tradingDay, ... }` when holding.
 - `pendingLimitOrder` — `null` or a snapshot of a resting BUY_LIMIT / SELL_LIMIT the user has placed at the broker.
-- `marketContext` — mandatory pre-session context tied to `symbol` + US trading day. Contains Daily scan, 1H scan, and merged summary; invalid/missing context forces `AWAITING_CONTEXT`.
+- `marketContext` — mandatory pre-session context tied to `symbol` + US trading day. Contains Daily scan, 1H scan, 15m scan, and merged summary; invalid/missing context forces `AWAITING_CONTEXT`.
 - `monitoringProfile` — per-session config: `symbolOverride`, state-specific scan intervals, bound tab/window metadata.
 - `tradeHistory` — closed (and abandoned) trades, capped at 500. Preserved across every reset path via `buildResetStatePreservingHistory()`.
 
@@ -176,7 +177,7 @@ Pure aggregation lives in `lib/trade-stats.js` and is unit-tested.
 - `sidepanel.html` / `sidepanel-other-tab.html` / `sidepanel.js` / `sidepanel.css` — session form, recommendation card, position card, limit-order card, trade journal, performance stats, recent rounds timeline, and the non-bound-tab placeholder.
 - `offscreen.html` / `offscreen.js` — short audio cue when a fresh round lands.
 - `lib/llm.js` — OpenAI calls (`callOpenAi` + `callOpenAiOnce` + retry wrapper), Market Context scan prompt, execution prompt assembly, analysis-output validation.
-- `lib/market-context.js` — Market Context state helpers, same-day/same-symbol validity, Daily + 1H merge policy, key-level dedupe.
+- `lib/market-context.js` — Market Context state helpers, same-day/same-symbol validity, Daily + 1H + 15m merge policy, confluence-aware key-level merging.
 - `lib/prompt-config.js` — execution prompt config + JSON schema.
 - `lib/chart-validator.js` — TradingView hostname check (the extension only supports TradingView).
 - `lib/symbol.js` — `guessSymbol` + `sanitizeUrl` (pure, unit-tested).
@@ -212,7 +213,7 @@ Optional. When a webhook URL is configured, the extension posts an embed **only 
 3. `Load unpacked` → select this folder.
 4. Open a TradingView chart (import the [recommended layout](https://cn.tradingview.com/chart/sfPJCGOU/?symbol=USAR) for one-click setup).
 5. Click the extension icon. Save API key. Optionally save a Discord webhook.
-6. Click Start. Fill the session form in the side panel. Click Start Monitoring, complete Daily + 1H Market Context Scan, then start 5-minute monitoring.
+6. Click Start. Fill the session form in the side panel. Click Start Monitoring, complete Daily + 1H + 15m Market Context Scan, then start 5-minute monitoring.
 
 > If you are working in a git worktree under `.claude/worktrees/<branch>/`, point `Load unpacked` at the worktree path, not the main repo root. Re-point after switching branches.
 

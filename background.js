@@ -1127,12 +1127,25 @@ async function scanMarketContext(payload) {
   const language = await getUiLanguage();
   const currentState = await getState();
   const monitoringProfile = getMarketContextSetupProfile(currentState, language);
-  const timeframe = payload?.timeframe === "1h" ? "1h" : "daily";
+  const timeframe = payload?.timeframe === "1h"
+    ? "1h"
+    : payload?.timeframe === "15m"
+      ? "15m"
+      : "daily";
 
   if (timeframe === "1h") {
     const currentContext = getMarketContextForProfile(currentState, monitoringProfile);
     if (!currentContext.dailyScan) {
       throw new Error(t(language, "marketContextDailyRequired"));
+    }
+  }
+  if (timeframe === "15m") {
+    const currentContext = getMarketContextForProfile(currentState, monitoringProfile);
+    if (!currentContext.dailyScan) {
+      throw new Error(t(language, "marketContextDailyRequired"));
+    }
+    if (!currentContext.hourlyScan) {
+      throw new Error(t(language, "marketContextHourlyRequired"));
     }
   }
 
@@ -1173,24 +1186,46 @@ async function scanMarketContext(payload) {
     const symbol = monitoringProfile.symbolOverride || baseContext.symbol || null;
     const tradingDay = baseContext.tradingDay || getUsTradingDay();
 
-    const marketContext = timeframe === "daily"
-      ? {
-          ...baseContext,
-          status: MARKET_CONTEXT_STATUS.DAILY_SCANNED,
-          symbol,
-          tradingDay,
-          dailyScan: scanRecord,
-          hourlyScan: null,
-          summary: null,
-          lastError: null,
-          updatedAt: new Date().toISOString()
-        }
-      : mergeMarketContextScans({
-          dailyScan: baseContext.dailyScan,
-          hourlyScan: scanRecord,
-          symbol,
-          tradingDay
-        });
+    let marketContext;
+    if (timeframe === "daily") {
+      // Re-scanning Daily invalidates everything downstream (1H + 15m).
+      marketContext = {
+        ...baseContext,
+        status: MARKET_CONTEXT_STATUS.DAILY_SCANNED,
+        symbol,
+        tradingDay,
+        dailyScan: scanRecord,
+        hourlyScan: null,
+        minute15Scan: null,
+        summary: null,
+        lastError: null,
+        updatedAt: new Date().toISOString()
+      };
+    } else if (timeframe === "1h") {
+      // Re-scanning 1H invalidates the 15m scan downstream. Summary not built
+      // until all three are done.
+      marketContext = {
+        ...baseContext,
+        status: MARKET_CONTEXT_STATUS.HOURLY_SCANNED,
+        symbol,
+        tradingDay,
+        dailyScan: baseContext.dailyScan,
+        hourlyScan: scanRecord,
+        minute15Scan: null,
+        summary: null,
+        lastError: null,
+        updatedAt: new Date().toISOString()
+      };
+    } else {
+      // 15m is the final scan → build the merged summary (→ COMPLETE).
+      marketContext = mergeMarketContextScans({
+        dailyScan: baseContext.dailyScan,
+        hourlyScan: baseContext.hourlyScan,
+        minute15Scan: scanRecord,
+        symbol,
+        tradingDay
+      });
+    }
 
     const state = await patchState({
       status: STATUS.AWAITING_CONTEXT,
