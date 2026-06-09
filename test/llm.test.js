@@ -441,6 +441,31 @@ test("buildAnalysisPromptFromConfig: injects Market Context Scan summary when pr
   assert.ok(!/Profit-taking style/.test(prompt));
 });
 
+test("buildAnalysisPromptFromConfig: surfaces confluence count on stacked key levels", () => {
+  const prompt = buildAnalysisPromptFromConfig(
+    getAnalysisPromptConfig(),
+    {
+      ...samplePayload,
+      mode: "entry",
+      marketContext: {
+        regime: "range",
+        keyLevels: [
+          { label: "Stacked zone", type: "pivot", timeframe: "daily", price: "27.00", zoneLow: null, zoneHigh: null, reason: "", confluence: 3 },
+          { label: "Lone level", type: "gap", timeframe: "1h", price: "28.50", zoneLow: null, zoneHigh: null, reason: "", confluence: 1 }
+        ],
+        riskNotes: ""
+      }
+    },
+    "en"
+  );
+
+  // Stacked level (confluence 3) shows the tag; lone level (1) does not.
+  assert.match(prompt, /\[×3 confluence\]/);
+  assert.ok(!/\[×1 confluence\]/.test(prompt));
+  // Header explains what the tag means.
+  assert.match(prompt, /confluence.*stack|stack.*confluence/i);
+});
+
 test("buildMarketContextScanPrompt: Daily scan tells user to hide VWAP and high-low labels", () => {
   const prompt = buildMarketContextScanPrompt({ ...samplePayload, timeframe: "daily" }, "en");
   assert.match(prompt, /Expected timeframe: daily/);
