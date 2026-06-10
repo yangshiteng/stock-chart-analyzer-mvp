@@ -1,10 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  CONFLUENCE_MERGE_THRESHOLD,
   MARKET_CONTEXT_STATUS,
   createMarketContextForProfile,
   isMarketContextValidForProfile,
+  mergeConfluentLevels,
   mergeMarketContextScans,
+  normalizeMarketContext,
   shouldPreserveMarketContextAcrossReset
 } from "../lib/market-context.js";
 
@@ -27,6 +30,7 @@ test("market context: validity requires complete same-symbol same-day context", 
     tradingDay: "2026-05-05",
     dailyScan: { timeframe: "daily" },
     hourlyScan: { timeframe: "1h" },
+    minute15Scan: { timeframe: "15m" },
     summary: {
       regime: "uptrend",
       keyLevels: [],
@@ -77,6 +81,22 @@ test("market context: merge collapses to range regime when daily and 1H conflict
         }
       ],
       riskNotes: "1H pullback is active."
+    },
+    minute15Scan: {
+      timeframe: "15m",
+      regime: "downtrend",
+      keyLevels: [
+        {
+          label: "Intraday shelf",
+          type: "pivot",
+          timeframe: "15m",
+          price: "182.00",
+          zoneLow: null,
+          zoneHigh: null,
+          reason: "Based 4 candles"
+        }
+      ],
+      riskNotes: "15m basing."
     }
   });
 
@@ -87,7 +107,8 @@ test("market context: merge collapses to range regime when daily and 1H conflict
   assert.ok(!("aggression" in merged.summary));
   assert.ok(!("dipBuyPolicy" in merged.summary));
   assert.ok(!("profitTakingStyle" in merged.summary));
-  assert.equal(merged.summary.keyLevels.length, 2);
+  // 3 far-apart levels (daily 180.50, 1h 185.00, 15m 182.00) — none merge.
+  assert.equal(merged.summary.keyLevels.length, 3);
   // No strength tier on key levels anymore.
   for (const level of merged.summary.keyLevels) {
     assert.ok(!("strength" in level), "keyLevel.strength was removed in v17");
@@ -110,7 +131,8 @@ test("market context: legacy support/resistance types are normalized to pivot", 
       ],
       riskNotes: ""
     },
-    hourlyScan: { timeframe: "1h", regime: "uptrend", keyLevels: [], riskNotes: "" }
+    hourlyScan: { timeframe: "1h", regime: "uptrend", keyLevels: [], riskNotes: "" },
+    minute15Scan: { timeframe: "15m", regime: "uptrend", keyLevels: [], riskNotes: "" }
   });
 
   // Both should normalize to "pivot".
@@ -118,6 +140,165 @@ test("market context: legacy support/resistance types are normalized to pivot", 
     assert.equal(level.type, "pivot");
     assert.ok(!("strength" in level));
   }
+});
+
+// ---- mergeConfluentLevels (confluence merging) -------------------------
+//
+// Static levels closer than CONFLUENCE_MERGE_THRESHOLD are the same price
+// zone — merged into one representative with a confluence count, instead of
+// crowding the candidate pool. Daily-preferred representative is kept.
+
+function lvl(price, timeframe = "daily", type = "pivot") {
+  return {
+    label: `L${price}`,
+    type,
+    timeframe,
+    price: `${price}`,
+    zoneLow: null,
+    zoneHigh: null,
+    reason: ""
+  };
+}
+
+test("mergeConfluentLevels: far-apart levels are not merged, each confluence=1", () => {
+  const merged = mergeConfluentLevels([lvl(100), lvl(105), lvl(110)]);
+  assert.equal(merged.length, 3);
+  for (const level of merged) {
+    assert.equal(level.confluence, 1);
+  }
+});
+
+test("mergeConfluentLevels: two levels within threshold merge into one (confluence=2)", () => {
+  // $100.00 and $100.10 → diff 0.1% ≤ 0.2% → merge
+  const merged = mergeConfluentLevels([lvl("100.00"), lvl("100.10")]);
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].confluence, 2);
+});
+
+test("mergeConfluentLevels: three stacked levels → confluence=3", () => {
+  const merged = mergeConfluentLevels([lvl("100.00"), lvl("100.05"), lvl("100.10")]);
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].confluence, 3);
+});
+
+test("mergeConfluentLevels: just-outside threshold stays separate", () => {
+  // $100.00 and $100.30 → diff 0.3% > 0.2% → separate
+  const merged = mergeConfluentLevels([lvl("100.00"), lvl("100.30")]);
+  assert.equal(merged.length, 2);
+  assert.equal(merged[0].confluence, 1);
+  assert.equal(merged[1].confluence, 1);
+});
+
+test("mergeConfluentLevels: daily-preferred representative kept when daily + 1h coincide", () => {
+  // 1h listed first, but daily-first sort + merge keeps the daily price/label.
+  const merged = mergeConfluentLevels([
+    lvl("100.10", "1h", "prior_high"),
+    lvl("100.00", "daily", "pivot")
+  ]);
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].price, "100.00");
+  assert.equal(merged[0].timeframe, "daily");
+  assert.equal(merged[0].confluence, 2);
+});
+
+test("mergeConfluentLevels: caps new clusters at 10 but still merges into existing past the cap", () => {
+  const inputs = [];
+  for (let i = 1; i <= 10; i += 1) {
+    inputs.push(lvl(`${i * 10}.00`)); // 10, 20, ... 100 — far apart, all kept
+  }
+  inputs.push(lvl("110.00")); // 11th distinct cluster → dropped (cap)
+  inputs.push(lvl("10.01"));  // close to the $10 cluster → merges in past cap
+
+  const merged = mergeConfluentLevels(inputs);
+  assert.equal(merged.length, 10);
+  // $110 never made it in
+  assert.ok(!merged.some((l) => l.price === "110.00"));
+  // the $10 cluster absorbed the $10.01 level
+  const tenCluster = merged.find((l) => l.price === "10.00");
+  assert.equal(tenCluster.confluence, 2);
+});
+
+test("mergeConfluentLevels: confluence flows through mergeMarketContextScans", () => {
+  // End-to-end: a Daily pivot and a 1H prior_low at nearly the same price
+  // should arrive in summary.keyLevels as ONE level with confluence=2.
+  const merged = mergeMarketContextScans({
+    symbol: "TSLA",
+    tradingDay: "2026-05-05",
+    dailyScan: {
+      timeframe: "daily",
+      regime: "uptrend",
+      keyLevels: [lvl("27.00", "daily", "pivot")],
+      riskNotes: ""
+    },
+    hourlyScan: {
+      timeframe: "1h",
+      regime: "uptrend",
+      keyLevels: [lvl("27.02", "1h", "prior_low")], // 0.07% away → merge
+      riskNotes: ""
+    },
+    minute15Scan: {
+      timeframe: "15m",
+      regime: "uptrend",
+      keyLevels: [lvl("27.01", "15m", "pivot")], // also within 0.2% → merges too
+      riskNotes: ""
+    }
+  });
+  // Daily 27.00 + 1H 27.02 + 15m 27.01 all within 0.2% → ONE level, confluence 3.
+  assert.equal(merged.summary.keyLevels.length, 1);
+  assert.equal(merged.summary.keyLevels[0].confluence, 3);
+  assert.equal(merged.summary.keyLevels[0].price, "27.00");
+});
+
+test("CONFLUENCE_MERGE_THRESHOLD is 0.2%", () => {
+  assert.equal(CONFLUENCE_MERGE_THRESHOLD, 0.002);
+});
+
+// ---- 15m timeframe (third required scan) -------------------------------
+
+test("mergeMarketContextScans: throws when 15m scan is missing", () => {
+  assert.throws(
+    () => mergeMarketContextScans({
+      symbol: "TSLA",
+      tradingDay: "2026-05-05",
+      dailyScan: { timeframe: "daily", regime: "uptrend", keyLevels: [], riskNotes: "" },
+      hourlyScan: { timeframe: "1h", regime: "uptrend", keyLevels: [], riskNotes: "" }
+      // minute15Scan omitted
+    }),
+    /15m market context scans are all required/
+  );
+});
+
+test("normalizeMarketContext: daily+hourly without 15m computes to HOURLY_SCANNED (not COMPLETE)", () => {
+  // This is the back-compat path: a pre-v20 stored COMPLETE context (only
+  // daily + hourly) recomputes to HOURLY_SCANNED on read, correctly forcing a
+  // 15m scan before the session can start.
+  const legacy = {
+    status: MARKET_CONTEXT_STATUS.COMPLETE, // stored as COMPLETE pre-v20
+    symbol: "TSLA",
+    tradingDay: "2026-05-05",
+    dailyScan: { timeframe: "daily" },
+    hourlyScan: { timeframe: "1h" },
+    // no minute15Scan
+    summary: { regime: "uptrend", keyLevels: [], riskNotes: "" }
+  };
+  const normalized = normalizeMarketContext(legacy);
+  assert.equal(normalized.status, MARKET_CONTEXT_STATUS.HOURLY_SCANNED);
+});
+
+test("mergeMarketContextScans: 15m regime is ignored; regime resolved from daily+hourly only", () => {
+  // 15m says downtrend, but daily+hourly are both uptrend → regime stays
+  // uptrend. The 15m scan contributes key levels, not regime.
+  const merged = mergeMarketContextScans({
+    symbol: "TSLA",
+    tradingDay: "2026-05-05",
+    dailyScan: { timeframe: "daily", regime: "uptrend", keyLevels: [], riskNotes: "" },
+    hourlyScan: { timeframe: "1h", regime: "uptrend", keyLevels: [], riskNotes: "" },
+    minute15Scan: { timeframe: "15m", regime: "downtrend", keyLevels: [lvl("50.00", "15m")], riskNotes: "" }
+  });
+  assert.equal(merged.summary.regime, "uptrend");
+  // but the 15m level made it into the pool
+  assert.ok(merged.summary.keyLevels.some((l) => l.price === "50.00"));
+  assert.equal(merged.status, MARKET_CONTEXT_STATUS.COMPLETE);
 });
 
 // ---- shouldPreserveMarketContextAcrossReset ----------------------------
@@ -134,6 +315,7 @@ const completeContext = {
   tradingDay: "2026-05-05",
   dailyScan: { regime: "uptrend" },
   hourlyScan: { regime: "uptrend" },
+  minute15Scan: { regime: "uptrend" },
   summary: { regime: "uptrend", keyLevels: [] }
 };
 

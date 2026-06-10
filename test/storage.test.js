@@ -14,6 +14,32 @@ test("migrateState: invalid input returns the current default state", () => {
   assert.ok(!("premarketDipPlan" in state), "premarketDipPlan field was removed in v14");
 });
 
+test("migrateState: v19 daily+hourly COMPLETE context downgrades to HOURLY_SCANNED (v20 needs 15m)", () => {
+  // Pre-v20 a context was COMPLETE with only daily + hourly. v20 requires a
+  // third (15m) scan. migrateState normalizes marketContext on read, so the
+  // old context recomputes to HOURLY_SCANNED — forcing the user to scan 15m
+  // before the session can start. Stored scans are preserved.
+  const state = migrateState({
+    stateVersion: 19,
+    status: STATUS.AWAITING_CONTEXT,
+    marketContext: {
+      status: MARKET_CONTEXT_STATUS.COMPLETE,
+      symbol: "TSLA",
+      tradingDay: "2026-05-05",
+      dailyScan: { timeframe: "daily", regime: "uptrend", keyLevels: [], riskNotes: "" },
+      hourlyScan: { timeframe: "1h", regime: "uptrend", keyLevels: [], riskNotes: "" },
+      summary: { regime: "uptrend", keyLevels: [], riskNotes: "" }
+    }
+  });
+
+  assert.equal(state.stateVersion, STATE_VERSION);
+  assert.equal(state.marketContext.status, MARKET_CONTEXT_STATUS.HOURLY_SCANNED);
+  // The daily + hourly scans are preserved (user doesn't re-scan those).
+  assert.ok(state.marketContext.dailyScan);
+  assert.ok(state.marketContext.hourlyScan);
+  assert.equal(state.marketContext.minute15Scan, null);
+});
+
 test("migrateState: current-version state receives defaults and keeps known data", () => {
   const state = migrateState({
     stateVersion: STATE_VERSION,
@@ -338,4 +364,49 @@ test("migrateState: caps large arrays to storage limits", () => {
   assert.equal(state.tradeHistory.length, MAX_TRADE_HISTORY);
   assert.equal(state.results.at(0).id, "r0");
   assert.equal(state.tradeHistory.at(0).id, "t0");
+});
+
+test("migrateState: v18 state is upgraded to v19 preserving structural fields", () => {
+  // v19 is a prompt/validator/UI redesign with no state-shape changes —
+  // it just bumps the version. v18 fields (hardStopPrice, stopLossPrice,
+  // anchorSource enum values, tradeHistory entries, etc.) all carry over
+  // intact. anchorSource enum was extended additively (new intraday_*,
+  // fixed_*, aggressive_recovery values), so old values like "EMA20" /
+  // "prior_high" / "conservative_estimate" remain valid without rewrite.
+  const state = migrateState({
+    stateVersion: 18,
+    virtualPosition: {
+      symbol: "TSLA",
+      entryPrice: "27.50",
+      stopLossPrice: "27.00",
+      hardStopPrice: "26.30",
+      entryAnchorSource: "EMA20"
+    },
+    lastResult: {
+      analysis: {
+        action: "SELL_LIMIT",
+        orderPrice: "28.20",
+        anchorSource: "prior_high",
+        reasoning: "v18 result preserved"
+      }
+    },
+    tradeHistory: [
+      {
+        id: "trade-v18-1",
+        symbol: "TSLA",
+        entryPrice: "27.50",
+        exitPrice: "28.20",
+        entryAnchorSource: "EMA20"
+      }
+    ]
+  });
+
+  assert.equal(state.stateVersion, STATE_VERSION);
+  assert.equal(state.virtualPosition.entryPrice, "27.50");
+  assert.equal(state.virtualPosition.stopLossPrice, "27.00");
+  assert.equal(state.virtualPosition.hardStopPrice, "26.30");
+  assert.equal(state.virtualPosition.entryAnchorSource, "EMA20");
+  assert.equal(state.lastResult.analysis.anchorSource, "prior_high");
+  assert.equal(state.tradeHistory.length, 1);
+  assert.equal(state.tradeHistory[0].entryAnchorSource, "EMA20");
 });

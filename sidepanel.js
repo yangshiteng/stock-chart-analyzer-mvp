@@ -66,6 +66,10 @@ const hourlyContextStep = document.getElementById("hourlyContextStep");
 const hourlyContextTitle = document.getElementById("hourlyContextTitle");
 const hourlyContextInstructions = document.getElementById("hourlyContextInstructions");
 const scanHourlyContextButton = document.getElementById("scanHourlyContextButton");
+const minute15ContextStep = document.getElementById("minute15ContextStep");
+const minute15ContextTitle = document.getElementById("minute15ContextTitle");
+const minute15ContextInstructions = document.getElementById("minute15ContextInstructions");
+const scanMinute15ContextButton = document.getElementById("scanMinute15ContextButton");
 const marketContextSummary = document.getElementById("marketContextSummary");
 const initialPositionPanel = document.getElementById("initialPositionPanel");
 const initialPositionTitle = document.getElementById("initialPositionTitle");
@@ -278,23 +282,32 @@ function parsePositivePrice(value) {
   return Number.isFinite(price) && price > 0 ? price : null;
 }
 
-// Compute which of the three exit zones the current position is in.
+// Compute which of the four exit zones the current position is in (v19).
 // Used purely for UI labeling — actual zone logic lives in the prompt
 // (lib/prompt-config.js -> exitModeRules).
 function computeZoneLabel(language, position, state) {
   if (!position) return t(language, "nA");
   const current = parsePositivePrice(state?.lastResult?.analysis?.currentPrice);
+  const entry = parsePositivePrice(position.entryPrice);
   const softStop = parsePositivePrice(position.stopLossPrice);
   const hardStop = parsePositivePrice(position.hardStopPrice);
   if (current === null) return t(language, "zonePending");
   // If stops aren't set (e.g. legacy position from before v18 / first-exit
   // failure path), be HONEST about it instead of falling through to a
-  // misleading "Take-Profit" label. The zone framework only makes sense when
-  // both stops exist.
+  // misleading zone label. The zone framework only makes sense when both
+  // stops exist.
   if (softStop === null || hardStop === null) return t(language, "zoneStopsNotSet");
+  // v19 four-zone classification:
+  //   - HARD-EXIT: current ≤ hardStop  (thesis dead)
+  //   - CAUTION:   hardStop < current ≤ softStop  (soft stop broken, recovery flow)
+  //   - OBSERVATION: softStop < current ≤ entry   (underwater but stops intact)
+  //   - HEALTHY:   current > entry  (in profit)
   if (current <= hardStop) return t(language, "zoneHardExit");
-  if (current <= softStop) return t(language, "zoneRecovery");
-  return t(language, "zoneTakeProfit");
+  if (current <= softStop) return t(language, "zoneCaution");
+  // Observation requires entryPrice to distinguish from Healthy. If entry is
+  // missing (defensive), treat current > softStop as healthy.
+  if (entry !== null && current <= entry) return t(language, "zoneObservation");
+  return t(language, "zoneHealthy");
 }
 
 function formatDollar(value) {
@@ -390,6 +403,86 @@ function renderNearbyMarketLevels(state, analysis, language) {
   `;
 }
 
+// v19: extract AI's sub-judgment (mode/flow/trend/target) from the
+// structured reasoning text and surface it as a pill on the recommendation
+// card so the user can see WHY this action — without having to read the
+// reasoning paragraph.
+//
+// Reasoning forced format (per prompt-config.js per-mode rules) puts one of
+// the following marker patterns in the reasoning text:
+//   - entry:           `mode=conservative` / `mode=aggressive (依据)`
+//   - exit observation:`flow=push-rebound (依据)` / `flow=recovery (default)`
+//   - exit caution:    `target=conservative (依据)` / `target=aggressive (依据)`
+//                      OR anchorSource=aggressive_recovery (same semantic)
+//   - exit healthy:    `trend=normal` / `trend=strong (3-bar pattern ...)`
+//
+// One sub-judgment per analysis (at most). The four kinds are mutually
+// exclusive because each fires only in its respective zone/mode.
+function extractSubJudgment(analysis) {
+  const reasoning = `${analysis?.reasoning || ""}`;
+
+  // entry mode: mode=conservative | aggressive
+  const modeMatch = reasoning.match(/\bmode\s*=\s*(conservative|aggressive)\b/i);
+  if (modeMatch) {
+    return { kind: "entryMode", value: modeMatch[1].toLowerCase() };
+  }
+
+  // exit observation: flow=push-rebound | recovery
+  const flowMatch = reasoning.match(/\bflow\s*=\s*(push-rebound|recovery)\b/i);
+  if (flowMatch) {
+    return { kind: "flow", value: flowMatch[1].toLowerCase() };
+  }
+
+  // exit caution: target=conservative | aggressive
+  // Also: anchorSource=aggressive_recovery is the deterministic caution-zone
+  // aggressive marker (in case reasoning lacks the literal target= clause).
+  if (analysis?.anchorSource === "aggressive_recovery") {
+    return { kind: "target", value: "aggressive" };
+  }
+  const targetMatch = reasoning.match(/\btarget\s*=\s*(conservative|aggressive)\b/i);
+  if (targetMatch) {
+    return { kind: "target", value: targetMatch[1].toLowerCase() };
+  }
+
+  // exit healthy: trend=normal | strong
+  const trendMatch = reasoning.match(/\btrend\s*=\s*(normal|strong)\b/i);
+  if (trendMatch) {
+    return { kind: "trend", value: trendMatch[1].toLowerCase() };
+  }
+
+  return null;
+}
+
+function getSubJudgmentLabelKey(kind, value) {
+  if (kind === "entryMode") {
+    return value === "aggressive" ? "entryModeAggressive" : "entryModeConservative";
+  }
+  if (kind === "flow") {
+    return value === "push-rebound" ? "flowPushRebound" : "flowRecovery";
+  }
+  if (kind === "target") {
+    return value === "aggressive" ? "targetAggressive" : "targetConservative";
+  }
+  if (kind === "trend") {
+    return value === "strong" ? "trendStrong" : "trendNormal";
+  }
+  return null;
+}
+
+function renderSubJudgmentPill(language, analysis) {
+  const judgment = extractSubJudgment(analysis);
+  if (!judgment) return "";
+  const labelKey = getSubJudgmentLabelKey(judgment.kind, judgment.value);
+  if (!labelKey) return "";
+  // tone class lets CSS hint the aggressive (warm) vs conservative (cool)
+  // variant without adding another inline style. Both still inherit the
+  // banner's overall background.
+  const toneClass = judgment.value === "aggressive" || judgment.value === "strong" || judgment.value === "push-rebound"
+    ? "sub-judgment-pill aggressive"
+    : "sub-judgment-pill conservative";
+  return `<span class="${toneClass}">${escapeHtml(t(language, labelKey))}</span>`;
+}
+
 function renderSellLimitIntentNotice(language, analysis, entryPrice = null) {
   const intent = getSellLimitIntent(analysis, entryPrice);
   if (!intent) {
@@ -471,6 +564,7 @@ function renderAnalysisCard(state, language) {
   const entryPrice = getEntryPriceFromState(state);
   const action = formatAnalysisActionLabel(language, analysis, entryPrice);
   const nA = t(language, "nA");
+  const subJudgmentPill = renderSubJudgmentPill(language, analysis);
 
   analysisCard.className = "analysis-card";
   analysisCard.innerHTML = `
@@ -480,6 +574,7 @@ function renderAnalysisCard(state, language) {
           <p class="signal-label">${escapeHtml(t(language, "actionNow"))}</p>
           <h3 class="signal-value">${escapeHtml(action)}</h3>
         </div>
+        ${subJudgmentPill}
       </div>
       <div class="guidance-grid">
         ${renderGuidanceCard(getOrderGuidanceLabel(language, analysis, entryPrice), getOrderGuidanceValue(language, analysis))}
@@ -1045,6 +1140,7 @@ function renderMarketContextSection(state, language, apiReady) {
   const marketContext = state.marketContext || {};
   const dailyDone = Boolean(marketContext.dailyScan);
   const hourlyDone = Boolean(marketContext.hourlyScan);
+  const minute15Done = Boolean(marketContext.minute15Scan);
   const complete = marketContext.status === MARKET_CONTEXT_STATUS.COMPLETE && Boolean(marketContext.summary);
 
   marketContextTitle.textContent = t(language, "marketContextTitle");
@@ -1055,20 +1151,27 @@ function renderMarketContextSection(state, language, apiReady) {
   dailyContextInstructions.textContent = t(language, "marketContextDailyInstructions");
   hourlyContextTitle.textContent = t(language, "marketContextHourlyTitle");
   hourlyContextInstructions.textContent = t(language, "marketContextHourlyInstructions");
+  minute15ContextTitle.textContent = t(language, "marketContext15mTitle");
+  minute15ContextInstructions.textContent = t(language, "marketContext15mInstructions");
   scanDailyContextButton.textContent = scanningMarketContextTimeframe === "daily"
     ? t(language, "marketContextScanning")
     : (dailyDone ? t(language, "rescanDailyContext") : t(language, "scanDailyContext"));
   scanHourlyContextButton.textContent = scanningMarketContextTimeframe === "1h"
     ? t(language, "marketContextScanning")
     : (hourlyDone ? t(language, "rescanHourlyContext") : t(language, "scanHourlyContext"));
+  scanMinute15ContextButton.textContent = scanningMarketContextTimeframe === "15m"
+    ? t(language, "marketContextScanning")
+    : (minute15Done ? t(language, "rescan15mContext") : t(language, "scan15mContext"));
   confirmMarketContextButton.textContent = isConfirmingMarketContext
     ? t(language, "startMonitoringProgress")
     : t(language, "confirmMarketContext");
 
   dailyContextStep.dataset.status = dailyDone ? "done" : "pending";
   hourlyContextStep.dataset.status = hourlyDone ? "done" : "pending";
+  minute15ContextStep.dataset.status = minute15Done ? "done" : "pending";
   scanDailyContextButton.disabled = !apiReady || scanningMarketContextTimeframe !== null || isConfirmingMarketContext;
   scanHourlyContextButton.disabled = !apiReady || !dailyDone || scanningMarketContextTimeframe !== null || isConfirmingMarketContext;
+  scanMinute15ContextButton.disabled = !apiReady || !hourlyDone || scanningMarketContextTimeframe !== null || isConfirmingMarketContext;
   const initialPosition = renderInitialPositionPanel(language, complete);
   const initialPositionInvalid = complete && !initialPosition.entryPriceValid;
   confirmMarketContextButton.disabled = !apiReady
@@ -1077,6 +1180,7 @@ function renderMarketContextSection(state, language, apiReady) {
     || scanningMarketContextTimeframe !== null
     || isConfirmingMarketContext;
   scanHourlyContextButton.title = dailyDone ? "" : t(language, "marketContextDailyRequired");
+  scanMinute15ContextButton.title = hourlyDone ? "" : t(language, "marketContextHourlyRequired");
   confirmMarketContextButton.title = initialPositionInvalid
     ? t(language, "initialEntryPriceInvalid")
     : (complete ? "" : t(language, "marketContextNotComplete"));
@@ -1281,9 +1385,15 @@ pendingLimitFilledButton.addEventListener("click", async () => {
     return;
   }
 
+  const type = pending.action === "BUY_LIMIT" ? "mark-bought" : "mark-sold";
   pendingLimitFilledButton.disabled = true;
+  // mark-bought triggers a first-exit AI analysis that can take ~10s. Show a
+  // loading label so the user gets immediate feedback instead of a silently
+  // disabled button (which reads as "no reaction").
+  if (type === "mark-bought") {
+    pendingLimitFilledButton.textContent = t(language, "firstExitAnalyzing");
+  }
   try {
-    const type = pending.action === "BUY_LIMIT" ? "mark-bought" : "mark-sold";
     const payload = type === "mark-bought" ? { entryPrice: price } : { exitPrice: price };
     const response = await chrome.runtime.sendMessage({ type, ...payload });
     if (!response?.ok) {
@@ -1291,6 +1401,15 @@ pendingLimitFilledButton.addEventListener("click", async () => {
         response?.error || t(language, type === "mark-bought" ? "couldNotMarkBought" : "couldNotMarkSold");
       pendingLimitError.classList.remove("hidden");
     }
+  } catch (error) {
+    // chrome.runtime.sendMessage can REJECT (service worker evicted mid-call,
+    // message port closed before the long first-exit analysis responded).
+    // Without this catch the rejection propagated past `await render()`,
+    // leaving the button re-enabled but no error shown — the "no reaction"
+    // symptom. Surface it.
+    pendingLimitError.textContent =
+      error?.message || t(language, type === "mark-bought" ? "couldNotMarkBought" : "couldNotMarkSold");
+    pendingLimitError.classList.remove("hidden");
   } finally {
     pendingLimitFilledButton.disabled = false;
   }
@@ -1391,6 +1510,10 @@ scanHourlyContextButton.addEventListener("click", async () => {
   await runMarketContextScan("1h");
 });
 
+scanMinute15ContextButton.addEventListener("click", async () => {
+  await runMarketContextScan("15m");
+});
+
 confirmMarketContextButton.addEventListener("click", async () => {
   const settings = await getSettings();
   const language = getLanguage(settings.language);
@@ -1418,6 +1541,13 @@ confirmMarketContextButton.addEventListener("click", async () => {
       marketContextError.textContent = response?.error || t(language, "marketContextNotComplete");
       marketContextError.classList.remove("hidden");
     }
+  } catch (error) {
+    // sendMessage can reject (service worker evicted during the holding-path
+    // first-exit analysis, or port closed). Without this catch the rejection
+    // propagated past the final render(), leaving the button stuck on
+    // "Starting monitoring..." with no error — the "no reaction" symptom.
+    marketContextError.textContent = error?.message || t(language, "marketContextNotComplete");
+    marketContextError.classList.remove("hidden");
   } finally {
     isConfirmingMarketContext = false;
   }
