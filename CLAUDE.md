@@ -458,6 +458,46 @@ LLM systematically defaulted to the labeled EMA values printed in the chart head
 
 7. **The "soft weakness" framing matters**. When a fix introduces a known minor weakness (label-attached digit counting), document it as a deliberate trade-off (avoid false-reject pain) instead of pretending it's perfect. Future audits will spot it and want to "improve" — the doc explains why not to.
 
+Completed (key-level confluence merging — two coupled blocks):
+
+**Motivation**: real-trade observation that several key levels often sit at nearly the same price (a static pivot, an EMA, an intraday shelf within a few cents). Treated as separate candidates they crowd the S1/S2 slots — S1 and S2 end up a penny apart, so "aggressive = S2" becomes meaningless (it's barely deeper than S1). Merging coincident levels into one candidate (with a count of how many stacked) keeps the candidate pool clean and makes S1/S2 meaningfully distinct.
+
+**Key distinction that made this safe to add** (v17 deliberately removed strength tiers): there are two kinds of "this level is stronger":
+- **Subjective strength rating** ("looks like strong resistance") — removed in v17, the AI's ratings were unreliable, a tuning rabbit hole. Do NOT bring this back.
+- **Objective confluence count** ("3 independent source levels stack at this price") — a countable, auditable FACT, not a rating. This is what confluence merging surfaces. It sidesteps every reason v17 killed strength tiers.
+
+**Design decision — confluence affects MERGING + METADATA, not SELECTION ranking**: the merge happens at candidate-pool construction (upstream of S1/S2 labeling). Proximity still determines the S1/S2 ranking. Confluence is surfaced to the AI as an extra factor it MAY weigh in the already-subjective S1-vs-S2 (conservative/aggressive) choice — but it does NOT override proximity (a far confluence level is not relabeled S1 over a nearer lone level). This keeps the "nearest-level" rule intact and avoids reopening "how much confluence beats how much distance" tuning hell. NOTE (correction the user caught mid-design): selection between S1/S2 was already NOT pure proximity — it's AI subjective. So confluence-as-metadata is additive to that existing subjective choice, not a new override.
+
+**Threshold**: `CONFLUENCE_MERGE_THRESHOLD = 0.002` (0.2% of price). Percentage, not fixed dollars — "5 cents apart" means different things on a $27 vs $300 stock; percentage scales. ≈5 cents on a $27 stock, ≈20 cents on a $100 stock. Fixed constant in code, NOT user-tunable (same reason all past user knobs were removed). Replaced the older crude 0.3% silent-drop dedupe.
+
+**Block 1 — static levels (code, deterministic, the only levels that ARE data)**:
+- `lib/market-context.js`: `dedupeLevels` → `mergeConfluentLevels` (exported). Instead of silently dropping a near-duplicate, it records `confluence` (a count ≥1) on the kept representative. Daily-preferred representative kept (daily-first sort, extended to `timeframeRank` daily > 1h > 15m). Cap logic: new clusters capped at `MARKET_CONTEXT_MAX_KEY_LEVELS = 10`, but a late level can still merge INTO an existing cluster past the cap (only NEW clusters are capped). `normalizeLevel` gains a `confluence` field (default 1, preserved across storage round-trips via `normalizeConfluence`).
+- `lib/llm.js` MARKET_CONTEXT prompt rendering: a level with confluence ≥2 shows a `[×N confluence]` tag, with a header line explaining "more stacked = stronger zone, worth weighing when choosing between two candidates".
+
+**Block 2 — cross-type levels (prompt instruction, because dynamic/intraday levels are NOT stored data)**:
+- Critical architectural fact: only STATIC levels (Market Context scan) exist as data in the system. DYNAMIC (EMA/VWAP) and INTRADAY levels are read live from the chart image by the AI each round — they are never data, so code cannot merge them. Cross-type confluence (static + EMA + intraday all stacking) therefore HAS to be a prompt instruction, not a function. This split was explained to the user up front to avoid the impression that one function merges everything.
+- `lib/prompt-config.js` entry mode: new STEP 1.5 CONFLUENCE MERGE (replaced the old terse "within 1-2 ticks merge" in STEP 2). Collapse levels within ~0.2% (any mix of static/EMA/VWAP/intraday) into one candidate BEFORE labeling S1/S2; representative price = static's price if present else cluster middle; anchorSource = most structural present (static > intraday > dynamic); note confluence in reasoning; treat higher confluence as a legitimate factor in the conservative/aggressive judgment.
+- Exit mode: parallel CONFLUENCE MERGE note for resistances above current (adds fixed_* to the merge set since those are live candidates while holding).
+- Reliability caveat (told to the user): block 2 is prompt guidance — the AI mostly follows it but may occasionally not merge. Block 1 (the function) is the reliable part. Watch reasoning for the `[N-way: ...]` confluence annotation to confirm the AI is actually doing it.
+
+Completed (15m as a third required Market Context scan timeframe — STATE_VERSION 20):
+
+**Motivation**: the Daily (3-6 months) + 1H (5-20 days) scans plus the live 5-min window (~1-2 days) leave a genuine blind spot — intraday consolidation shelves / reaction levels from 2-5 days ago, which the 1H smooths over and the live 5-min screenshot does not reach. 15m (showing ~3-5 days) fills exactly that gap. Confluence merging (above) was a prerequisite: adding a third scan brings more levels, and without merging they'd crowd S1/S2; with it they collapse cleanly. (Decision discipline: 15m chosen over 30m because 30m's time span overlaps the 1H too much — it's mostly redundant. Adding BOTH 15m and 30m was rejected: too close to each other to both earn a daily screenshot. Weekly/4H also rejected — too far/redundant for intraday execution.)
+
+**Design**:
+- Scan order daily → 1H → 15m (longest to shortest, top-down). New `MARKET_CONTEXT_STATUS.HOURLY_SCANNED` intermediate state between DAILY_SCANNED and COMPLETE; COMPLETE now requires all THREE scans + a built summary.
+- **15m contributes KEY LEVELS only, NOT regime**. Regime stays resolved from daily + 1H (`resolveRegime` unchanged) — the 15m trend is too short-term/noisy to define the overall regime. The 15m scan still returns a regime field (schema requires it); we just ignore it and take its keyLevels.
+- Re-scanning an upstream timeframe invalidates downstream: re-scan Daily clears hourlyScan + minute15Scan; re-scan 1H clears minute15Scan. Summary is built only at the final (15m) scan, in `mergeMarketContextScans` (now takes + requires all three).
+- Confluence-merge representative priority extended to `timeframeRank`: daily(0) > 1h(1) > 15m(2).
+
+**Back-compat (no explicit mutation)**: `marketContext` gains a `minute15Scan` field. A pre-v20 stored daily+hourly COMPLETE context recomputes to HOURLY_SCANNED on read because `normalizeMarketContext` recomputes status from which scans are present (minute15Scan missing → null → not COMPLETE). This correctly prompts the user to scan 15m. `migrateState` already runs `normalizeMarketContext` on every read (line ~77), so no v20 mutation is needed — STATE_VERSION 20 is just the breadcrumb. Cross-day contexts are wiped anyway.
+
+**Files**: `lib/market-context.js` (status enum, VALID_TIMEFRAMES + "15m", minute15Scan field, timeframeRank, 3-scan merge), `lib/llm.js` (timeframe normalize + "15m", 15m scan-prompt setup lines focusing on consolidation shelves / reaction levels, schemaName, timeframe enum text — schema auto-handles 15m via `enum:[timeframe]`), `background.js` (scanMarketContext 3-step flow: 15m requires daily+hourly, builds summary at the 15m step, upstream-rescan-clears-downstream), `sidepanel.html` + `sidepanel.js` (third scan step UI: button, status dot, gating disabled until 1H done, scanning state), `lib/i18n.js` (15m labels + marketContextHourlyRequired, en + zh; copy "Daily, 1H, and 15m"), `lib/constants.js` (STATE_VERSION 20), `lib/storage.js` (v20 no-op hook), README (three timeframes throughout).
+
+**Tests**: 184 → 189 (merge requires 15m; HOURLY_SCANNED recompute; 15m regime ignored but its levels included; 15m scan prompt; v20 migration downgrade daily+hourly COMPLETE → HOURLY_SCANNED with scans preserved).
+
+**Known cost (accepted by user)**: a third scan = one more manual screenshot + scan + AI call every session at setup (2 → 3). The user accepted this friction for the intraday-structure coverage. If it ever feels heavy, the fallback is making 15m optional (would require reverting the COMPLETE gate to daily+hourly) — but that weakens the feature, so not done.
+
 ## Future work / not planned
 
 ### Known risks / follow-ups (small)
